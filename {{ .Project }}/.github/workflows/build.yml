@@ -1,0 +1,144 @@
+name: Build and Push Image
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    tags:
+      - "v*"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ "{{" }} github.repository }}
+
+concurrency:
+  group: build-image-${{ "{{" }} github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve build version
+        id: release
+        env:
+          EVENT_REF: ${{ "{{" }} github.ref }}
+          RELEASE_TAG: ${{ "{{" }} github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          if [[ "$EVENT_REF" == refs/tags/* ]]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{4}\.([1-9]|1[0-2])\.[1-9][0-9]*(-beta\.[1-9][0-9]*)?$ ]]; then
+              echo "::error::Expected vYYYY.M.PATCH or vYYYY.M.PATCH-beta.N without zero padding"
+              exit 1
+            fi
+            version="$RELEASE_TAG"
+          elif [[ "$EVENT_REF" == refs/heads/main || "$EVENT_REF" == refs/heads/dev ]]; then
+            version=$(git rev-parse --short=5 HEAD)
+          else
+            echo "::error::This workflow accepts only main/dev branches or release tags"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "release_kind=$([[ "$EVENT_REF" == refs/tags/* ]] && echo tag || echo branch)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Validate code
+        run: |
+          make lint test
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Validation changed repository files; regenerate and commit them before tagging"
+            git status --short
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Check release image version is unused
+        if: steps.release.outputs.release_kind == 'tag'
+        env:
+          GH_TOKEN: ${{ "{{" }} secrets.GITHUB_TOKEN }}
+          OWNER_TYPE: ${{ "{{" }} github.event.repository.owner.type }}
+          RELEASE_VERSION: ${{ "{{" }} steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_name="${GITHUB_REPOSITORY#*/}"
+          package_name=$(printf '%s' "$package_name" | tr '[:upper:]' '[:lower:]')
+          owner_path="users"
+          if [ "$OWNER_TYPE" = "Organization" ]; then owner_path="orgs"; fi
+          package_api="${owner_path}/${GITHUB_REPOSITORY_OWNER}/packages/container/${package_name}/versions?per_page=100"
+          if gh api --paginate "$package_api" --jq '.[].metadata.container.tags[]?' > "$RUNNER_TEMP/image-tags.txt" 2> "$RUNNER_TEMP/image-tags-error.txt"; then
+            if grep -Fxq "$RELEASE_VERSION" "$RUNNER_TEMP/image-tags.txt"; then
+              echo "::error::Image version already exists; publish a new PATCH or beta.N instead of overwriting it"
+              exit 1
+            fi
+          elif ! grep -Fq '(HTTP 404)' "$RUNNER_TEMP/image-tags-error.txt"; then
+            cat "$RUNNER_TEMP/image-tags-error.txt" >&2
+            exit 1
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ "{{" }} env.REGISTRY }}
+          username: ${{ "{{" }} github.actor }}
+          password: ${{ "{{" }} secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ "{{" }} env.REGISTRY }}/${{ "{{" }} env.IMAGE_NAME }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ "{{" }} steps.release.outputs.version }}
+            type=ref,event=branch,enable=${{ "{{" }} steps.release.outputs.release_kind == 'branch' }}
+            type=sha,format=short,prefix=sha-,enable=${{ "{{" }} steps.release.outputs.release_kind == 'branch' }}
+          labels: |
+            org.opencontainers.image.version=${{ "{{" }} steps.release.outputs.version }}
+            org.opencontainers.image.revision=${{ "{{" }} steps.release.outputs.revision }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ "{{" }} steps.meta.outputs.tags }}
+          labels: ${{ "{{" }} steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Print result
+        env:
+          RELEASE_VERSION: ${{ "{{" }} steps.release.outputs.version }}
+          RELEASE_REVISION: ${{ "{{" }} steps.release.outputs.revision }}
+          IMAGE_TAGS: ${{ "{{" }} steps.meta.outputs.tags }}
+          IMAGE_DIGEST: ${{ "{{" }} steps.build.outputs.digest }}
+        run: |
+          echo "Version: $RELEASE_VERSION"
+          echo "Commit: $RELEASE_REVISION"
+          echo "Images: $IMAGE_TAGS"
+          echo "Digest: $IMAGE_DIGEST"

@@ -1,0 +1,6 @@
+grpc:
+  addr: ":9090"
+  # Default timeout for unary calls; streams retain the client's deadline.
+  timeout: 30s
+  shutdownTimeout: 10s
+  reflection: true

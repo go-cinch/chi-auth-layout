@@ -1,0 +1,143 @@
+# yaml-language-server: $schema=https://hay-kot.github.io/scaffold/schema.json
+
+messages:
+  pre: |
+    # Go-Cinch Auth Service Generator
+
+    Generates an authentication service with PostgreSQL, chi or Gin HTTP routing, and optional gRPC.
+    Optional infrastructure is selected at scaffold time.
+
+  post: |
+    # Project Created: {{ .Computed.service_name_final }}
+
+    Next steps:
+      cd {{ .Scaffold.Project }}
+      make test
+      make run
+
+    HTTP: http://127.0.0.1:{{ or .Scaffold.http_port "8080" }}
+    {{- if .Computed.enable_health_check_final }}
+    Health: http://127.0.0.1:{{ or .Scaffold.http_port "8080" }}/healthz
+    {{- end }}
+
+questions:
+  - name: service_name
+    prompt:
+      message: Service name (leave empty to use Project name)?
+
+  - name: module_name
+    prompt:
+      message: Go module name (leave empty to use service_name)?
+
+  - name: http_router
+    prompt:
+      message: HTTP router?
+      type: select
+      options: [chi, gin]
+      default: "chi"
+
+  - name: http_port
+    prompt:
+      message: HTTP server port?
+      default: "8080"
+
+  - name: http_timeout
+    prompt:
+      message: Default request timeout?
+      default: "30s"
+
+  - name: enable_health_check
+    prompt:
+      message: Enable GET /healthz?
+      type: string
+      default: "true"
+
+  - name: enable_grpc
+    prompt:
+      message: Include gRPC support?
+      type: select
+      options: ["true", "false"]
+      default: "true"
+
+  - name: enable_redis
+    prompt:
+      message: Enable Redis support?
+      type: string
+      default: "false"
+
+  - name: enable_trace
+    prompt:
+      message: Include OpenTelemetry tracing support?
+      type: string
+      default: "true"
+
+computed:
+  # Scaffold 0.13.1 swallows sprig fail errors. An undefined Go template
+  # action raises a native rendering error before any project files are written.
+  http_router_final: '{{ $router := or .Scaffold.http_router "chi" }}{{ if or (eq $router "chi") (eq $router "gin") }}{{ $router }}{{ else }}{{ template "http_router must be chi or gin" . }}{{ end }}'
+  service_name_final: '{{ or .Scaffold.service_name .Scaffold.Project }}'
+  service_name_kebab: '{{ toKebabCase (or .Scaffold.service_name .Scaffold.Project) }}'
+  service_name_snake: '{{ toSnakeCase (or .Scaffold.service_name .Scaffold.Project) }}'
+  proto_service_name_final: '{{ trimAll "-" (toLower (regexReplaceAll "[^A-Za-z0-9]+" (or .Scaffold.service_name .Scaffold.Project) "-")) }}'
+  module_name_final: '{{ or .Scaffold.module_name .Scaffold.service_name .Scaffold.Project }}'
+  enable_health_check_final: '{{ eq (or .Scaffold.enable_health_check "true") "true" }}'
+  enable_grpc_final: '{{ $enabled := or .Scaffold.enable_grpc "true" }}{{ if or (eq $enabled "true") (eq $enabled "false") }}{{ eq $enabled "true" }}{{ else }}{{ template "enable_grpc must be true or false" . }}{{ end }}'
+  enable_redis_final: '{{ eq .Scaffold.enable_redis "true" }}'
+  enable_trace_final: '{{ eq (or .Scaffold.enable_trace "true") "true" }}'
+
+features:
+  - value: '{{ eq .Computed.http_router_final "gin" }}'
+    globs:
+      - "**/internal/common/logging/gin.go"
+      - "**/internal/common/logging/gin_test.go"
+
+  - value: '{{ eq .Computed.http_router_final "chi" }}'
+    globs:
+      - "**/internal/common/server/writer.go"
+
+  - value: '{{ .Computed.enable_health_check_final }}'
+    globs:
+      - "**/internal/common/server/health.go"
+      - "**/internal/common/server/health_test.go"
+
+  - value: '{{ .Computed.enable_grpc_final }}'
+    globs:
+      - "**/conf/grpc.yml"
+      - "**/internal/cmd/protogen/**"
+      - "**/internal/common/rpc/client.go"
+      - "**/internal/common/rpc/client_test.go"
+      - "**/internal/common/rpc/interceptor.go"
+      - "**/internal/common/rpc/interceptor_test.go"
+      - "**/internal/common/rpc/server.go"
+      - "**/internal/common/rpc/server_test.go"
+
+  - value: '{{ and .Computed.enable_grpc_final .Computed.enable_trace_final }}'
+    globs:
+      - "**/internal/common/rpc/client_trace.go"
+      - "**/internal/common/rpc/client_trace_test.go"
+      - "**/internal/common/rpc/trace.go"
+      - "**/internal/common/rpc/trace_test.go"
+
+  - value: '{{ .Computed.enable_redis_final }}'
+    globs:
+      - "**/internal/infra/rds/**"
+      - "**/conf/redis.yml"
+
+  - value: '{{ .Computed.enable_trace_final }}'
+    globs:
+      - "**/internal/common/server/trace.go"
+      - "**/internal/common/server/trace_test.go"
+      - "**/internal/common/tracing/**"
+      - "**/conf/tracer.yml"
+
+presets:
+  full:
+    service_name: ""
+    module_name: ""
+    http_router: "chi"
+    http_port: "8080"
+    http_timeout: "30s"
+    enable_health_check: "true"
+    enable_grpc: "true"
+    enable_redis: "true"
+    enable_trace: "true"

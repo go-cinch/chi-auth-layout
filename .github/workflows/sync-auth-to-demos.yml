@@ -1,0 +1,104 @@
+name: Sync Auth to Demos
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: sync-auth-to-demos
+  cancel-in-progress: false
+
+env:
+  DEMOS_REPO: go-cinch/demos
+  DEMOS_BRANCH: main
+  # Commit referenced by the immutable v0.13.1 release tag.
+  SCAFFOLD_COMMIT_SHA: a9385db9a94f5a6322998b14ae21d6d2a8819bd4
+
+jobs:
+  sync:
+    name: Generate and publish demos/auth
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout auth layout
+        uses: actions/checkout@v4
+        with:
+          path: chi-auth-layout
+
+      - name: Check demos repository token
+        env:
+          DEMOS_REPO_TOKEN: ${{ secrets.DEMOS_REPO_TOKEN }}
+        run: |
+          if [ -z "${DEMOS_REPO_TOKEN:-}" ]; then
+            echo "Missing secret DEMOS_REPO_TOKEN" >&2
+            exit 1
+          fi
+
+      - name: Checkout demos repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DEMOS_REPO }}
+          ref: ${{ env.DEMOS_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.DEMOS_REPO_TOKEN }}
+          path: demos
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Install Scaffold
+        run: |
+          go install "github.com/hay-kot/scaffold@${SCAFFOLD_COMMIT_SHA}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Generate and incrementally sync auth demo
+        run: make -C "$GITHUB_WORKSPACE/chi-auth-layout" local
+
+      - name: Verify generated auth demo
+        working-directory: demos/auth
+        run: |
+          set -euo pipefail
+          go test ./...
+
+      - name: Commit and push auth demo
+        working-directory: demos
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A auth
+
+          if git diff --cached --quiet; then
+            echo "demos/auth is already up to date"
+            exit 0
+          fi
+
+          git commit -m "[chore] auth sync chi-auth-layout ${SOURCE_SHA:0:7}"
+
+          max_attempts=5
+          for attempt in $(seq 1 "$max_attempts"); do
+            git fetch origin "$DEMOS_BRANCH"
+            git merge --no-edit "origin/$DEMOS_BRANCH"
+
+            if git push origin "HEAD:${DEMOS_BRANCH}"; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              echo "Failed to push demos/auth after $max_attempts attempts" >&2
+              exit 1
+            fi
+
+            echo "demos/$DEMOS_BRANCH changed during push; retrying ($attempt/$max_attempts)"
+            sleep $((attempt * 2))
+          done

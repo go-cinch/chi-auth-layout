@@ -1,0 +1,5 @@
+redis:
+  dsn: "redis://127.0.0.1:6379/0"
+  # Shared by every Redis connection. Override with SERVICE_REDIS_PREFIX.
+  # Use a different environment:service prefix for each deployment namespace.
+  prefix: "dev:auth:"

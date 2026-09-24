@@ -1,0 +1,7 @@
+tracer:
+  enabled: false
+  ratio: 1.0
+  otlp:
+    endpoint: ""
+    insecure: true
+  stdout: false

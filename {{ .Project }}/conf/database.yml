@@ -1,0 +1,9 @@
+database:
+  driver: postgres
+  autoCreate: true
+  dsn: "postgresql://root:password@127.0.0.1:5432/{{ .Computed.service_name_snake }}?sslmode=disable"
+  # Set false when migrations are applied externally; business modules remain enabled.
+  migrate: true
+  maxOpenConns: 20
+  maxIdleConns: 5
+  connMaxLifetime: 30m

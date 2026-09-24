@@ -1,0 +1,33 @@
+auth:
+  authorization:
+    enabled: true
+  switches:
+    passwordResetRequired: true
+    protectSuper: false
+    protectCaptchaDictionaries: false
+  jwt:
+    issuer: "{{ .Computed.service_name_final }}"
+    key: "{{ randAlphaNum 64 }}"
+    lifetime: 15m
+  refresh:
+    sessionLifetime: 12h
+    rememberLifetime: 720h
+  challengeEncryption:
+    keyId: "challenge-v1"
+    # Empty generates an ephemeral RSA-3072 key for local, single-instance use.
+    # Production replicas must mount and share the same PKCS#8 or PKCS#1 PEM key.
+    privateKeyFile: ""
+    ttl: 1m
+  pointCaptcha:
+    # Require point selection after this many consecutive wrong passwords.
+    threshold: 5
+    ttl: 2m
+    width: 300
+    height: 180
+    tolerance: 22
+  passwordChange:
+    # Temporarily require point selection after repeated incorrect current passwords.
+    threshold: 3
+    # Persistently disable self-service password changes at this many failures.
+    lockThreshold: 6
+    failureTTL: 10m

@@ -1,0 +1,4 @@
+idempotency:
+  # A key is consumed atomically for this long. Redis-backed projects share
+  # claims across replicas; projects without Redis use the local process.
+  ttl: 1h

@@ -1,0 +1,4 @@
+redact:
+  keys:
+    - customerNumber
+    - auth.jwt.key

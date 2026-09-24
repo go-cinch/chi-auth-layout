@@ -1,0 +1,43 @@
+#!/bin/sh
+
+set -eu
+
+project_dir='{{ .Project }}'
+binary_name='{{ .Computed.service_name_kebab }}'
+
+cd "$project_dir"
+
+seed_file='./internal/infra/db/migrations/YYYYMMDDHH-02-auth-default-data.sql'
+if [ -f "$seed_file" ]; then
+  printf '\nRandomizing default seed codes...\n'
+  go run ./internal/cmd/seedcode -file "$seed_file"
+  rm -r './internal/cmd/seedcode'
+fi
+
+if [ -d './internal/infra/db/migrations' ]; then
+  timestamp=$(date +"%Y%m%d%H")
+  for file in ./internal/infra/db/migrations/YYYYMMDDHH-*; do
+    [ -f "$file" ] || continue
+    base=$(basename "$file")
+    target="./internal/infra/db/migrations/$timestamp-${base#YYYYMMDDHH-}"
+    mv "$file" "$target"
+  done
+fi
+
+printf '\nGenerating typed configuration...\n'
+make gen
+
+printf '\nFormatting generated project...\n'
+gofmt -w .
+
+printf 'Resolving Go modules...\n'
+go mod tidy
+
+printf 'Running tests...\n'
+go test ./...
+
+printf 'Building %s...\n' "$binary_name"
+mkdir -p ./bin
+go build -o "./bin/$binary_name" ./cmd/server
+
+printf '\nProject initialized successfully.\n'

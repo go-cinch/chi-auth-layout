@@ -12,11 +12,7 @@ COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
 COPY . .
-RUN if [ -n "$VERSION" ]; then \
-        make build VERSION="$VERSION"; \
-    else \
-        make build; \
-    fi
+RUN make build VERSION="$VERSION"
 
 FROM alpine:3.23
 

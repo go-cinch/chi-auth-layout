@@ -489,6 +489,9 @@ func TestRedisChallengeStore(t *testing.T) {
 	if err := store.Put(t.Context(), "abc", "key-1", time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	if client.values["credential:challenge:abc"] != "key-1" {
+		t.Fatalf("credential challenge keys = %#v", client.values)
+	}
 	if keyID, err := store.Take(t.Context(), "abc"); err != nil || keyID != "key-1" {
 		t.Fatalf("take = %q, %v", keyID, err)
 	}

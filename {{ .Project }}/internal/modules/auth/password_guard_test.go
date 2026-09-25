@@ -132,6 +132,9 @@ func TestRedisPasswordFailureStore(t *testing.T) {
 	if count, err := store.Increment(t.Context(), 7, time.Minute); err != nil || count != 1 {
 		t.Fatalf("increment count = %d, %v", count, err)
 	}
+	if client.values["password-change:failures:7"] != "1" {
+		t.Fatalf("password failure keys = %#v", client.values)
+	}
 	if count, err := store.Count(t.Context(), 7); err != nil || count != 1 {
 		t.Fatalf("stored count = %d, %v", count, err)
 	}

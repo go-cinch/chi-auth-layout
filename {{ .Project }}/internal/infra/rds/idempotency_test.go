@@ -31,7 +31,7 @@ func TestIdempotencyStoreClaim(t *testing.T) {
 	if err != nil || !claimed {
 		t.Fatalf("Claim() = %v, %v", claimed, err)
 	}
-	if client.key != "idempotent:request-1" || client.value != "1" || client.expiration != time.Hour {
+	if client.key != "idempotency:request:request-1" || client.value != "1" || client.expiration != time.Hour {
 		t.Fatalf("SetNX() = %q, %#v, %v", client.key, client.value, client.expiration)
 	}
 

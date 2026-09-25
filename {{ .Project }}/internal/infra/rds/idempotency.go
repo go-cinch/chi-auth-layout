@@ -8,7 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const idempotencyPrefix = "idempotent:"
+const idempotencyPrefix = "idempotency:request:"
 
 type setNXClient interface {
 	SetNX(context.Context, string, any, time.Duration) *redis.BoolCmd

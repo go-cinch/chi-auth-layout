@@ -305,11 +305,11 @@ func NewRedisSessionStore(client redisSessionClient) SessionStore {
 }
 
 func (s *redisSessionStore) Put(ctx context.Context, sessionID, digest, value string, ttl time.Duration) error {
-	refreshKey := "refresh:" + digest
+	refreshKey := "session:refresh:" + digest
 	if err := s.client.Set(ctx, refreshKey, sessionID, ttl).Err(); err != nil {
 		return err
 	}
-	if err := s.client.Set(ctx, "session:"+sessionID, value, ttl).Err(); err != nil {
+	if err := s.client.Set(ctx, "session:data:"+sessionID, value, ttl).Err(); err != nil {
 		_ = s.client.Del(ctx, refreshKey).Err()
 		return err
 	}
@@ -317,7 +317,7 @@ func (s *redisSessionStore) Put(ctx context.Context, sessionID, digest, value st
 }
 
 func (s *redisSessionStore) TakeRefresh(ctx context.Context, digest string) (string, error) {
-	sessionID, err := s.client.GetDel(ctx, "refresh:"+digest).Result()
+	sessionID, err := s.client.GetDel(ctx, "session:refresh:"+digest).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", ErrSessionNotFound
 	}
@@ -328,7 +328,7 @@ func (s *redisSessionStore) TakeRefresh(ctx context.Context, digest string) (str
 }
 
 func (s *redisSessionStore) Get(ctx context.Context, sessionID string) (string, error) {
-	value, err := s.client.Get(ctx, "session:"+sessionID).Result()
+	value, err := s.client.Get(ctx, "session:data:"+sessionID).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", ErrSessionNotFound
 	}
@@ -336,7 +336,9 @@ func (s *redisSessionStore) Get(ctx context.Context, sessionID string) (string, 
 }
 
 func (s *redisSessionStore) Delete(ctx context.Context, sessionID, digest string) error {
-	return s.client.Del(ctx, "session:"+sessionID, "refresh:"+digest).Err()
+	return s.client.Del(ctx,
+		"session:data:"+sessionID, "session:refresh:"+digest,
+	).Err()
 }
 {{ end -}}
 

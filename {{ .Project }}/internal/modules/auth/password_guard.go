@@ -214,6 +214,7 @@ func (s *redisPasswordFailureStore) Clear(ctx context.Context, userID int64) err
 }
 
 func passwordFailureKey(userID int64) string {
-	return "password-change-failures:" + strconv.FormatInt(userID, 10)
+	return "password-change:failures:" + strconv.FormatInt(userID, 10)
 }
+
 {{ end -}}

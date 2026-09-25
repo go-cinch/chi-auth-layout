@@ -41,27 +41,27 @@ func TestClientPrefixesEveryKeyCommand(t *testing.T) {
 	hook := &captureCommands{}
 	client := testClient(t, "dev:auth:", hook)
 	ctx := t.Context()
-	client.Set(ctx, "session:id", "session:value", time.Minute)
-	client.Get(ctx, "session:id")
-	client.GetDel(ctx, "refresh:digest")
-	keys := []string{"session:id", "refresh:digest"}
+	client.Set(ctx, "session:data:id", "session:value", time.Minute)
+	client.Get(ctx, "session:data:id")
+	client.GetDel(ctx, "session:refresh:digest")
+	keys := []string{"session:data:id", "session:refresh:digest"}
 	client.Del(ctx, keys...)
-	client.SetNX(ctx, "idempotent:request", "1", time.Minute)
+	client.SetNX(ctx, "idempotency:request:id", "1", time.Minute)
 	client.Incr(ctx, "dictionary:cache:version")
 	script := "return redis.call('GET', KEYS[1])"
 	client.Eval(ctx, script, keys, "unchanged:argument")
 	client.Ping(ctx)
-	if !reflect.DeepEqual(keys, []string{"session:id", "refresh:digest"}) {
+	if !reflect.DeepEqual(keys, []string{"session:data:id", "session:refresh:digest"}) {
 		t.Fatalf("caller keys mutated: %v", keys)
 	}
 	want := [][]interface{}{
-		{"set", "dev:auth:session:id", "session:value", "ex", int64(60)},
-		{"get", "dev:auth:session:id"},
-		{"getdel", "dev:auth:refresh:digest"},
-		{"del", "dev:auth:session:id", "dev:auth:refresh:digest"},
-		{"set", "dev:auth:idempotent:request", "1", "ex", int64(60), "nx"},
+		{"set", "dev:auth:session:data:id", "session:value", "ex", int64(60)},
+		{"get", "dev:auth:session:data:id"},
+		{"getdel", "dev:auth:session:refresh:digest"},
+		{"del", "dev:auth:session:data:id", "dev:auth:session:refresh:digest"},
+		{"set", "dev:auth:idempotency:request:id", "1", "ex", int64(60), "nx"},
 		{"incr", "dev:auth:dictionary:cache:version"},
-		{"eval", script, 2, "dev:auth:session:id", "dev:auth:refresh:digest", "unchanged:argument"},
+		{"eval", script, 2, "dev:auth:session:data:id", "dev:auth:session:refresh:digest", "unchanged:argument"},
 		{"ping"},
 	}
 	if !reflect.DeepEqual(hook.commands, want) {
@@ -73,8 +73,8 @@ func TestClientNamespaceIsolation(t *testing.T) {
 	hook := &captureCommands{}
 	for _, prefix := range []string{"dev:auth", "prod:auth:", "dev:order:"} {
 		client := testClient(t, prefix, hook)
-		client.Get(t.Context(), "session:same-id")
-		client.Del(t.Context(), "session:same-id")
+		client.Get(t.Context(), "session:data:same-id")
+		client.Del(t.Context(), "session:data:same-id")
 		cache, err := NewNamespaceCache(client, "dictionary:cache")
 		if err != nil {
 			t.Fatal(err)
@@ -87,7 +87,7 @@ func TestClientNamespaceIsolation(t *testing.T) {
 		}
 	}
 	for index, prefix := range []string{"dev:auth:", "prod:auth:", "dev:order:"} {
-		for offset, key := range []string{"session:same-id", "session:same-id", "dictionary:cache:version", "dictionary:cache:value:0:KEY"} {
+		for offset, key := range []string{"session:data:same-id", "session:data:same-id", "dictionary:cache:version", "dictionary:cache:value:0:KEY"} {
 			if got := hook.commands[index*4+offset][1]; got != prefix+key {
 				t.Fatalf("namespace %s command %d key = %v", prefix, offset, got)
 			}

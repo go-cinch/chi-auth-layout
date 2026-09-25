@@ -481,11 +481,11 @@ func NewRedisChallengeStore(client redisChallengeClient) ChallengeStore {
 }
 
 func (s *redisChallengeStore) Put(ctx context.Context, id, keyID string, ttl time.Duration) error {
-	return s.client.Set(ctx, "credential-challenge:"+id, keyID, ttl).Err()
+	return s.client.Set(ctx, "credential:challenge:"+id, keyID, ttl).Err()
 }
 
 func (s *redisChallengeStore) Take(ctx context.Context, id string) (string, error) {
-	keyID, err := s.client.GetDel(ctx, "credential-challenge:"+id).Result()
+	keyID, err := s.client.GetDel(ctx, "credential:challenge:"+id).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", ErrChallengeNotFound
 	}

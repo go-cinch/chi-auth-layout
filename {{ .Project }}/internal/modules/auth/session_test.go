@@ -103,6 +103,9 @@ func TestRedisSessionStore(t *testing.T) {
 	if err := store.Put(t.Context(), "session", "digest", `{"session_id":"session"}`, time.Hour); err != nil {
 		t.Fatal(err)
 	}
+	if client.values["session:data:session"] == "" || client.values["session:refresh:digest"] != "session" {
+		t.Fatalf("session keys = %#v", client.values)
+	}
 	if value, err := store.Get(t.Context(), "session"); err != nil || value == "" {
 		t.Fatalf("get = %q, %v", value, err)
 	}

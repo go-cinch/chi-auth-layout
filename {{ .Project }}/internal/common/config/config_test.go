@@ -52,21 +52,26 @@ func TestLoadDirAndEnvironmentOverride(t *testing.T) {
 
 func TestAuthSwitchEnvironmentOverrides(t *testing.T) {
 	dir := t.TempDir()
-	content := []byte("auth:\n  switches:\n    passwordResetRequired: true\n    protectSuper: false\n    protectCaptchaDictionaries: false\n")
+	content := []byte("auth:\n  switches:\n    passwordResetRequired: true\n    protectSuper: false\n    protectCaptchaDictionaries: false\n    enableE2ETest: false\n    enableE2ETestFile: \"\"\n")
 	if err := os.WriteFile(filepath.Join(dir, "auth.yml"), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SERVICE_AUTH_SWITCHES_PASSWORDRESETREQUIRED", "false")
 	t.Setenv("SERVICE_AUTH_SWITCHES_PROTECTSUPER", "true")
 	t.Setenv("SERVICE_AUTH_SWITCHES_PROTECTCAPTCHADICTIONARIES", "true")
+	t.Setenv("SERVICE_AUTH_SWITCHES_ENABLEE2ETEST", "true")
+	t.Setenv("SERVICE_AUTH_SWITCHES_ENABLEE2ETESTFILE", "/etc/podinfo/e2e-enabled")
 	cfg, overrides, err := LoadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Auth.Switches.PasswordResetRequired || !cfg.Auth.Switches.ProtectSuper || !cfg.Auth.Switches.ProtectCaptchaDictionaries {
+	if cfg.Auth.Switches.PasswordResetRequired || !cfg.Auth.Switches.ProtectSuper || !cfg.Auth.Switches.ProtectCaptchaDictionaries || !cfg.Auth.Switches.EnableE2ETest {
 		t.Fatalf("auth switches = %#v", cfg.Auth.Switches)
 	}
-	if len(overrides) != 3 {
+	if cfg.Auth.Switches.EnableE2ETestFile != "/etc/podinfo/e2e-enabled" {
+		t.Fatalf("e2e file override = %q", cfg.Auth.Switches.EnableE2ETestFile)
+	}
+	if len(overrides) != 5 {
 		t.Fatalf("auth switch overrides = %#v", overrides)
 	}
 }

@@ -38,7 +38,7 @@ func TestCredentialVersionTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captcha, err := auth.NewPointCaptcha(auth.NewMemoryPointCaptchaStore(), dictionaryModule, 5, time.Minute, 300, 180, 22)
+	captcha, err := auth.NewPointCaptcha(auth.NewMemoryPointCaptchaStore(), dictionaryModule, 5, time.Minute, 300, 180, 22, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,12 +54,20 @@ func TestCredentialVersionTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, captcha, nil, guard, auth.Switches{PasswordResetRequired: true})
+	slider, err := auth.NewSliderCaptcha(auth.NewMemoryPointCaptchaStore(), auth.SliderCaptchaConfig{TTL: time.Minute, MinimumDuration: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, auth.Switches{PasswordResetRequired: true})
 	actions := action.New(store, limits, false)
 	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions, false), auth.Switches{PasswordResetRequired: true})
 	login := func(password string) *auth.LoginResult {
 		t.Helper()
-		result, err := m.Login(ctx, auth.LoginInput{Username: "tester", Password: password})
+		input, err := sliderLoginInput(ctx, slider, "tester", password, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := m.Login(ctx, input)
 		if err != nil {
 			t.Fatal(err)
 		}

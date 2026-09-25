@@ -45,6 +45,7 @@ type Switches struct {
 	PasswordResetRequired      bool
 	ProtectSuper               bool
 	ProtectCaptchaDictionaries bool
+	EnableE2ETest              bool
 }
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{4,49}$`)
@@ -488,6 +489,13 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 		}
 		if !verified {
 			return nil, &loginFailure{cause: ErrPointCaptchaRequired, captchaRequired: true}
+		}
+	} else {
+		if m.sliderCaptcha == nil {
+			return nil, errors.New("slider captcha is unavailable")
+		}
+		if err := m.sliderCaptcha.ConsumeProof(ctx, sliderCaptchaPurposeLogin, input.Username, input.SliderProof); err != nil {
+			return nil, err
 		}
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.passwordHash), []byte(input.Password)) != nil {

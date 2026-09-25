@@ -38,8 +38,6 @@ const (
 	challengePurposeLogin          = "login"
 	challengePurposeRegister       = "register"
 	challengePurposePasswordChange = "password_change"
-	canaryRequestHeader             = "X-Canary"
-	canaryCaptchaAnswerHeader       = "X-Captcha-Answer"
 )
 
 type ChallengeInput struct {
@@ -280,7 +278,7 @@ func (m *Module) verifySlider(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
-	result, err := m.sliderCaptcha.VerifySlider(r.Context(), input, r.Header.Get(canaryRequestHeader), r.Header.Get(canaryCaptchaAnswerHeader))
+	result, err := m.sliderCaptcha.VerifySlider(r.Context(), input)
 	if errors.Is(err, ErrSliderCaptchaRequired) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
 		return
@@ -714,15 +712,11 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
-	if err := m.sliderCaptcha.ConsumeProof(r.Context(), sliderCaptchaPurposeLogin, input.Username, input.SliderProof); errors.Is(err, ErrSliderCaptchaRequired) {
+	loginResult, err := m.Login(r.Context(), input)
+	if errors.Is(err, ErrSliderCaptchaRequired) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
 		return
-	} else if err != nil {
-		slog.ErrorContext(r.Context(), "consume login slider proof failed: "+err.Error())
-		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
-		return
 	}
-	loginResult, err := m.Login(r.Context(), input)
 	if errors.Is(err, ErrInvalid) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrInvalid)
 		return

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -18,19 +17,16 @@ import (
 const (
 	sliderCaptchaPurposeLogin    = "login"
 	sliderCaptchaPurposeRegister = "register"
-	sliderCaptchaCanaryRuntime   = "canary"
 	maxSliderCaptchaTracks       = 128
 )
 
 var ErrSliderCaptchaRequired = apperror.New("AUTH_SLIDER_CAPTCHA_REQUIRED", "slider verification is required")
 
 type SliderCaptchaConfig struct {
-	TTL                time.Duration
-	MinimumDuration    time.Duration
-	RuntimeEnvironment string
-	RuntimeEnvironmentFile string
-	CanaryHeaderValue  string
-	E2EAnswer          string
+	TTL             time.Duration
+	MinimumDuration time.Duration
+	// EnableE2ETest is evaluated per validation. Nil disables E2E.
+	EnableE2ETest   func() bool
 }
 
 type SliderCaptchaChallenge struct {
@@ -61,17 +57,14 @@ type sliderCaptchaRecord struct {
 	Kind          string `json:"kind"`
 	Purpose       string `json:"purpose"`
 	SubjectDigest string `json:"subject_digest"`
-	CanaryOnly    bool   `json:"canary_only,omitempty"`
+	E2EOnly       bool   `json:"e2e_only,omitempty"`
 }
 
 type SliderCaptcha struct {
 	store              PointCaptchaStore
 	ttl                time.Duration
 	minimumDuration    time.Duration
-	runtimeEnvironment string
-	runtimeEnvironmentFile string
-	canaryHeaderValue  string
-	e2eAnswer          string
+	enableE2ETest      func() bool
 }
 
 func NewSliderCaptcha(store PointCaptchaStore, cfg SliderCaptchaConfig) (*SliderCaptcha, error) {
@@ -84,14 +77,14 @@ func NewSliderCaptcha(store PointCaptchaStore, cfg SliderCaptchaConfig) (*Slider
 	if cfg.MinimumDuration < 100*time.Millisecond || cfg.MinimumDuration > 5*time.Second {
 		return nil, errors.New("slider captcha minimum duration must be between 100ms and 5s")
 	}
+	if cfg.EnableE2ETest == nil {
+		cfg.EnableE2ETest = func() bool { return false }
+	}
 	return &SliderCaptcha{
 		store:              store,
 		ttl:                cfg.TTL,
 		minimumDuration:    cfg.MinimumDuration,
-		runtimeEnvironment: strings.TrimSpace(cfg.RuntimeEnvironment),
-		runtimeEnvironmentFile: strings.TrimSpace(cfg.RuntimeEnvironmentFile),
-		canaryHeaderValue:  strings.TrimSpace(cfg.CanaryHeaderValue),
-		e2eAnswer:          cfg.E2EAnswer,
+		enableE2ETest:      cfg.EnableE2ETest,
 	}, nil
 }
 
@@ -114,7 +107,7 @@ func (c *SliderCaptcha) IssueSliderChallenge(ctx context.Context, purpose, usern
 	return &SliderCaptchaChallenge{CaptchaID: id, ExpiredAt: time.Now().Add(c.ttl).UnixMilli()}, nil
 }
 
-func (c *SliderCaptcha) VerifySlider(ctx context.Context, input SliderCaptchaVerification, canaryHeader, e2eAnswer string) (*SliderCaptchaVerificationResult, error) {
+func (c *SliderCaptcha) VerifySlider(ctx context.Context, input SliderCaptchaVerification) (*SliderCaptchaVerificationResult, error) {
 	purpose, username, ok := normalizeSliderCaptchaSubject(input.Purpose, input.Username)
 	if !ok || !validSliderCaptchaID(input.CaptchaID, "slider-challenge") {
 		return nil, ErrSliderCaptchaRequired
@@ -131,15 +124,15 @@ func (c *SliderCaptcha) VerifySlider(ctx context.Context, input SliderCaptchaVer
 		subtle.ConstantTimeCompare([]byte(record.SubjectDigest), []byte(usernameDigest(username))) != 1 {
 		return nil, ErrSliderCaptchaRequired
 	}
-	canaryOnly := c.validCanaryAnswer(canaryHeader, e2eAnswer)
-	if !canaryOnly && !c.validDrag(input) {
+	e2eEnabled := c.enableE2ETest()
+	if !e2eEnabled && !c.validDrag(input) {
 		return nil, ErrSliderCaptchaRequired
 	}
 	proof, err := newSliderCaptchaID("slider-proof")
 	if err != nil {
 		return nil, err
 	}
-	record = sliderCaptchaRecord{Kind: "proof", Purpose: purpose, SubjectDigest: usernameDigest(username), CanaryOnly: canaryOnly}
+	record = sliderCaptchaRecord{Kind: "proof", Purpose: purpose, SubjectDigest: usernameDigest(username), E2EOnly: e2eEnabled}
 	encoded, err := json.Marshal(record)
 	if err != nil {
 		return nil, fmt.Errorf("encode slider captcha proof: %w", err)
@@ -167,28 +160,10 @@ func (c *SliderCaptcha) ConsumeProof(ctx context.Context, purpose, username, pro
 		subtle.ConstantTimeCompare([]byte(record.SubjectDigest), []byte(usernameDigest(username))) != 1 {
 		return ErrSliderCaptchaRequired
 	}
-	if record.CanaryOnly && c.currentRuntimeEnvironment() != sliderCaptchaCanaryRuntime {
+	if record.E2EOnly && !c.enableE2ETest() {
 		return ErrSliderCaptchaRequired
 	}
 	return nil
-}
-
-func (c *SliderCaptcha) validCanaryAnswer(header, answer string) bool {
-	return c.currentRuntimeEnvironment() == sliderCaptchaCanaryRuntime && c.canaryHeaderValue != "" && c.e2eAnswer != "" &&
-		subtle.ConstantTimeCompare([]byte(c.canaryHeaderValue), []byte(header)) == 1 &&
-		subtle.ConstantTimeCompare([]byte(c.e2eAnswer), []byte(answer)) == 1
-}
-
-func (c *SliderCaptcha) currentRuntimeEnvironment() string {
-	runtimeEnvironment := c.runtimeEnvironment
-	if c.runtimeEnvironmentFile != "" {
-		value, err := os.ReadFile(c.runtimeEnvironmentFile)
-		if err != nil {
-			return ""
-		}
-		runtimeEnvironment = strings.TrimSpace(string(value))
-	}
-	return runtimeEnvironment
 }
 
 func (c *SliderCaptcha) validDrag(input SliderCaptchaVerification) bool {
@@ -229,6 +204,5 @@ func newSliderCaptchaID(prefix string) (string, error) {
 }
 
 func validSliderCaptchaID(value, prefix string) bool {
-	// Dot-separated IDs remain readable for the short rolling-deployment window.
-	return strings.HasPrefix(value, prefix+":") || strings.HasPrefix(value, prefix+".")
+	return strings.HasPrefix(value, prefix+":")
 }

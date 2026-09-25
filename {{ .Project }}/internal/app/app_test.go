@@ -59,8 +59,9 @@ func TestAuthSwitchesFromConfig(t *testing.T) {
 	cfg.Auth.Switches.PasswordResetRequired = true
 	cfg.Auth.Switches.ProtectSuper = true
 	cfg.Auth.Switches.ProtectCaptchaDictionaries = true
+	cfg.Auth.Switches.EnableE2ETest = true
 	switches := authSwitchesFromConfig(cfg)
-	if !switches.PasswordResetRequired || !switches.ProtectSuper || !switches.ProtectCaptchaDictionaries {
+	if !switches.PasswordResetRequired || !switches.ProtectSuper || !switches.ProtectCaptchaDictionaries || !switches.EnableE2ETest {
 		t.Fatalf("auth switches = %#v", switches)
 	}
 }

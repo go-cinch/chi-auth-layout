@@ -20,6 +20,25 @@ import (
 	"{{ .Computed.module_name_final }}/internal/modules/user"
 )
 
+func sliderLoginInput(ctx context.Context, slider *auth.SliderCaptcha, username, password string, rememberMe bool) (auth.LoginInput, error) {
+	challenge, err := slider.IssueSliderChallenge(ctx, "login", username)
+	if err != nil {
+		return auth.LoginInput{}, err
+	}
+	verification, err := slider.VerifySlider(ctx, auth.SliderCaptchaVerification{
+		CaptchaID: challenge.CaptchaID, Username: username, Purpose: "login", Duration: 100, Distance: 200, Width: 200,
+		Tracks: []auth.SliderCaptchaTrack{
+			{X: 0, T: 0},
+			{X: 100, T: 50},
+			{X: 200, T: 100},
+		},
+	})
+	if err != nil {
+		return auth.LoginInput{}, err
+	}
+	return auth.LoginInput{Username: username, Password: password, RememberMe: rememberMe, SliderProof: verification.Proof}, nil
+}
+
 func TestFirstLoginPasswordReset(t *testing.T) {
 	store := permissionDatabase(t)
 	ctx := t.Context()
@@ -39,7 +58,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captcha, err := auth.NewPointCaptcha(auth.NewMemoryPointCaptchaStore(), dictionaryModule, 5, time.Minute, 300, 180, 22)
+	captcha, err := auth.NewPointCaptcha(auth.NewMemoryPointCaptchaStore(), dictionaryModule, 5, time.Minute, 300, 180, 22, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,13 +74,21 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, captcha, nil, guard, auth.Switches{PasswordResetRequired: true})
+	slider, err := auth.NewSliderCaptcha(auth.NewMemoryPointCaptchaStore(), auth.SliderCaptchaConfig{TTL: time.Minute, MinimumDuration: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, auth.Switches{PasswordResetRequired: true})
 	actions := action.New(store, limits, false)
 	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions, false), auth.Switches{PasswordResetRequired: true})
 
 	login := func(password string) *auth.LoginResult {
 		t.Helper()
-		result, err := m.Login(ctx, auth.LoginInput{Username: "tester", Password: password, RememberMe: true})
+		input, err := sliderLoginInput(ctx, slider, "tester", password, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := m.Login(ctx, input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,7 +204,10 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	failures := make(chan error, 8)
 	for range 8 {
 		wg.Go(func() {
-			_, err := m.Login(ctx, auth.LoginInput{Username: "tester", Password: "new-secret"})
+			input, err := sliderLoginInput(ctx, slider, "tester", "new-secret", false)
+			if err == nil {
+				_, err = m.Login(ctx, input)
+			}
 			if err != nil {
 				failures <- err
 			}

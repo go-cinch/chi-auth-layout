@@ -86,9 +86,11 @@ type PointCaptcha struct {
 	height     int
 	tolerance  int
 	random     io.Reader
+	enableE2ETest func() bool
 }
 
-func NewPointCaptcha(store PointCaptchaStore, dictionary PointCaptchaDictionary, threshold int64, ttl time.Duration, width, height, tolerance int) (*PointCaptcha, error) {
+// NewPointCaptcha evaluates enableE2ETest per validation; nil disables E2E.
+func NewPointCaptcha(store PointCaptchaStore, dictionary PointCaptchaDictionary, threshold int64, ttl time.Duration, width, height, tolerance int, enableE2ETest func() bool) (*PointCaptcha, error) {
 	if store == nil {
 		return nil, errors.New("point captcha store is required")
 	}
@@ -107,9 +109,12 @@ func NewPointCaptcha(store PointCaptchaStore, dictionary PointCaptchaDictionary,
 	if tolerance < 8 || tolerance > 40 {
 		return nil, errors.New("point captcha tolerance must be between 8 and 40 pixels")
 	}
+	if enableE2ETest == nil {
+		enableE2ETest = func() bool { return false }
+	}
 	return &PointCaptcha{
 		store: store, dictionary: dictionary, threshold: threshold, ttl: ttl, width: width, height: height,
-		tolerance: tolerance, random: rand.Reader,
+		tolerance: tolerance, random: rand.Reader, enableE2ETest: enableE2ETest,
 	}, nil
 }
 
@@ -167,7 +172,8 @@ func (c *PointCaptcha) CheckPasswordChange(ctx context.Context, subject, captcha
 
 func (c *PointCaptcha) verify(ctx context.Context, purpose, subjectDigest, captchaID string, points []CaptchaPoint) (bool, error) {
 	captchaID = strings.TrimSpace(captchaID)
-	if captchaID == "" || len(captchaID) > 128 || !validPointCaptchaID(captchaID, purpose) || !validPointCaptchaTargetCount(len(points)) {
+	e2eEnabled := c.enableE2ETest()
+	if captchaID == "" || len(captchaID) > 128 || !validPointCaptchaID(captchaID, purpose) || (!e2eEnabled && !validPointCaptchaTargetCount(len(points))) {
 		return false, nil
 	}
 	value, err := c.store.Take(ctx, captchaID)
@@ -178,7 +184,7 @@ func (c *PointCaptcha) verify(ctx context.Context, purpose, subjectDigest, captc
 		return false, fmt.Errorf("consume point captcha: %w", err)
 	}
 	answer, err := decodePointCaptchaAnswer(value)
-	if err != nil || !pointCaptchaAnswerMatches(answer, purpose, subjectDigest, points, c.tolerance) {
+	if err != nil || !pointCaptchaSubjectMatches(answer, purpose, subjectDigest) || (!e2eEnabled && !pointCaptchaAnswerMatches(answer, purpose, subjectDigest, points, c.tolerance)) {
 		return false, nil
 	}
 	return true, nil
@@ -186,7 +192,8 @@ func (c *PointCaptcha) verify(ctx context.Context, purpose, subjectDigest, captc
 
 func (c *PointCaptcha) check(ctx context.Context, purpose, subjectDigest, captchaID string, points []CaptchaPoint) (bool, error) {
 	captchaID = strings.TrimSpace(captchaID)
-	if captchaID == "" || len(captchaID) > 128 || !validPointCaptchaID(captchaID, purpose) || !validPointCaptchaTargetCount(len(points)) {
+	e2eEnabled := c.enableE2ETest()
+	if captchaID == "" || len(captchaID) > 128 || !validPointCaptchaID(captchaID, purpose) || (!e2eEnabled && !validPointCaptchaTargetCount(len(points))) {
 		return false, nil
 	}
 	value, err := c.store.Take(ctx, captchaID)
@@ -197,7 +204,7 @@ func (c *PointCaptcha) check(ctx context.Context, purpose, subjectDigest, captch
 		return false, fmt.Errorf("consume point captcha for check: %w", err)
 	}
 	answer, err := decodePointCaptchaAnswer(value)
-	if err != nil || !pointCaptchaAnswerMatches(answer, purpose, subjectDigest, points, c.tolerance) {
+	if err != nil || !pointCaptchaSubjectMatches(answer, purpose, subjectDigest) || (!e2eEnabled && !pointCaptchaAnswerMatches(answer, purpose, subjectDigest, points, c.tolerance)) {
 		return false, nil
 	}
 	if err := c.store.Put(ctx, captchaID, value, c.ttl); err != nil {
@@ -207,7 +214,7 @@ func (c *PointCaptcha) check(ctx context.Context, purpose, subjectDigest, captch
 }
 
 func pointCaptchaAnswerMatches(answer pointCaptchaAnswer, purpose, subjectDigest string, points []CaptchaPoint, tolerance int) bool {
-	if answer.Purpose != purpose || len(points) != len(answer.Points) || subtle.ConstantTimeCompare([]byte(answer.SubjectDigest), []byte(subjectDigest)) != 1 {
+	if !pointCaptchaSubjectMatches(answer, purpose, subjectDigest) || len(points) != len(answer.Points) {
 		return false
 	}
 	toleranceSquared := tolerance * tolerance
@@ -219,6 +226,10 @@ func pointCaptchaAnswerMatches(answer pointCaptchaAnswer, purpose, subjectDigest
 		}
 	}
 	return true
+}
+
+func pointCaptchaSubjectMatches(answer pointCaptchaAnswer, purpose, subjectDigest string) bool {
+	return answer.Purpose == purpose && subtle.ConstantTimeCompare([]byte(answer.SubjectDigest), []byte(subjectDigest)) == 1
 }
 
 func (c *PointCaptcha) challenge(ctx context.Context, purpose, subjectDigest string) (*PointCaptchaChallenge, error) {
@@ -253,8 +264,7 @@ func pointCaptchaIDPrefix(purpose string) string {
 }
 
 func validPointCaptchaID(value, purpose string) bool {
-	// Dot-separated IDs remain readable for the short rolling-deployment window.
-	return strings.HasPrefix(value, pointCaptchaIDPrefix(purpose)) || strings.HasPrefix(value, purpose+".")
+	return strings.HasPrefix(value, pointCaptchaIDPrefix(purpose))
 }
 
 func decodePointCaptchaAnswer(value string) (pointCaptchaAnswer, error) {

@@ -48,7 +48,7 @@ func newPointCaptchaTestDictionary() PointCaptchaDictionary {
 
 func newPointCaptchaTestManager(t *testing.T, store PointCaptchaStore) *PointCaptcha {
 	t.Helper()
-	manager, err := NewPointCaptcha(store, newPointCaptchaTestDictionary(), 5, time.Minute, 300, 180, 22)
+	manager, err := NewPointCaptcha(store, newPointCaptchaTestDictionary(), 5, time.Minute, 300, 180, 22, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +132,69 @@ func TestPointCaptchaChallengeAndVerify(t *testing.T) {
 	}
 	if ok, err := manager.Verify(t.Context(), "readonly", "", nil); err != nil || ok {
 		t.Fatalf("empty verify = %v, %v", ok, err)
+	}
+}
+
+func TestPointCaptchaE2ETestSwitchWithoutReconstruction(t *testing.T) {
+	for _, operation := range []string{"verify", "check", "verify-password", "check-password"} {
+		t.Run(operation, func(t *testing.T) {
+			store := NewMemoryPointCaptchaStore().(*memoryPointCaptchaStore)
+			enabled := false
+			manager, err := NewPointCaptcha(store, newPointCaptchaTestDictionary(), 1, time.Minute, 300, 180, 20, func() bool { return enabled })
+			if err != nil {
+				t.Fatal(err)
+			}
+			issue := manager.NewChallenge
+			validate := manager.Verify
+			switch operation {
+			case "check":
+				validate = manager.Check
+			case "verify-password":
+				issue, validate = manager.NewPasswordChangeChallenge, manager.VerifyPasswordChange
+			case "check-password":
+				issue, validate = manager.NewPasswordChangeChallenge, manager.CheckPasswordChange
+			}
+			for _, next := range []bool{true, false, true, false} {
+				enabled = next
+				challenge, err := issue(t.Context(), "readonly")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ok, err := validate(t.Context(), "readonly", challenge.CaptchaID, nil); err != nil || ok != enabled {
+					t.Fatalf("e2e=%v: invalid answer accepted=%v, err=%v", enabled, ok, err)
+				}
+				if !enabled {
+					answer := storedPointCaptchaAnswer(t, store, challenge.CaptchaID)
+					if ok, err := validate(t.Context(), "readonly", challenge.CaptchaID, answer.Points); err != nil || !ok {
+						t.Fatalf("valid answer rejected after disabling e2e: %v, %v", ok, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPointCaptchaE2ETestSkipsOnlyTheAnswer(t *testing.T) {
+	store := NewMemoryPointCaptchaStore().(*memoryPointCaptchaStore)
+	manager, err := NewPointCaptcha(store, newPointCaptchaTestDictionary(), 1, time.Minute, 300, 180, 20, func() bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := manager.NewChallenge(t.Context(), "readonly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified, err := manager.Check(t.Context(), "readonly", challenge.CaptchaID, nil); err != nil || !verified {
+		t.Fatalf("e2e check = %v, %v", verified, err)
+	}
+	if verified, err := manager.Verify(t.Context(), "readonly", challenge.CaptchaID, []CaptchaPoint{
+		{X: -1, Y: -1},
+	}); err != nil || !verified {
+		t.Fatalf("e2e verify = %v, %v", verified, err)
+	}
+	challenge, _ = manager.NewChallenge(t.Context(), "readonly")
+	if verified, err := manager.Verify(t.Context(), "other-user", challenge.CaptchaID, nil); err != nil || verified {
+		t.Fatalf("wrong subject bypass = %v, %v", verified, err)
 	}
 }
 
@@ -280,7 +343,7 @@ func TestPointCaptchaGlyphsSupportBidirectionalTilt(t *testing.T) {
 }
 
 func TestPointCaptchaChineseGlyphSizeFitsMinimumCanvas(t *testing.T) {
-	manager, err := NewPointCaptcha(NewMemoryPointCaptchaStore(), newPointCaptchaTestDictionary(), 1, time.Minute, 240, 140, 20)
+	manager, err := NewPointCaptcha(NewMemoryPointCaptchaStore(), newPointCaptchaTestDictionary(), 1, time.Minute, 240, 140, 20, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +402,7 @@ func TestPointCaptchaRefreshAndStores(t *testing.T) {
 }
 
 func TestPointCaptchaPurposeBinding(t *testing.T) {
-	manager, err := NewPointCaptcha(NewMemoryPointCaptchaStore(), newPointCaptchaTestDictionary(), 1, time.Minute, 300, 180, 20)
+	manager, err := NewPointCaptcha(NewMemoryPointCaptchaStore(), newPointCaptchaTestDictionary(), 1, time.Minute, 300, 180, 20, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +439,7 @@ func TestNewPointCaptchaValidation(t *testing.T) {
 		"tolerance":  {validStore, validDictionary, 5, time.Minute, 300, 180, 2},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewPointCaptcha(item.store, item.dictionary, item.threshold, item.ttl, item.width, item.height, item.tolerance); err == nil {
+			if _, err := NewPointCaptcha(item.store, item.dictionary, item.threshold, item.ttl, item.width, item.height, item.tolerance, nil); err == nil {
 				t.Fatal("invalid point captcha configuration was accepted")
 			}
 		})

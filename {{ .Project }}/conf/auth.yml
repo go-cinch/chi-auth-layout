@@ -5,6 +5,10 @@ auth:
     passwordResetRequired: true
     protectSuper: false
     protectCaptchaDictionaries: false
+    enableE2ETest: false
+    # Optional live switch file. Only trimmed "true" enables E2E; read errors disable it.
+    # When set, the file overrides enableE2ETest on every captcha validation.
+    enableE2ETestFile: ""
   jwt:
     issuer: "{{ .Computed.service_name_final }}"
     key: "{{ randAlphaNum 64 }}"
@@ -28,13 +32,6 @@ auth:
   sliderCaptcha:
     ttl: 2m
     minimumDuration: 200ms
-    # Populated from the Rollout pod role. E2E answers are accepted only for canary pods.
-    runtimeEnvironment: "production"
-    # A Downward API volume file takes precedence so an in-place Canary promotion is observed.
-    runtimeEnvironmentFile: ""
-    canaryHeaderValue: "iwantsit"
-    # Leave empty outside deployment secrets. Never commit a real E2E answer.
-    e2eAnswer: ""
   passwordChange:
     # Temporarily require point selection after repeated incorrect current passwords.
     threshold: 3

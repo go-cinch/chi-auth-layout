@@ -33,7 +33,7 @@ func validSliderProof(t *testing.T, slider *SliderCaptcha, purpose, username str
 			{X: 100, T: 50},
 			{X: 200, T: 100},
 		},
-	}, "", "")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +236,7 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
 	request(http.MethodPost, "/auth/pub/login", string(missingLoginProof), "", http.StatusBadRequest)
 
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
@@ -294,7 +295,11 @@ func TestAuthHTTP(t *testing.T) {
 		t.Fatalf("correct-order verification: %s %v", verifiedRecorder.Body.String(), err)
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive, 5))
-	invalidCaptchaRecorder := request(http.MethodPost, "/auth/pub/login", loginBody("readonly", "cinch123"), "", http.StatusUnauthorized)
+	invalidCaptchaBody, err := json.Marshal(encryptedLoginInput(t, m.credentials, "readonly", "cinch123"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidCaptchaRecorder := request(http.MethodPost, "/auth/pub/login", string(invalidCaptchaBody), "", http.StatusUnauthorized)
 	var invalidCaptchaFailure LoginFailureResponse
 	if err := json.Unmarshal(invalidCaptchaRecorder.Body.Bytes(), &invalidCaptchaFailure); err != nil || invalidCaptchaFailure.Msg != ErrPointCaptchaRequired.Error() || !invalidCaptchaFailure.CaptchaRequired || invalidCaptchaFailure.Captcha == nil {
 		t.Fatalf("invalid captcha failure: %s %v", invalidCaptchaRecorder.Body.String(), err)

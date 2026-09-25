@@ -1,5 +1,7 @@
 FROM golang:1.27.1-alpine3.23 AS builder
 
+ARG VERSION
+
 ENV CGO_ENABLED=0
 
 RUN apk add --no-cache ca-certificates git make{{ if .Computed.enable_grpc_final }} protobuf{{ end }}
@@ -10,7 +12,11 @@ COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
 COPY . .
-RUN make build
+RUN if [ -n "$VERSION" ]; then \
+        make build VERSION="$VERSION"; \
+    else \
+        make build; \
+    fi
 
 FROM alpine:3.23
 

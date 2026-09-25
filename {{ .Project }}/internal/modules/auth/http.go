@@ -38,6 +38,8 @@ const (
 	challengePurposeLogin          = "login"
 	challengePurposeRegister       = "register"
 	challengePurposePasswordChange = "password_change"
+	canaryRequestHeader             = "X-Canary"
+	canaryCaptchaAnswerHeader       = "X-Captcha-Answer"
 )
 
 type ChallengeInput struct {
@@ -46,6 +48,11 @@ type ChallengeInput struct {
 
 type RefreshTokenInput struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+type SliderChallengeInput struct {
+	Purpose  string `json:"purpose"`
+	Username string `json:"username"`
 }
 
 func PermissionTargetFromRequest(r *http.Request) PermissionTarget {
@@ -82,6 +89,8 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("/pub/register/username", m.usernameAvailability)
 	r.POST("/pub/challenge", m.publicChallenge)
 	r.POST("/pub/register", m.register)
+	r.POST("/pub/slider/challenge", m.sliderChallenge)
+	r.POST("/pub/slider/verify", m.verifySlider)
 	r.GET("/pub/login/verification", m.loginVerification)
 	r.POST("/pub/captcha", m.refreshLoginCaptcha)
 	r.POST("/pub/captcha/verify", m.verifyLoginCaptcha)
@@ -103,6 +112,8 @@ func (m *Module) HTTP() http.Handler {
 	r.Get("/pub/register/username", m.usernameAvailability)
 	r.Post("/pub/challenge", m.publicChallenge)
 	r.Post("/pub/register", m.register)
+	r.Post("/pub/slider/challenge", m.sliderChallenge)
+	r.Post("/pub/slider/verify", m.verifySlider)
 	r.Get("/pub/login/verification", m.loginVerification)
 	r.Post("/pub/captcha", m.refreshLoginCaptcha)
 	r.Post("/pub/captcha/verify", m.verifyLoginCaptcha)
@@ -221,6 +232,68 @@ func (m *Module) publicChallenge(w http.ResponseWriter, r *http.Request) {
 }
 
 {{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) sliderChallenge(c *gin.Context) {
+	w, r := c.Writer, c.Request
+{{ else -}}
+func (m *Module) sliderChallenge(w http.ResponseWriter, r *http.Request) {
+{{ end }}
+	w.Header().Set("Cache-Control", "no-store")
+	var input SliderChallengeInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
+		return
+	}
+	sliderChallenge, err := m.sliderCaptcha.IssueSliderChallenge(r.Context(), input.Purpose, input.Username)
+	if errors.Is(err, ErrSliderCaptchaRequired) {
+		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
+		return
+	}
+	if err != nil {
+		slog.ErrorContext(r.Context(), "create slider captcha challenge failed: "+err.Error())
+		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
+		return
+	}
+	server.WriteOK(w, sliderChallenge)
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) verifySlider(c *gin.Context) {
+	w, r := c.Writer, c.Request
+{{ else -}}
+func (m *Module) verifySlider(w http.ResponseWriter, r *http.Request) {
+{{ end }}
+	w.Header().Set("Cache-Control", "no-store")
+	var input SliderCaptchaVerification
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
+		return
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
+		return
+	}
+	result, err := m.sliderCaptcha.VerifySlider(r.Context(), input, r.Header.Get(canaryRequestHeader), r.Header.Get(canaryCaptchaAnswerHeader))
+	if errors.Is(err, ErrSliderCaptchaRequired) {
+		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
+		return
+	}
+	if err != nil {
+		slog.ErrorContext(r.Context(), "verify slider captcha failed: "+err.Error())
+		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
+		return
+	}
+	server.WriteOK(w, result)
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) register(c *gin.Context) {
 	w, r := c.Writer, c.Request
 {{ else -}}
@@ -244,6 +317,14 @@ func (m *Module) register(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.ErrorContext(r.Context(), "decrypt registration credential failed: "+err.Error())
+		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
+		return
+	}
+	if err := m.sliderCaptcha.ConsumeProof(r.Context(), sliderCaptchaPurposeRegister, input.Username, input.SliderProof); errors.Is(err, ErrSliderCaptchaRequired) {
+		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
+		return
+	} else if err != nil {
+		slog.ErrorContext(r.Context(), "consume registration slider proof failed: "+err.Error())
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -630,6 +711,14 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.ErrorContext(r.Context(), "decrypt login credential failed: "+err.Error())
+		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
+		return
+	}
+	if err := m.sliderCaptcha.ConsumeProof(r.Context(), sliderCaptchaPurposeLogin, input.Username, input.SliderProof); errors.Is(err, ErrSliderCaptchaRequired) {
+		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
+		return
+	} else if err != nil {
+		slog.ErrorContext(r.Context(), "consume login slider proof failed: "+err.Error())
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}

@@ -81,6 +81,9 @@ func TestPointCaptchaChallengeAndVerify(t *testing.T) {
 	if challenge.CaptchaID == "" || !validPointCaptchaTargetCount(challenge.TargetCount) || challenge.Width != 300 || challenge.Height != 180 || challenge.ExpiredAt <= time.Now().UnixMilli() {
 		t.Fatalf("challenge = %#v", challenge)
 	}
+	if !strings.HasPrefix(challenge.CaptchaID, "login:") || strings.Count(challenge.CaptchaID, ":") != 1 || strings.Contains(challenge.CaptchaID, ".") {
+		t.Fatalf("login captcha id = %q", challenge.CaptchaID)
+	}
 	const prefix = "data:image/png;base64,"
 	if !strings.HasPrefix(challenge.CaptchaImage, prefix) || strings.Count(challenge.HintText, "·") != challenge.TargetCount-1 {
 		t.Fatalf("challenge content = %#v", challenge)
@@ -144,24 +147,24 @@ func TestPointCaptchaCheckRejectsWrongOrderAndPreservesCorrectAnswer(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put(t.Context(), "login.wrong-order", string(encoded), time.Minute); err != nil {
+	if err := store.Put(t.Context(), "login:wrong-order", string(encoded), time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	wrongOrder := []CaptchaPoint{answer.Points[1], answer.Points[0]}
-	if verified, err := manager.Check(t.Context(), "readonly", "login.wrong-order", wrongOrder); err != nil || verified {
+	if verified, err := manager.Check(t.Context(), "readonly", "login:wrong-order", wrongOrder); err != nil || verified {
 		t.Fatalf("wrong-order check = %v, %v", verified, err)
 	}
-	if verified, err := manager.Verify(t.Context(), "readonly", "login.wrong-order", answer.Points); err != nil || verified {
+	if verified, err := manager.Verify(t.Context(), "readonly", "login:wrong-order", answer.Points); err != nil || verified {
 		t.Fatalf("consumed wrong-order captcha = %v, %v", verified, err)
 	}
 
-	if err := store.Put(t.Context(), "login.correct-order", string(encoded), time.Minute); err != nil {
+	if err := store.Put(t.Context(), "login:correct-order", string(encoded), time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if verified, err := manager.Check(t.Context(), "readonly", "login.correct-order", answer.Points); err != nil || !verified {
+	if verified, err := manager.Check(t.Context(), "readonly", "login:correct-order", answer.Points); err != nil || !verified {
 		t.Fatalf("correct-order check = %v, %v", verified, err)
 	}
-	if verified, err := manager.Verify(t.Context(), "readonly", "login.correct-order", answer.Points); err != nil || !verified {
+	if verified, err := manager.Verify(t.Context(), "readonly", "login:correct-order", answer.Points); err != nil || !verified {
 		t.Fatalf("preserved correct-order captcha = %v, %v", verified, err)
 	}
 }
@@ -327,10 +330,10 @@ func TestPointCaptchaRefreshAndStores(t *testing.T) {
 	if _, err := store.Take(t.Context(), "expired"); !errors.Is(err, ErrPointCaptchaNotFound) {
 		t.Fatalf("expired error = %v", err)
 	}
-	if err := store.Put(t.Context(), "login.invalid", `{}`, time.Minute); err != nil {
+	if err := store.Put(t.Context(), "login:invalid", `{}`, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.RefreshChallenge(t.Context(), "login.invalid"); !errors.Is(err, ErrPointCaptchaNotFound) {
+	if _, err := manager.RefreshChallenge(t.Context(), "login:invalid"); !errors.Is(err, ErrPointCaptchaNotFound) {
 		t.Fatalf("invalid answer error = %v", err)
 	}
 }
@@ -392,10 +395,10 @@ func TestPointCaptchaStoreFailures(t *testing.T) {
 	if _, err := manager.NewChallenge(t.Context(), "readonly"); !errors.Is(err, expected) {
 		t.Fatalf("challenge error = %v", err)
 	}
-	if _, err := manager.RefreshChallenge(t.Context(), "login.id"); !errors.Is(err, expected) {
+	if _, err := manager.RefreshChallenge(t.Context(), "login:id"); !errors.Is(err, expected) {
 		t.Fatalf("refresh error = %v", err)
 	}
-	if ok, err := manager.Verify(t.Context(), "readonly", "login.id", make([]CaptchaPoint, pointCaptchaMinTargetCount)); ok || !errors.Is(err, expected) {
+	if ok, err := manager.Verify(t.Context(), "readonly", "login:id", make([]CaptchaPoint, pointCaptchaMinTargetCount)); ok || !errors.Is(err, expected) {
 		t.Fatalf("verify = %v, %v", ok, err)
 	}
 }

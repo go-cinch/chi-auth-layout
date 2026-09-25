@@ -53,6 +53,7 @@ type Application struct {
 	credentials      *authmodule.Credentials
 	loginSessions    *authmodule.Sessions
 	loginCaptcha     *authmodule.PointCaptcha
+	sliderCaptcha    *authmodule.SliderCaptcha
 	passwordGuard    *authmodule.PasswordChangeGuard
 	authSwitches     authmodule.Switches
 	actionModule     *actionmodule.Module
@@ -182,6 +183,10 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 		cleanup()
 		return nil, fmt.Errorf("initialize point captcha: %w", err)
 	}
+	sliderCaptcha, err := initializeSliderCaptcha(cfg, pointCaptchaStore, cleanup)
+	if err != nil {
+		return nil, err
+	}
 	passwordGuard, err := authmodule.NewPasswordChangeGuard(
 		passwordFailureStore,
 		loginCaptcha,
@@ -216,6 +221,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 		credentials:      credentials,
 		loginSessions: loginSessions,
 		loginCaptcha: loginCaptcha,
+		sliderCaptcha: sliderCaptcha,
 		passwordGuard: passwordGuard,
 		authSwitches: authSwitches,
 		dictionaryModule: dictionaryModule,
@@ -238,6 +244,26 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	return application, nil
 }
 
+func sliderCaptchaFromConfig(cfg *config.Config, store authmodule.PointCaptchaStore) (*authmodule.SliderCaptcha, error) {
+	return authmodule.NewSliderCaptcha(store, authmodule.SliderCaptchaConfig{
+		TTL: cfg.Auth.SliderCaptcha.TTL,
+		MinimumDuration: cfg.Auth.SliderCaptcha.MinimumDuration,
+		RuntimeEnvironment: cfg.Auth.SliderCaptcha.RuntimeEnvironment,
+		RuntimeEnvironmentFile: cfg.Auth.SliderCaptcha.RuntimeEnvironmentFile,
+		CanaryHeaderValue: cfg.Auth.SliderCaptcha.CanaryHeaderValue,
+		E2EAnswer: cfg.Auth.SliderCaptcha.E2EAnswer,
+	})
+}
+
+func initializeSliderCaptcha(cfg *config.Config, store authmodule.PointCaptchaStore, cleanup func()) (*authmodule.SliderCaptcha, error) {
+	sliderCaptcha, err := sliderCaptchaFromConfig(cfg, store)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("initialize slider captcha: %w", err)
+	}
+	return sliderCaptcha, nil
+}
+
 func authSwitchesFromConfig(cfg *config.Config) authmodule.Switches {
 	return authmodule.Switches{
 		PasswordResetRequired:       cfg.Auth.Switches.PasswordResetRequired,
@@ -253,7 +279,7 @@ func (a *Application) wireBusinessModules() {
 	a.roleModule = rolemodule.New(a.db, a.pagination, a.actionModule, a.authSwitches.ProtectSuper)
 	a.userModule = usermodule.New(a.db, a.pagination, a.credentials, a.passwordGuard, a.actionModule, a.roleModule, a.authSwitches)
 	a.groupModule = groupmodule.New(a.db, a.pagination, a.actionModule, a.userModule)
-	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.passwordGuard, a.authSwitches)
+	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.authSwitches)
 	a.whitelistModule = whitelistmodule.New(a.db, a.pagination)
 }
 

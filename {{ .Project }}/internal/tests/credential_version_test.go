@@ -54,7 +54,7 @@ func TestCredentialVersionTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, captcha, guard, auth.Switches{PasswordResetRequired: true})
+	m := auth.New(store, manager, nil, sessions, captcha, nil, guard, auth.Switches{PasswordResetRequired: true})
 	actions := action.New(store, limits, false)
 	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions, false), auth.Switches{PasswordResetRequired: true})
 	login := func(password string) *auth.LoginResult {
@@ -132,7 +132,7 @@ func TestCredentialVersionTransactions(t *testing.T) {
 	version(3)
 	reject(a, b)
 	exec(`UPDATE t_user SET login_count=1 WHERE id=101`)
- a, b = login(resetPassword), login(resetPassword)
+	a, b = login(resetPassword), login(resetPassword)
 	aCtx, err = authenticate(a.AccessToken)
 	if err != nil {
 		t.Fatal(err)

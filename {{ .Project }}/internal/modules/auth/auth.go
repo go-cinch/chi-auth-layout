@@ -37,13 +37,13 @@ var (
 const PasswordChangeFailuresMetadataKey = "password_change_failures"
 
 const (
-	SuperUserID int64 = 1
-	SuperUsername     = "super"
+	SuperUserID   int64 = 1
+	SuperUsername       = "super"
 )
 
 type Switches struct {
-	PasswordResetRequired       bool
-	ProtectSuper                bool
+	PasswordResetRequired      bool
+	ProtectSuper               bool
 	ProtectCaptchaDictionaries bool
 }
 
@@ -55,6 +55,7 @@ type LoginInput struct {
 	RememberMe    bool           `json:"remember_me"`
 	CaptchaID     string         `json:"captcha_id,omitempty"`
 	CaptchaPoints []CaptchaPoint `json:"captcha_points,omitempty"`
+	SliderProof   string         `json:"slider_proof,omitempty"`
 }
 
 type LoginResult struct {
@@ -75,8 +76,9 @@ type PointCaptchaVerificationResult struct {
 }
 
 type RegisterInput struct {
-	Username string `json:"username" example:"operator"`
-	Password string `json:"password" example:"change-me"`
+	Username    string `json:"username" example:"operator"`
+	Password    string `json:"password" example:"change-me"`
+	SliderProof string `json:"slider_proof,omitempty"`
 }
 
 type PasswordChangeInput struct {
@@ -151,12 +153,13 @@ type Module struct {
 	credentials   *Credentials
 	sessions      *Sessions
 	captcha       *PointCaptcha
+	sliderCaptcha *SliderCaptcha
 	passwordGuard *PasswordChangeGuard
 	switches      Switches
 }
 
-func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, passwordGuard *PasswordChangeGuard, switches Switches) *Module {
-	return &Module{store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, passwordGuard: passwordGuard, switches: switches}
+func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, switches Switches) *Module {
+	return &Module{store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, switches: switches}
 }
 
 func (m *Module) Register(ctx context.Context, input RegisterInput) error {

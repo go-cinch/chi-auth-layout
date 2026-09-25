@@ -16,6 +16,7 @@ import (
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/modules"
+	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 	dictionarymodule "{{ .Computed.module_name_final }}/internal/modules/dictionary"
 
 )
@@ -61,6 +62,28 @@ func TestAuthSwitchesFromConfig(t *testing.T) {
 	switches := authSwitchesFromConfig(cfg)
 	if !switches.PasswordResetRequired || !switches.ProtectSuper || !switches.ProtectCaptchaDictionaries {
 		t.Fatalf("auth switches = %#v", switches)
+	}
+}
+
+func TestSliderCaptchaFromConfig(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Auth.SliderCaptcha.TTL = time.Minute
+	cfg.Auth.SliderCaptcha.MinimumDuration = time.Second
+	if _, err := sliderCaptchaFromConfig(cfg, authmodule.NewMemoryPointCaptchaStore()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Auth.SliderCaptcha.TTL = 0
+	if _, err := sliderCaptchaFromConfig(cfg, authmodule.NewMemoryPointCaptchaStore()); err == nil {
+		t.Fatal("invalid slider captcha configuration was accepted")
+	}
+}
+
+func TestInitializeSliderCaptchaCleansUpInvalidConfiguration(t *testing.T) {
+	cfg := &config.Config{}
+	cleaned := false
+	_, err := initializeSliderCaptcha(cfg, authmodule.NewMemoryPointCaptchaStore(), func() { cleaned = true })
+	if err == nil || !strings.Contains(err.Error(), "initialize slider captcha") || !cleaned {
+		t.Fatalf("initialize slider captcha = %v, cleaned=%v", err, cleaned)
 	}
 }
 

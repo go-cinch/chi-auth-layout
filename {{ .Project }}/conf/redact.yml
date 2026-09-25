@@ -2,3 +2,4 @@ redact:
   keys:
     - customerNumber
     - auth.jwt.key
+    - auth.sliderCaptcha.e2eAnswer

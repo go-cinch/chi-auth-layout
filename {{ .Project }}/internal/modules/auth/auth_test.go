@@ -48,7 +48,11 @@ func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) 
 	if guardErr != nil {
 		t.Fatal(guardErr)
 	}
-	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, passwordGuard, Switches{PasswordResetRequired: true}), authenticator, mock
+	slider, sliderErr := NewSliderCaptcha(NewMemoryPointCaptchaStore(), SliderCaptchaConfig{TTL: time.Minute, MinimumDuration: 100 * time.Millisecond})
+	if sliderErr != nil {
+		t.Fatal(sliderErr)
+	}
+	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, slider, passwordGuard, Switches{PasswordResetRequired: true}), authenticator, mock
 }
 
 func passwordHash(t *testing.T, password string) string {

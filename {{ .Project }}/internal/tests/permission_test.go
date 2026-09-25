@@ -116,7 +116,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, nil, nil, auth.Switches{PasswordResetRequired: true})
+	m := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true})
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	handler, err := server.NewRouter(cfg, manager, nil, m)
@@ -229,7 +229,7 @@ func TestPermissionSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx = request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, auth.Switches{PasswordResetRequired: true})
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{PasswordResetRequired: true})
 	info, err := m.Info(ctx)
 	if err != nil {
 		t.Fatal(err)

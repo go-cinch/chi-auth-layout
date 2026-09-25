@@ -55,7 +55,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, captcha, guard, auth.Switches{PasswordResetRequired: true})
+	m := auth.New(store, manager, nil, sessions, captcha, nil, guard, auth.Switches{PasswordResetRequired: true})
 	actions := action.New(store, limits, false)
 	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions, false), auth.Switches{PasswordResetRequired: true})
 

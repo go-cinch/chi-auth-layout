@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,6 +40,9 @@ func TestPasswordChangeGuard(t *testing.T) {
 	challenge, err := guard.NewChallenge(t.Context(), 7)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(challenge.CaptchaID, "password-change:") || strings.Count(challenge.CaptchaID, ":") != 1 || strings.Contains(challenge.CaptchaID, ".") {
+		t.Fatalf("password-change captcha id = %q", challenge.CaptchaID)
 	}
 	answer := storedPointCaptchaAnswer(t, captchaStore, challenge.CaptchaID)
 	if verified, err := guard.Check(t.Context(), 7, challenge.CaptchaID, answer.Points); err != nil || !verified {

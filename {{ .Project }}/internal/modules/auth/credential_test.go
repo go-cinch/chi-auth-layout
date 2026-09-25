@@ -77,6 +77,10 @@ func encryptLoginCredential(t *testing.T, credentials *Credentials, payload logi
 }
 
 func encryptedLoginInput(t *testing.T, credentials *Credentials, username, password string, remembered ...bool) EncryptedLoginInput {
+	return encryptedLoginInputWithProof(t, credentials, username, password, "", remembered...)
+}
+
+func encryptedLoginInputWithProof(t *testing.T, credentials *Credentials, username, password, sliderProof string, remembered ...bool) EncryptedLoginInput {
 	t.Helper()
 	challenge, err := credentials.Challenge(t.Context())
 	if err != nil {
@@ -88,6 +92,7 @@ func encryptedLoginInput(t *testing.T, credentials *Credentials, username, passw
 		Username:    username,
 		Password:    password,
 		RememberMe:  rememberMe,
+		SliderProof: sliderProof,
 	}, true)
 	return EncryptedLoginInput{ChallengeID: challenge.ChallengeID, Credential: credential}
 }
@@ -122,6 +127,10 @@ func encryptRegisterCredential(t *testing.T, credentials *Credentials, payload a
 }
 
 func encryptedRegisterInput(t *testing.T, credentials *Credentials, username, password string) EncryptedRegisterInput {
+	return encryptedRegisterInputWithProof(t, credentials, username, password, "")
+}
+
+func encryptedRegisterInputWithProof(t *testing.T, credentials *Credentials, username, password, sliderProof string) EncryptedRegisterInput {
 	t.Helper()
 	challenge, err := credentials.RegistrationChallenge(t.Context())
 	if err != nil {
@@ -131,6 +140,7 @@ func encryptedRegisterInput(t *testing.T, credentials *Credentials, username, pa
 		ChallengeID: challenge.ChallengeID,
 		Username:    username,
 		Password:    password,
+		SliderProof: sliderProof,
 	}, true)
 	return EncryptedRegisterInput{ChallengeID: challenge.ChallengeID, Credential: credential}
 }

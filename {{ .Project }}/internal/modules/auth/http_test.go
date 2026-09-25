@@ -7,12 +7,38 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/server"
 )
+
+func validSliderProof(t *testing.T, slider *SliderCaptcha, purpose, username string) string {
+	t.Helper()
+	challenge, err := slider.IssueSliderChallenge(t.Context(), purpose, username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := slider.VerifySlider(t.Context(), SliderCaptchaVerification{
+		CaptchaID: challenge.CaptchaID,
+		Username:  username,
+		Purpose:   purpose,
+		Duration:  int((100 * time.Millisecond) / time.Millisecond),
+		Distance:  200,
+		Width:     200,
+		Tracks: []SliderCaptchaTrack{
+			{X: 0, T: 0},
+			{X: 100, T: 50},
+			{X: 200, T: 100},
+		},
+	}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.Proof
+}
 
 func TestPermissionTargetFromRequest(t *testing.T) {
 	request := httptest.NewRequest("GET", "/auth/permission", nil)
@@ -143,13 +169,18 @@ func TestAuthHTTP(t *testing.T) {
 	request(http.MethodPost, "/auth/pub/register", `{"challenge_id":"missing","credential":"invalid"}`, "", http.StatusBadRequest)
 	registerBody := func(username, password string) string {
 		t.Helper()
-		input := encryptedRegisterInput(t, m.credentials, username, password)
+		input := encryptedRegisterInputWithProof(t, m.credentials, username, password, validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeRegister, username))
 		body, err := json.Marshal(input)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return string(body)
 	}
+	missingRegisterProof, err := json.Marshal(encryptedRegisterInput(t, m.credentials, "new-user", "secret1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodPost, "/auth/pub/register", string(missingRegisterProof), "", http.StatusBadRequest)
 	request(http.MethodPost, "/auth/pub/register", registerBody("tiny", "secret1"), "", http.StatusBadRequest)
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(36)))
 	mock.ExpectExec("INSERT INTO t_user").WillReturnError(&pq.Error{Code: "23505", Constraint: "uk_user_username"})
@@ -194,13 +225,18 @@ func TestAuthHTTP(t *testing.T) {
 
 	loginBody := func(username, password string, rememberMe ...bool) string {
 		t.Helper()
-		input := encryptedLoginInput(t, m.credentials, username, password, rememberMe...)
+		input := encryptedLoginInputWithProof(t, m.credentials, username, password, validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, username), rememberMe...)
 		body, err := json.Marshal(input)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return string(body)
 	}
+	missingLoginProof, err := json.Marshal(encryptedLoginInput(t, m.credentials, "readonly", "cinch123"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodPost, "/auth/pub/login", string(missingLoginProof), "", http.StatusBadRequest)
 
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
 	mock.ExpectQuery("UPDATE t_user SET wrong").WithArgs(sqlmock.AnyArg(), int64(3)).WillReturnRows(sqlmock.NewRows([]string{"wrong"}).AddRow(int64(1)))
@@ -453,7 +489,7 @@ func TestLocalizedAuthFailures(t *testing.T) {
 		{"en-US", "invalid captcha"}, {"zh-CN", "验证码无效，请重新验证"},
 	} {
 		mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive, 5))
-		body, err := json.Marshal(encryptedLoginInput(t, m.credentials, "readonly", "cinch123"))
+		body, err := json.Marshal(encryptedLoginInputWithProof(t, m.credentials, "readonly", "cinch123", validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")))
 		if err != nil {
 			t.Fatal(err)
 		}

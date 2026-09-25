@@ -25,6 +25,16 @@ auth:
     width: 300
     height: 180
     tolerance: 22
+  sliderCaptcha:
+    ttl: 2m
+    minimumDuration: 200ms
+    # Populated from the Rollout pod role. E2E answers are accepted only for canary pods.
+    runtimeEnvironment: "production"
+    # A Downward API volume file takes precedence so an in-place Canary promotion is observed.
+    runtimeEnvironmentFile: ""
+    canaryHeaderValue: "iwantsit"
+    # Leave empty outside deployment secrets. Never commit a real E2E answer.
+    e2eAnswer: ""
   passwordChange:
     # Temporarily require point selection after repeated incorrect current passwords.
     threshold: 3

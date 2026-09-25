@@ -88,12 +88,14 @@ type loginCredential struct {
 	RememberMe    bool           `json:"remember_me"`
 	CaptchaID     string         `json:"captcha_id,omitempty"`
 	CaptchaPoints []CaptchaPoint `json:"captcha_points,omitempty"`
+	SliderProof   string         `json:"slider_proof,omitempty"`
 }
 
 type registerCredential struct {
 	ChallengeID string `json:"challenge_id"`
 	Username    string `json:"username"`
 	Password    string `json:"password"`
+	SliderProof string `json:"slider_proof,omitempty"`
 }
 
 type registrationPasswordCredential struct {
@@ -223,7 +225,7 @@ func (c *Credentials) Open(ctx context.Context, input EncryptedLoginInput) (Logi
 	}
 	return LoginInput{
 		Username: payload.Username, Password: payload.Password, RememberMe: payload.RememberMe,
-		CaptchaID: payload.CaptchaID, CaptchaPoints: payload.CaptchaPoints,
+		CaptchaID: payload.CaptchaID, CaptchaPoints: payload.CaptchaPoints, SliderProof: payload.SliderProof,
 	}, nil
 }
 
@@ -240,7 +242,7 @@ func (c *Credentials) OpenRegistration(ctx context.Context, input EncryptedRegis
 	if err := c.consumeChallenge(ctx, challengeID, registerCredentialType, 0, ErrInvalidRegistrationCredential); err != nil {
 		return RegisterInput{}, err
 	}
-	return RegisterInput{Username: payload.Username, Password: payload.Password}, nil
+	return RegisterInput{Username: payload.Username, Password: payload.Password, SliderProof: payload.SliderProof}, nil
 }
 
 func (c *Credentials) OpenRegistrationPassword(ctx context.Context, input EncryptedRegisterInput) (string, error) {

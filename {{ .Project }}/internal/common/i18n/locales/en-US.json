@@ -18,6 +18,7 @@
   "AUTH_POINT_CAPTCHA_NOT_FOUND": "point captcha not found",
   "AUTH_POINT_CAPTCHA_REQUIRED": "invalid captcha",
   "AUTH_SAME_PASSWORD": "new password must differ from current password",
+  "AUTH_SLIDER_CAPTCHA_REQUIRED": "slider verification is required",
   "AUTH_SESSION_NOT_FOUND": "authentication session not found",
   "AUTH_UNAUTHORIZED": "unauthorized",
   "AUTH_USERNAME_EXISTS": "username already exists",

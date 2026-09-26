@@ -13,8 +13,9 @@ validate_project() (
   cd "$generated"
   test -f .dockerignore
   ! rg -q '^/?\.git/?$' .dockerignore
-  rg -q '^RUN make build$' Dockerfile
-  ! rg -q 'ARG VERSION|go build.*ldflags' Dockerfile
+  rg -q '^ARG VERSION$' Dockerfile
+  rg -q '^RUN make build VERSION="\$VERSION"$' Dockerfile
+  ! rg -q 'go build.*ldflags' Dockerfile
   make gen
   cp internal/docs/openapi.yaml "$tmp_dir/expected-openapi.yaml"
   make gen

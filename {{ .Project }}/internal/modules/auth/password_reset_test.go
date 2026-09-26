@@ -138,7 +138,7 @@ func TestPasswordResetTransactions(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := authenticatedContext(t, manager, m.sessions)
-	if _, err := m.ResetPassword(ctx, PasswordResetInput{NewPassword: "short"}); !errors.Is(err, ErrInvalidPasswordReset) {
+	if _, err := m.ResetPassword(ctx, PasswordResetInput{NewPassword: "   "}); !errors.Is(err, ErrInvalidPasswordReset) {
 		t.Fatal(err)
 	}
 }

@@ -6,16 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 )
 
 var (
 	ErrPasswordResetNotRequired = apperror.New("AUTH_PASSWORD_RESET_NOT_REQUIRED", "password reset is not required")
-	ErrInvalidPasswordReset     = apperror.New("AUTH_INVALID_PASSWORD_RESET", "new password must be 6-72 bytes")
+	ErrInvalidPasswordReset     = apperror.New("AUTH_INVALID_PASSWORD_RESET", "new password is required")
 )
 
 type PasswordResetInput struct {
@@ -48,7 +48,7 @@ func (m *Module) ResetPassword(ctx context.Context, input PasswordResetInput) (*
 	if !ok {
 		return nil, ErrUnauthorized
 	}
-	if len(input.NewPassword) < 6 || len(input.NewPassword) > 72 {
+	if strings.TrimSpace(input.NewPassword) == "" {
 		return nil, ErrInvalidPasswordReset
 	}
 	session, err := m.sessions.authenticatedSession(ctx, identity)
@@ -74,10 +74,10 @@ func (m *Module) ResetPassword(ctx context.Context, input PasswordResetInput) (*
 		if count != 0 {
 			return ErrPasswordResetNotRequired
 		}
-		if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(input.NewPassword)) == nil {
+		if VerifyPassword(currentHash, input.NewPassword) {
 			return ErrSamePassword
 		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
+		hash, err := HashPassword(input.NewPassword)
 		if err != nil {
 			return fmt.Errorf("hash reset password: %w", err)
 		}

@@ -181,7 +181,7 @@ func TestAuthHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	request(http.MethodPost, "/auth/pub/register", string(missingRegisterProof), "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/register", registerBody("tiny", "secret1"), "", http.StatusBadRequest)
+	request(http.MethodPost, "/auth/pub/register", registerBody("new-user", "   "), "", http.StatusBadRequest)
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(36)))
 	mock.ExpectExec("INSERT INTO t_user").WillReturnError(&pq.Error{Code: "23505", Constraint: "uk_user_username"})
 	request(http.MethodPost, "/auth/pub/register", registerBody("new-user", "secret1"), "", http.StatusConflict)

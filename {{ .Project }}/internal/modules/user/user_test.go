@@ -86,8 +86,8 @@ func TestUserCRUD(t *testing.T) {
 	if _, err := m.Create(ctx, CreateUserInput{}); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
-	if _, err := m.Create(ctx, CreateUserInput{Username: " operator ", Password: "secret1"}); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("padded username: %v", err)
+	if _, err := m.Create(ctx, CreateUserInput{Username: "   ", Password: "secret1"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank username: %v", err)
 	}
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(6))
@@ -95,7 +95,7 @@ func TestUserCRUD(t *testing.T) {
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(int64(6), sqlmock.AnyArg(), sqlmock.AnyArg(), nil, "", "operator", sqlmock.AnyArg(), sqlmock.AnyArg(), StatusActive, "{}").WillReturnResult(sqlmock.NewResult(0, 1))
 	expectUserGet(mock, 6, "operator", "ABCDEFGH")
 	mock.ExpectCommit()
-	value, err = m.Create(ctx, CreateUserInput{Username: "operator", Password: "secret1"})
+	value, err = m.Create(ctx, CreateUserInput{Username: " operator ", Password: "x"})
 	if err != nil || value.ID != 6 || value.Code != "ABCDEFGH" {
 		t.Fatalf("create: %#v %v", value, err)
 	}
@@ -217,17 +217,17 @@ func TestUserListAndRelations(t *testing.T) {
 }
 
 func TestUserHelpers(t *testing.T) {
-	for _, username := range []string{"abcde", "User_01", "user-name"} {
+	for _, username := range []string{"a", "用户名称一", "1user", "user name", " abcde ", "a" + strings.Repeat("b", 100)} {
 		if !validUsername(username) {
 			t.Fatalf("valid username %q was rejected", username)
 		}
 	}
-	for _, username := range []string{"abcd", "用户名称一", "1user", "-user", "_user", "user.name", "user name", " abcde ", "a" + strings.Repeat("b", 50)} {
+	for _, username := range []string{"", "   ", "\t\n"} {
 		if validUsername(username) {
 			t.Fatalf("invalid username %q was accepted", username)
 		}
 	}
-	if !validPassword("secret") || validPassword("short") {
+	if !validPassword("x") || !validPassword(strings.Repeat("x", 100)) || validPassword("   ") {
 		t.Fatal("password validation")
 	}
 	zero := int64(0)

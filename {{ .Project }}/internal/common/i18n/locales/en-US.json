@@ -79,5 +79,5 @@
   "WHITELIST_NOT_FOUND": "whitelist entry not found",
   "AUTH_PASSWORD_RESET_REQUIRED": "Reset your password before continuing",
   "AUTH_PASSWORD_RESET_NOT_REQUIRED": "Password reset is not required for this account",
-  "AUTH_INVALID_PASSWORD_RESET": "New password must be 6–72 bytes"
+  "AUTH_INVALID_PASSWORD_RESET": "New password is required"
 }

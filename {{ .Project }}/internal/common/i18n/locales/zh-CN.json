@@ -79,5 +79,5 @@
   "WHITELIST_NOT_FOUND": "白名单记录不存在",
   "AUTH_PASSWORD_RESET_REQUIRED": "请先重置密码再继续使用",
   "AUTH_PASSWORD_RESET_NOT_REQUIRED": "当前账号无需首次重置密码",
-  "AUTH_INVALID_PASSWORD_RESET": "新密码必须为 6–72 字节"
+  "AUTH_INVALID_PASSWORD_RESET": "请输入新密码"
 }

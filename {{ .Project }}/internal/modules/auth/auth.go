@@ -6,14 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 
 	"github.com/lib/pq"
-	"golang.org/x/crypto/bcrypt"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/code"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
@@ -47,8 +44,6 @@ type Switches struct {
 	ProtectCaptchaDictionaries bool
 	EnableE2ETest              bool
 }
-
-var usernamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{4,49}$`)
 
 type LoginInput struct {
 	Username      string         `json:"username" example:"super"`
@@ -165,12 +160,11 @@ func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials
 
 func (m *Module) Register(ctx context.Context, input RegisterInput) error {
 	username := strings.TrimSpace(input.Username)
-	passwordLength := len([]byte(input.Password))
-	if username != input.Username || !usernamePattern.MatchString(username) || passwordLength < 6 || passwordLength > 72 {
+	if username == "" || strings.TrimSpace(input.Password) == "" {
 		return ErrInvalidRegistration
 	}
 	input.Username = username
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	passwordHash, err := HashPassword(input.Password)
 	if err != nil {
 		return fmt.Errorf("hash registration password: %w", err)
 	}
@@ -206,7 +200,7 @@ func (m *Module) Register(ctx context.Context, input RegisterInput) error {
 
 func (m *Module) UsernameAvailability(ctx context.Context, username string) (*UsernameAvailability, error) {
 	normalized := strings.TrimSpace(username)
-	if normalized != username || !usernamePattern.MatchString(normalized) {
+	if normalized == "" {
 		return nil, ErrInvalidRegistration
 	}
 	username = normalized
@@ -284,9 +278,7 @@ func (m *Module) ChangePassword(ctx context.Context, input PasswordChangeInput) 
 	if identity.PasswordResetRequired {
 		return authn.ErrPasswordResetRequired
 	}
-	oldPasswordLength := len([]byte(input.OldPassword))
-	newPasswordLength := len([]byte(input.NewPassword))
-	if oldPasswordLength == 0 || oldPasswordLength > 72 || newPasswordLength < 6 || newPasswordLength > 72 {
+	if strings.TrimSpace(input.OldPassword) == "" || strings.TrimSpace(input.NewPassword) == "" {
 		return ErrInvalidPasswordChange
 	}
 	locked, err := m.passwordChangeLocked(ctx, identity)
@@ -329,13 +321,13 @@ func (m *Module) ChangePassword(ctx context.Context, input PasswordChangeInput) 
 		if credentialVersion != identity.CredentialVersion || credentialVersion <= 0 {
 			return ErrUnauthorized
 		}
-		if bcrypt.CompareHashAndPassword([]byte(currentPasswordHash), []byte(input.OldPassword)) != nil {
+		if !VerifyPassword(currentPasswordHash, input.OldPassword) {
 			return ErrIncorrectPassword
 		}
-		if bcrypt.CompareHashAndPassword([]byte(currentPasswordHash), []byte(input.NewPassword)) == nil {
+		if VerifyPassword(currentPasswordHash, input.NewPassword) {
 			return ErrSamePassword
 		}
-		passwordHash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
+		passwordHash, err := HashPassword(input.NewPassword)
 		if err != nil {
 			return fmt.Errorf("hash changed password: %w", err)
 		}
@@ -417,7 +409,7 @@ func (m *Module) persistPasswordChangeLock(ctx context.Context, identity authn.I
 
 func (m *Module) LoginVerification(ctx context.Context, username string) (*LoginVerificationResult, error) {
 	username = strings.TrimSpace(username)
-	if username == "" || utf8.RuneCountInString(username) > 50 {
+	if username == "" {
 		return nil, ErrInvalid
 	}
 	var wrong int64
@@ -440,7 +432,7 @@ func (m *Module) LoginVerification(ctx context.Context, username string) (*Login
 
 func (m *Module) VerifyLoginCaptcha(ctx context.Context, username, captchaID string, points []CaptchaPoint) (*PointCaptchaVerificationResult, error) {
 	username = strings.TrimSpace(username)
-	if username == "" || utf8.RuneCountInString(username) > 50 {
+	if username == "" {
 		return nil, ErrInvalid
 	}
 	verified, err := m.captcha.Check(ctx, username, captchaID, points)
@@ -459,7 +451,7 @@ func (m *Module) VerifyLoginCaptcha(ctx context.Context, username, captchaID str
 
 func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, error) {
 	input.Username = strings.TrimSpace(input.Username)
-	if input.Username == "" || input.Password == "" {
+	if input.Username == "" || strings.TrimSpace(input.Password) == "" {
 		return nil, ErrInvalid
 	}
 	user, err := m.loginUser(ctx, input.Username)
@@ -498,7 +490,7 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 			return nil, err
 		}
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.passwordHash), []byte(input.Password)) != nil {
+	if !VerifyPassword(user.passwordHash, input.Password) {
 		wrong, err := m.recordWrongPassword(ctx, user.identity.UserID)
 		if err != nil {
 			return nil, err

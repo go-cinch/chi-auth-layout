@@ -64,7 +64,7 @@ CREATE TABLE t_user (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     role_id BIGINT NULL,
     action TEXT NOT NULL DEFAULT '',
-    username VARCHAR(191) NOT NULL,
+    username TEXT NOT NULL,
     code CHAR(8) NOT NULL,
     password TEXT NOT NULL,
     last_logged_in_at TIMESTAMP NULL,

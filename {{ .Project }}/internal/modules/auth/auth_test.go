@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -215,13 +214,13 @@ func TestLogin(t *testing.T) {
 func TestRegister(t *testing.T) {
 	m, _, mock := newAuthTestModule(t)
 	ctx := context.Background()
-	for _, username := range []string{"tiny", "用户名称一", "1user", "-user", "_user", "user.name", "user name", " abcde ", "a" + strings.Repeat("b", 50)} {
+	for _, username := range []string{"", "   ", "\t\n"} {
 		if err := m.Register(ctx, RegisterInput{Username: username, Password: "secret1"}); !errors.Is(err, ErrInvalidRegistration) {
 			t.Fatalf("invalid username %q: %v", username, err)
 		}
 	}
-	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "short"}); !errors.Is(err, ErrInvalidRegistration) {
-		t.Fatalf("short password: %v", err)
+	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "   "}); !errors.Is(err, ErrInvalidRegistration) {
+		t.Fatalf("blank password: %v", err)
 	}
 
 	mock.ExpectQuery("SELECT nextval").WillReturnError(sqlmock.ErrCancelled)
@@ -244,7 +243,7 @@ func TestRegister(t *testing.T) {
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(
 		int64(37), sqlmock.AnyArg(), sqlmock.AnyArg(), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(0, 1))
-	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "secret1"}); err != nil {
+	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "x"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 }
@@ -252,7 +251,7 @@ func TestRegister(t *testing.T) {
 func TestUsernameAvailability(t *testing.T) {
 	m, _, mock := newAuthTestModule(t)
 	ctx := context.Background()
-	for _, username := range []string{"tiny", "用户名称一", "1user", "-user", "_user", "user.name", "user name", " abcde ", "a" + strings.Repeat("b", 50)} {
+	for _, username := range []string{"", "   ", "\t\n"} {
 		if _, err := m.UsernameAvailability(ctx, username); !errors.Is(err, ErrInvalidRegistration) {
 			t.Fatalf("invalid username %q: %v", username, err)
 		}
@@ -272,6 +271,12 @@ func TestUsernameAvailability(t *testing.T) {
 	mock.ExpectQuery("SELECT EXISTS").WithArgs("broken-user").WillReturnError(sqlmock.ErrCancelled)
 	if _, err := m.UsernameAvailability(ctx, "broken-user"); err == nil {
 		t.Fatal("database failure was ignored")
+	}
+	mock.ExpectQuery("SELECT EXISTS").WithArgs("用户 名称").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	value, err = m.UsernameAvailability(ctx, "  用户 名称  ")
+	if err != nil || !value.Available {
+		t.Fatalf("trimmed username: %#v %v", value, err)
 	}
 }
 
@@ -300,9 +305,8 @@ func TestChangePassword(t *testing.T) {
 
 	for _, input := range []PasswordChangeInput{
 		{},
-		{OldPassword: "cinch123", NewPassword: "short"},
-		{OldPassword: strings.Repeat("x", 73), NewPassword: "new-secret"},
-		{OldPassword: "cinch123", NewPassword: strings.Repeat("x", 73)},
+		{OldPassword: "cinch123", NewPassword: "   "},
+		{OldPassword: "   ", NewPassword: "new-secret"},
 	} {
 		if err := m.ChangePassword(ctx, input); !errors.Is(err, ErrInvalidPasswordChange) {
 			t.Fatalf("invalid password input %#v: %v", input, err)
@@ -336,7 +340,7 @@ func TestChangePassword(t *testing.T) {
 	)
 	mock.ExpectExec("UPDATE t_user SET password").WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), int64(3), "EXP78RGH").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "cinch123", NewPassword: "new-secret"}); err != nil {
+	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "cinch123", NewPassword: "x"}); err != nil {
 		t.Fatalf("change password: %v", err)
 	}
 

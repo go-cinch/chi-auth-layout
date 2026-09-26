@@ -14,7 +14,6 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 
 	"github.com/lib/pq"
-	"golang.org/x/crypto/bcrypt"
 	"{{ .Computed.module_name_final }}/internal/common/code"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
@@ -221,7 +220,7 @@ func (m *Module) scan(row interface{ Scan(...any) error }) (*User, error) {
 
 func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, error) {
 	username := strings.TrimSpace(input.Username)
-	if username != input.Username || !validUsername(username) || !validPassword(input.Password) {
+	if !validUsername(username) || !validPassword(input.Password) {
 		return nil, ErrInvalid
 	}
 	input.Username = username
@@ -241,7 +240,7 @@ func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, erro
 		if err != nil {
 			return err
 		}
-		password, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+		password, err := authmodule.HashPassword(input.Password)
 		if err != nil {
 			return err
 		}
@@ -305,7 +304,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 	}
 	if input.Username != nil {
 		value := strings.TrimSpace(*input.Username)
-		if value != *input.Username || !validUsername(value) {
+		if !validUsername(value) {
 			return nil, ErrInvalid
 		}
 		input.Username = &value
@@ -349,7 +348,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 			add("username", *input.Username)
 		}
 		if input.Password != nil {
-			password, err := bcrypt.GenerateFromPassword([]byte(*input.Password), bcrypt.DefaultCost)
+			password, err := authmodule.HashPassword(*input.Password)
 			if err != nil {
 				return err
 			}
@@ -707,10 +706,10 @@ func splitFilterValues(value string) []string {
 }
 
 func validUsername(value string) bool {
-	return usernamePattern.MatchString(value)
+	return strings.TrimSpace(value) != ""
 }
 
-func validPassword(value string) bool { count := len([]byte(value)); return count >= 6 && count <= 72 }
+func validPassword(value string) bool { return strings.TrimSpace(value) != "" }
 
 func validStatus(value int16) bool { return value >= StatusPending && value <= StatusLocked }
 
@@ -779,7 +778,6 @@ func encodeMetadata(value map[string]any) (string, error) {
 }
 
 var (
-	usernamePattern  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{4,49}$`)
 	snakeMetadataKey = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`)
 )
 

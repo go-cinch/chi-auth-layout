@@ -33,6 +33,7 @@ func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
 	a.wireBusinessModules()
 	want := map[string]modules.HTTPModule{
 		"/action": a.actionModule,
+ "/msg": a.msgModule,
 		"/auth": a.authModule,
 		"/dictionary": a.dictionaryModule,
 		"/role": a.roleModule,

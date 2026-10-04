@@ -160,7 +160,46 @@ COMMENT ON COLUMN t_dictionary.value IS 'arbitrary JSON dictionary value';
 COMMENT ON COLUMN t_dictionary.description IS 'administrator-facing purpose and usage notes';
 COMMENT ON COLUMN t_dictionary.enabled IS 'whether runtime consumers may read this dictionary';
 
+CREATE TABLE t_msg (
+    id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    title VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    type VARCHAR(20) NOT NULL,
+    scope VARCHAR(20) NOT NULL,
+    sender_id BIGINT NULL REFERENCES t_user(id) ON DELETE SET NULL,
+    published_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expired_at TIMESTAMP NULL,
+    CONSTRAINT ck_msg_title CHECK (CHAR_LENGTH(TRIM(title)) > 0),
+    CONSTRAINT ck_msg_content CHECK (CHAR_LENGTH(TRIM(content)) BETWEEN 1 AND 20000),
+    CONSTRAINT ck_msg_type CHECK (type IN ('system', 'notice')),
+    CONSTRAINT ck_msg_scope CHECK (scope IN ('all', 'targeted')),
+    CONSTRAINT ck_msg_expired_at CHECK (expired_at IS NULL OR expired_at > published_at)
+);
+COMMENT ON COLUMN t_msg.scope IS 'all: shared broadcast visible to users registered by publication; targeted: recipients inserted at send time';
+COMMENT ON COLUMN t_msg.sender_id IS 'verified sender; null after sender account deletion';
+CREATE INDEX idx_msg_published_at ON t_msg (published_at DESC, id DESC);
+CREATE INDEX idx_msg_broadcast ON t_msg (published_at DESC, id DESC) WHERE scope = 'all';
+
+CREATE TABLE t_msg_recipient (
+    id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    msg_id BIGINT NOT NULL REFERENCES t_msg(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES t_user(id) ON DELETE CASCADE,
+    read_at TIMESTAMP NULL,
+    deleted_at TIMESTAMP NULL,
+    CONSTRAINT uk_msg_recipient UNIQUE (msg_id, user_id)
+);
+COMMENT ON TABLE t_msg_recipient IS 'targeted delivery records and sparse per-user broadcast states; a missing broadcast state means unread';
+COMMENT ON COLUMN t_msg_recipient.deleted_at IS 'personal tombstone retained to prevent a deleted broadcast from reappearing';
+CREATE INDEX idx_msg_recipient_user ON t_msg_recipient (user_id, msg_id);
+CREATE INDEX idx_msg_recipient_unread ON t_msg_recipient (user_id, msg_id) WHERE read_at IS NULL AND deleted_at IS NULL;
+
 -- +migrate Down
+DROP TABLE t_msg_recipient;
+DROP TABLE t_msg;
 DROP TABLE t_dictionary;
 DROP TABLE t_whitelist;
 DROP TABLE t_user_user_group_relation;

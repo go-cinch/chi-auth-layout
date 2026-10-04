@@ -6,6 +6,9 @@ template_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/chi-layout-test.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
+template_seed_codes=$(rg -o '\b[23456789ABCDEFGHJKLMNPQRSTVWXY]{8}\b' "$template_dir/{{ .Project }}/internal/infra/db/migrations/YYYYMMDDHH-02-auth-default-data.sql" | sort -u)
+test "$(printf '%s\n' "$template_seed_codes" | wc -l | tr -d ' ')" = 35
+
 validate_project() (
   generated=$1
   router=$2
@@ -32,7 +35,7 @@ validate_project() (
   rg -q '^  migrate: true$' conf/database.yml
   test -f internal/infra/db/migrations_embed.go
   test -f internal/infra/db/migrate.go
-  for module in auth user role action usergroup whitelist dictionary; do
+  for module in auth user role action usergroup whitelist dictionary msg; do
     test -f "internal/modules/$module/http.go"
   done
   test -f internal/common/authn/authn.go
@@ -49,6 +52,14 @@ validate_project() (
   rg -q '^  /auth/captcha:' internal/docs/openapi.yaml
   rg -q '/auth/pub/register/username' internal/docs/openapi.yaml
   rg -q '/user/\{id\}' internal/docs/openapi.yaml
+  inbox_docs=$(awk '/^  \/msg\/inbox:$/ { printing = 1; next } printing && /^  \// { exit } printing { print }' internal/docs/openapi.yaml)
+  sent_docs=$(awk '/^  \/msg\/sent:$/ { printing = 1; next } printing && /^  \// { exit } printing { print }' internal/docs/openapi.yaml)
+  printf '%s\n' "$inbox_docs" | rg -q 'name: read'
+  test -n "$sent_docs"
+  if printf '%s\n' "$sent_docs" | rg -q 'name: read'; then
+    echo "sent-message documentation exposes an unsupported read filter" >&2
+    exit 1
+  fi
   ! rg -q '^  /auth/codes:' internal/docs/openapi.yaml
   ! rg -q '/auth/pub/login/challenge|/auth/pub/register/challenge|/auth/change/pwd/challenge|/auth/pub/login/captcha|/auth/change/pwd/captcha' internal/docs/openapi.yaml
   test -f POINT_CAPTCHA_FONT_LICENSE.txt
@@ -150,8 +161,8 @@ for router in chi gin; do
   test ! -e "$output_dir/$project/internal/cmd/seedcode"
   seed_files=$(find "$output_dir/$project/internal/infra/db/migrations" -maxdepth 1 -name '*-02-auth-default-data.sql')
   seed_codes=$(rg -o '\b[23456789ABCDEFGHJKLMNPQRSTVWXY]{8}\b' $seed_files | sed 's/^.*://' | sort -u)
-  test "$(printf '%s\n' "$seed_codes" | wc -l | tr -d ' ')" = 32
-  if rg -q 'SN2837AY|KHXK5JVL|2QKHTYEE|89HEK28Y|D1CTREAD|D1CTCRTE|D1CTUPDT|D1CTDELE' $seed_files; then
+  test "$(printf '%s\n' "$seed_codes" | wc -l | tr -d ' ')" = 35
+  if [ -n "$(printf '%s\n' "$template_seed_codes" "$seed_codes" | sort | uniq -d)" ]; then
     echo "default seed codes were not randomized" >&2
     exit 1
   fi

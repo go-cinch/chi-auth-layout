@@ -5,7 +5,7 @@ A Go authentication service scaffold with PostgreSQL, built on `net/http`, with
 [`gin-gonic/gin`](https://github.com/gin-gonic/gin).
 
 Every generated project includes authentication, PostgreSQL support, embedded
-migrations and the auth, user, role, action, usergroup, whitelist and dictionary
+migrations and the auth, user, role, action, usergroup, whitelist, dictionary and msg
 modules. These are required capabilities and cannot be excluded at generation
 time. `database.migrate` in `conf/database.yml` controls whether migrations run
 at startup; setting it to `false` retains the migration files and every module.

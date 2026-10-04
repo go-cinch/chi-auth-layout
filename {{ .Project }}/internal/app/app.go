@@ -20,6 +20,7 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
 	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
+ msgmodule "{{ .Computed.module_name_final }}/internal/modules/msg"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
 	dictionarymodule "{{ .Computed.module_name_final }}/internal/modules/dictionary"
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
@@ -46,6 +47,7 @@ import (
 )
 
 type Application struct {
+ msgModule *msgmodule.Module
 	pagination      pagination.Limits
 
 	authenticator   *authn.Manager
@@ -280,6 +282,7 @@ func (a *Application) wireBusinessModules() {
 	a.groupModule = groupmodule.New(a.db, a.pagination, a.actionModule, a.userModule)
 	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.authSwitches)
 	a.whitelistModule = whitelistmodule.New(a.db, a.pagination)
+ a.msgModule = msgmodule.New(a.db, a.pagination)
 }
 
 func SignalContext() (context.Context, context.CancelFunc) {

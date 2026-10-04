@@ -76,4 +76,4 @@ local:
 	trap 'exit 143' TERM; \
 	find "$$migrations_dir" -maxdepth 1 -type f \( -name '*-01-auth-schema.sql' -o -name '*-02-auth-default-data.sql' \) \
 		-exec rm -f {} +; \
-	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full --overwrite --force "Project=auth" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)"
+	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full --overwrite --force "Project=auth" "http_port=8081" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)"

@@ -92,7 +92,6 @@ func TestRedisPrefixEnvironmentOverride(t *testing.T) {
 	}
 }
 {{ end -}}
-
 func TestLoadDirErrors(t *testing.T) {
 	if _, _, err := LoadDir(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("missing directory was accepted")

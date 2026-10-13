@@ -38,7 +38,6 @@ func GinIdempotency(store idempotency.Store, ttl time.Duration) gin.HandlerFunc 
 	}
 }
 {{ end -}}
-
 func claimIdempotency(w http.ResponseWriter, r *http.Request, store idempotency.Store, ttl time.Duration) bool {
 	if r.Method != http.MethodPost {
 		return true

@@ -3,6 +3,8 @@ package action
 import (
 	"net/http"
 	"net/http/httptest"
+ "net/url"
+ "github.com/lib/pq"
 	"strings"
 	"testing"
 
@@ -82,4 +84,30 @@ func TestActionHTTP(t *testing.T) {
 	request(http.MethodDelete, "/1", "", http.StatusOK)
 	mock.ExpectExec("DELETE FROM t_action").WillReturnResult(sqlmock.NewResult(0, 0))
 	request(http.MethodDelete, "/99", "", http.StatusNotFound)
+}
+
+func TestActionMultipleExactGroupsHTTP(t *testing.T) {
+ m, mock := newTestModule(t)
+{{ if eq .Computed.http_router_final "gin" -}}
+ router := gin.New(); m.HTTP(router.Group("")); handler := http.Handler(router)
+{{ else -}}
+ handler := m.HTTP()
+{{ end -}}
+ for _, value := range []string{`null`, `[null]`, `[1]`, `"User"`, `{}`, `["User",false]`} {
+  w := httptest.NewRecorder()
+  handler.ServeHTTP(w, httptest.NewRequest("GET", "/?groups_exact="+url.QueryEscape(value), nil))
+  if w.Code != 400 { t.Fatalf("invalid groups %s: %d", value, w.Code) }
+ }
+ w := httptest.NewRecorder()
+ handler.ServeHTTP(w, httptest.NewRequest("GET", "/?groups_exact=%5B%5D&groups_exact=%5B%5D", nil))
+ if w.Code != 400 { t.Fatal(w.Code) }
+ groups := []string{"User", "User, Admin_%", ""}
+ mock.ExpectQuery(`SELECT COUNT.*action_group = ANY`).WithArgs(pq.Array(groups)).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+ w = httptest.NewRecorder()
+ handler.ServeHTTP(w, httptest.NewRequest("GET", "/?groups_exact="+url.QueryEscape(`["User","User, Admin_%",""]`), nil))
+ if w.Code != 200 { t.Fatal(w.Code, w.Body.String()) }
+ mock.ExpectQuery(`SELECT COUNT.*FROM t_action$`).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+ w = httptest.NewRecorder()
+ handler.ServeHTTP(w, httptest.NewRequest("GET", "/?groups_exact=%5B%5D", nil))
+ if w.Code != 200 { t.Fatal(w.Code, w.Body.String()) }
 }

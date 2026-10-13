@@ -23,11 +23,14 @@ import (
 )
 
 type sourcePackage struct {
-	name      string
-	funcs     map[string]*ast.FuncDecl
-	types     map[string]ast.Expr
-	errors    map[string]string
-	receivers map[string]string
+	directory    string
+	imports      map[string]string
+	dependencies map[string]*sourcePackage
+	name         string
+	funcs        map[string]*ast.FuncDecl
+	types        map[string]ast.Expr
+	errors       map[string]string
+	receivers    map[string]string
 }
 
 type route struct {
@@ -44,6 +47,7 @@ type route struct {
 }
 
 type response struct {
+	contentType string
 	description string
 	schema      *schema
 }
@@ -77,6 +81,8 @@ type docsConfig struct {
 }
 
 type schema struct {
+	nullable             bool
+	anyJSON              bool
 	paginationKey        string
 	paginationMax        int64
 	defaultValue         *int64
@@ -147,6 +153,7 @@ func run(source, configDir, output, title string) error {
 	gen := &generator{limits: limits, components: make(map[string]*schema), visiting: make(map[string]bool)}
 	for index := range routes {
 		gen.describeRoute(&routes[index])
+		gen.describeAuditRoute(&routes[index])
 		if routes[index].idempotent && routes[index].method == http.MethodPost {
 			routes[index].parameters = append(routes[index].parameters, parameter{
 				in: "header", name: "X-Idempotent", schema: schema{typeName: "string"},
@@ -221,6 +228,7 @@ func loadPackages(root string) ([]*sourcePackage, error) {
 		}
 		for _, parsedPackage := range parsed {
 			pkg := &sourcePackage{
+				directory: path, imports: make(map[string]string), dependencies: make(map[string]*sourcePackage),
 				name: parsedPackage.Name, funcs: make(map[string]*ast.FuncDecl),
 				types: make(map[string]ast.Expr), errors: make(map[string]string),
 				receivers: make(map[string]string),
@@ -235,10 +243,40 @@ func loadPackages(root string) ([]*sourcePackage, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Resolve only packages present in this source tree. External library types
+	// remain opaque, while shared local response contracts retain their schemas.
+	for _, pkg := range packages {
+		for alias, imported := range pkg.imports {
+			for _, candidate := range packages {
+				relative, err := filepath.Rel(root, candidate.directory)
+				if err == nil && strings.HasSuffix(imported, "/"+filepath.ToSlash(relative)) {
+					pkg.dependencies[alias] = candidate
+					break
+				}
+			}
+		}
+	}
 	return packages, nil
 }
 
 func (p *sourcePackage) collect(file *ast.File) {
+	if p.imports == nil {
+		p.imports = make(map[string]string)
+	}
+	for _, item := range file.Imports {
+		path, err := strconv.Unquote(item.Path.Value)
+		if err != nil {
+			continue
+		}
+		alias := filepath.Base(path)
+		if item.Name != nil {
+			alias = item.Name.Name
+		}
+		if alias != "_" && alias != "." {
+			p.imports[alias] = path
+		}
+	}
+
 	for _, declaration := range file.Decls {
 		switch value := declaration.(type) {
 		case *ast.FuncDecl:
@@ -535,14 +573,28 @@ func (g *generator) literalSchema(pkg *sourcePackage, expression ast.Expr) *sche
 func (g *generator) typeSchema(pkg *sourcePackage, expression ast.Expr) *schema {
 	switch value := expression.(type) {
 	case *ast.StarExpr:
-		return g.typeSchema(pkg, value.X)
+		result := *g.typeSchema(pkg, value.X)
+		// Scalar and inline field pointers serialize as null when absent. References
+		// describe successful resource responses whose missing case is an HTTP error.
+		if result.ref == "" {
+			result.nullable = true
+		}
+		return &result
 	case *ast.ArrayType:
 		return &schema{typeName: "array", items: g.typeSchema(pkg, value.Elt)}
 	case *ast.MapType:
 		return &schema{typeName: "object", additionalProperties: g.typeSchema(pkg, value.Value)}
 	case *ast.SelectorExpr:
+		if identifier, ok := value.X.(*ast.Ident); ok && identifier.Name == "json" && value.Sel.Name == "RawMessage" {
+			return &schema{anyJSON: true}
+		}
 		if identifier, ok := value.X.(*ast.Ident); ok && identifier.Name == "time" && value.Sel.Name == "Time" {
 			return &schema{typeName: "string", format: "date-time"}
+		}
+		if identifier, ok := value.X.(*ast.Ident); ok && pkg != nil {
+			if dependency := pkg.dependencies[identifier.Name]; dependency != nil {
+				return g.typeSchema(dependency, ast.NewIdent(value.Sel.Name))
+			}
 		}
 		return &schema{typeName: "object"}
 	case *ast.StructType:
@@ -802,7 +854,11 @@ func render(title string, servers []docServer, routes []route, components map[st
 			value := item.responses[status]
 			fmt.Fprintf(&output, "        %q:\n          description: %s\n", strconv.Itoa(status), strconv.Quote(value.description))
 			if value.schema != nil {
-				output.WriteString("          content:\n            application/json:\n              schema:\n")
+				contentType := value.contentType
+				if contentType == "" {
+					contentType = "application/json"
+				}
+				fmt.Fprintf(&output, "          content:\n            %s:\n              schema:\n", contentType)
 				renderSchema(&output, value.schema, 16)
 			}
 		}
@@ -832,11 +888,20 @@ func render(title string, servers []docServer, routes []route, components map[st
 
 func renderSchema(output *strings.Builder, value *schema, indent int) {
 	spaces := strings.Repeat(" ", indent)
+	if value.anyJSON {
+		for _, line := range []string{"oneOf:", "  - type: object", "  - type: array", "    items: {}", "  - type: string", "    nullable: true", "  - type: number", "  - type: boolean"} {
+			output.WriteString(spaces + line + "\n")
+		}
+		return
+	}
 	if value.ref != "" {
 		output.WriteString(spaces + "$ref: " + strconv.Quote(value.ref) + "\n")
 		return
 	}
 	output.WriteString(spaces + "type: " + value.typeName + "\n")
+	if value.nullable {
+		output.WriteString(spaces + "nullable: true\n")
+	}
 	if value.format != "" {
 		output.WriteString(spaces + "format: " + value.format + "\n")
 	}

@@ -341,7 +341,6 @@ func (s *redisSessionStore) Delete(ctx context.Context, sessionID, digest string
 	).Err()
 }
 {{ end -}}
-
 func (s *Sessions) authenticatedSession(ctx context.Context, identity authn.Identity) (refreshSession, error) {
     identity.PasswordResetRequired = false
     value, err := s.store.Get(ctx, identity.SessionID)

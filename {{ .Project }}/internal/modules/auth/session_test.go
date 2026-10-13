@@ -133,7 +133,6 @@ func TestRedisSessionStore(t *testing.T) {
 	}
 }
 {{ end -}}
-
 func TestSessionCredentialVersion(t *testing.T) {
  sessions := newSessionTestManager(t)
  identity := authn.Identity{UserID:7, Username:"operator", Code:"CODE0007", CredentialVersion:1}

@@ -30,6 +30,7 @@ func (*Module) Idempotent() bool { return true }
 {{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("", m.list)
+ r.GET("/summary", m.summary)
 	r.GET("/group", m.listGroups)
 	r.GET("/:id", m.get)
 	r.POST("", m.create)
@@ -40,6 +41,7 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 func (m *Module) HTTP() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", m.list)
+ r.Get("/summary", m.summary)
 	r.Get("/group", m.listGroups)
 	r.Get("/{id}", m.get)
 	r.Post("/", m.create)
@@ -246,6 +248,20 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 		Code: query.Get("code"), Name: query.Get("name"), Group: query.Get("group"), Word: query.Get("word"),
 		Resource: query.Get("resource"), Menu: query.Get("menu"), Button: query.Get("button"),
 	}
+ if values, provided := query["group_exact"]; provided {
+  if len(values) != 1 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  input.GroupExact = &values[0]
+ }
+	if values, provided := query["groups_exact"]; provided {
+		if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+		var groups []*string
+		if err := json.Unmarshal([]byte(values[0]), &groups); err != nil || groups == nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+		for _, group := range groups {
+			if group == nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+			input.GroupsExact = append(input.GroupsExact, *group)
+		}
+	}
+
 	if values, provided := query["p"]; provided {
 		if len(values) != 1 {
 			server.WriteError(w, r, http.StatusBadRequest, apperror.Page)
@@ -279,4 +295,21 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	server.WriteOK(w, value)
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) summary(c *gin.Context) {
+ w,r := c.Writer,c.Request
+{{ else -}}
+func (m *Module) summary(w http.ResponseWriter,r *http.Request) {
+{{ end }}
+ query, err := url.ParseQuery(r.URL.RawQuery)
+ if err != nil || len(query) != 0 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ value, err := m.Summary(r.Context())
+ if err != nil {
+  slog.ErrorContext(r.Context(), "summarize action failed: "+err.Error())
+  server.WriteError(w,r,http.StatusInternalServerError,apperror.Internal)
+  return
+ }
+ server.WriteOK(w,value)
 }

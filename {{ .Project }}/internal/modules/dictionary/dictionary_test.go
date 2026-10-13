@@ -19,7 +19,7 @@ import (
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
 
-var dictionaryTestTime = time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)
+var dictionaryTestTime = time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC).UnixMilli()
 
 type trackingValueCache struct {
 	ValueCache

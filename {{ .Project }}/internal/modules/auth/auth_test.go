@@ -230,7 +230,7 @@ func TestRegister(t *testing.T) {
 
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(36)))
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(
-		int64(36), sqlmock.AnyArg(), sqlmock.AnyArg(), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		int64(36), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnError(&pq.Error{Code: "23505", Constraint: "uk_user_username"})
 	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "secret1"}); !errors.Is(err, ErrUsernameExists) {
 		t.Fatalf("duplicate username: %v", err)
@@ -238,10 +238,10 @@ func TestRegister(t *testing.T) {
 
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(37)))
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(
-		int64(37), sqlmock.AnyArg(), sqlmock.AnyArg(), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		int64(37), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(
-		int64(37), sqlmock.AnyArg(), sqlmock.AnyArg(), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		int64(37), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "x"}); err != nil {
 		t.Fatalf("register: %v", err)

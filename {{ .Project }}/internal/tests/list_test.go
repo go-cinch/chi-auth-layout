@@ -125,3 +125,154 @@ func TestListsBatchRelationsAndEffectiveLockStatus(t *testing.T) {
 		t.Fatal("list persisted an unlock")
 	}
 }
+
+func TestRoleExactPermissionGroupPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	ctx := t.Context()
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := store.DB.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exact := "Finance, 100%_'"
+	exec(`INSERT INTO t_action (id,name,action_group,code,word) VALUES
+		(101,'Read',$1,'GROUPRD1','group.read'),(102,'Write',$1,'GROUPWR1','group.write'),
+		(103,'Similar',$2,'GROUPSM1','group.similar'),(104,'Other','Other','GROUPUN1','group.other')`, exact, exact+" extra")
+	exec(`INSERT INTO t_role (id,name,word,action) VALUES
+		(101,'Group editor','group.editor',' GROUPWR1, GROUPRD1, GROUPRD1, MISSING1 '),
+		(102,'Group reader','group.reader','GROUPRD1'),
+		(103,'Group similar','group.similar','GROUPSM1'),
+		(104,'Group other','group.other','GROUPUN1'),
+		(105,'Group orphan','group.orphan','MISSING1'),
+		(106,'Group empty','group.empty','')`)
+	limits, _ := pagination.New(100, 100)
+	actions := action.New(store, limits, false)
+	roles := role.New(store, limits, actions, false)
+	size, one, two, three := int32(100), int32(1), int32(2), int32(3)
+	empty, partial, unknown := "", "Finance", "Missing"
+	assigned, unassigned := true, false
+	cases := []struct {
+		name  string
+		input role.ListRolesInput
+		total int64
+		ids   []int64
+	}{
+		{"all", role.ListRolesInput{}, 6, []int64{106, 105, 104, 103, 102, 101}},
+		{"exact, duplicate codes and multiple matching actions", role.ListRolesInput{GroupExact: &exact}, 2, []int64{102, 101}},
+		{"explicit empty does not clear filter", role.ListRolesInput{GroupExact: &empty}, 0, []int64{}},
+		{"partial group does not match", role.ListRolesInput{GroupExact: &partial}, 0, []int64{}},
+		{"unknown group", role.ListRolesInput{GroupExact: &unknown}, 0, []int64{}},
+		{"name and action code", role.ListRolesInput{GroupExact: &exact, Name: "editor", ActionCode: "GROUPWR1"}, 1, []int64{101}},
+		{"assigned group", role.ListRolesInput{GroupExact: &exact, HasPermissions: &assigned}, 2, []int64{102, 101}},
+		{"unassigned cannot match group", role.ListRolesInput{GroupExact: &exact, HasPermissions: &unassigned}, 0, []int64{}},
+		{"unassigned includes orphan and empty", role.ListRolesInput{HasPermissions: &unassigned}, 2, []int64{106, 105}},
+		{"second page", role.ListRolesInput{GroupExact: &exact, Page: &two, PageSize: &one}, 2, []int64{101}},
+		{"past last page", role.ListRolesInput{GroupExact: &exact, Page: &three, PageSize: &one}, 2, []int64{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.input
+			input.Word = "group."
+			if input.PageSize == nil {
+				input.PageSize = &size
+			}
+			result, err := roles.List(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]int64, 0, len(result.Items))
+			for _, item := range result.Items {
+				ids = append(ids, item.ID)
+				if item.ID == 101 && (len(item.Actions) != 2 || item.Actions[0].Code != "GROUPWR1" || item.Actions[1].Code != "GROUPRD1") {
+					t.Fatalf("complete ordered role permissions: %#v", item)
+				}
+			}
+			if result.Total != tc.total || !reflect.DeepEqual(ids, tc.ids) {
+				t.Fatalf("total %d ids %v, want %d %v", result.Total, ids, tc.total, tc.ids)
+			}
+		})
+	}
+}
+
+func TestRoleAllPermissionGroupsPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	ctx := t.Context()
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := store.DB.ExecContext(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	finance, operations, audit := "Finance, 100%_'", "Operations", "Audit"
+	exec(`INSERT INTO t_action (id,name,action_group,code,word) VALUES
+		(101,'Finance read',$1,'ALLFINR1','all.finance.read'),(102,'Finance write',$1,'ALLFINW1','all.finance.write'),
+		(103,'Operations',$2,'ALLOPSR1','all.operations'),(104,'Audit',$3,'ALLAUDR1','all.audit'),
+		(105,'Extra group','Extra','ALLEXT01','all.extra'),(106,'Spaced operations',' Operations ','ALLSPA01','all.spaced'),
+		(107,'Partial finance','Finance','ALLPAR01','all.partial')`, finance, operations, audit)
+	exec(`INSERT INTO t_role (id,name,word,action) VALUES
+		(101,'All three first','all.first',' ALLFINW1, ALLOPSR1, ALLAUDR1, ALLFINR1, ALLFINW1, ALLEXT01, MISSING1 '),
+		(102,'All three second','all.second','ALLFINR1,ALLOPSR1,ALLAUDR1'),
+		(103,'Finance operations','all.finance.operations','ALLFINR1,ALLOPSR1'),
+		(104,'Finance audit','all.finance.audit','ALLFINR1,ALLAUDR1'),
+		(105,'Operations audit','all.operations.audit','ALLOPSR1,ALLAUDR1'),
+		(106,'Finance only','all.finance.only','ALLFINR1'),
+		(107,'Empty role','all.empty',''),(108,'Orphan role','all.orphan','MISSING1'),
+		(109,'Spaced group','all.spaced','ALLFINR1,ALLSPA01,ALLAUDR1'),
+		(110,'Partial finance','all.partial','ALLPAR01,ALLOPSR1,ALLAUDR1')`)
+	limits, _ := pagination.New(100, 100)
+	actions := action.New(store, limits, false)
+	roles := role.New(store, limits, actions, false)
+	size, one, two, three := int32(100), int32(1), int32(2), int32(3)
+	empty, extra := "", "Extra"
+	assigned, unassigned := true, false
+	cases := []struct {
+		name  string
+		input role.ListRolesInput
+		total int64
+		ids   []int64
+	}{
+		{"omitted", role.ListRolesInput{}, 10, []int64{110, 109, 108, 107, 106, 105, 104, 103, 102, 101}},
+		{"empty array clears group restriction", role.ListRolesInput{GroupsAll: []string{}}, 10, []int64{110, 109, 108, 107, 106, 105, 104, 103, 102, 101}},
+		{"three groups require every group", role.ListRolesInput{GroupsAll: []string{finance, operations, audit}}, 2, []int64{102, 101}},
+		{"remove audit condition", role.ListRolesInput{GroupsAll: []string{finance, operations}}, 3, []int64{103, 102, 101}},
+		{"remove operations condition", role.ListRolesInput{GroupsAll: []string{finance, audit}}, 4, []int64{109, 104, 102, 101}},
+		{"duplicate selections and actions do not duplicate roles", role.ListRolesInput{GroupsAll: []string{finance, operations, audit, finance, operations}}, 2, []int64{102, 101}},
+		{"commas are literal", role.ListRolesInput{GroupsAll: []string{"Finance", operations, audit}}, 1, []int64{110}},
+		{"empty group does not clear filter", role.ListRolesInput{GroupsAll: []string{""}}, 0, []int64{}},
+		{"whitespace group does not clear filter", role.ListRolesInput{GroupsAll: []string{" "}}, 0, []int64{}},
+		{"group spaces are preserved", role.ListRolesInput{GroupsAll: []string{finance, " Operations ", audit}}, 1, []int64{109}},
+		{"case sensitive", role.ListRolesInput{GroupsAll: []string{finance, "operations", audit}}, 0, []int64{}},
+		{"unknown group excludes all", role.ListRolesInput{GroupsAll: []string{finance, operations, "Missing"}}, 0, []int64{}},
+		{"legacy condition also required", role.ListRolesInput{GroupExact: &extra, GroupsAll: []string{finance, operations, audit}}, 1, []int64{101}},
+		{"empty legacy condition is retained", role.ListRolesInput{GroupExact: &empty, GroupsAll: []string{finance, operations, audit}}, 0, []int64{}},
+		{"all other filters compose", role.ListRolesInput{GroupsAll: []string{finance, operations, audit}, Name: "first", ActionCode: "ALLFINW1", HasPermissions: &assigned}, 1, []int64{101}},
+		{"unassigned cannot match groups", role.ListRolesInput{GroupsAll: []string{finance, operations, audit}, HasPermissions: &unassigned}, 0, []int64{}},
+		{"unassigned includes empty and orphan roles", role.ListRolesInput{GroupsAll: []string{}, HasPermissions: &unassigned}, 2, []int64{108, 107}},
+		{"second page uses matching count", role.ListRolesInput{GroupsAll: []string{finance, operations, audit}, Page: &two, PageSize: &one}, 2, []int64{101}},
+		{"past last page keeps matching count", role.ListRolesInput{GroupsAll: []string{finance, operations, audit}, Page: &three, PageSize: &one}, 2, []int64{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.input
+			input.Word = "all."
+			if input.PageSize == nil {
+				input.PageSize = &size
+			}
+			result, err := roles.List(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]int64, 0, len(result.Items))
+			for _, item := range result.Items {
+				ids = append(ids, item.ID)
+				if item.ID == 101 && (len(item.Actions) != 5 || item.Actions[0].Code != "ALLFINW1" || item.Actions[4].Code != "ALLEXT01") {
+					t.Fatalf("complete ordered role permissions: %#v", item)
+				}
+			}
+			if result.Total != tc.total || !reflect.DeepEqual(ids, tc.ids) {
+				t.Fatalf("total %d ids %v, want %d %v", result.Total, ids, tc.total, tc.ids)
+			}
+		})
+	}
+}

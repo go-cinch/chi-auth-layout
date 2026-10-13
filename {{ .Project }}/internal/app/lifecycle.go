@@ -73,6 +73,29 @@ func (a *Application) Run(ctx context.Context) error {
 		}
 		listeners = append(listeners, listener)
 	}
+	if a.msgModule != nil {
+		workerCtx, stopWorker := context.WithCancel(ctx)
+		workerDone := make(chan struct{})
+		go func() {
+			defer close(workerDone)
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				sweepCtx, cancel := context.WithTimeout(workerCtx, 4*time.Second)
+				err := a.msgModule.ExpireStatus(sweepCtx)
+				cancel()
+				if err != nil && workerCtx.Err() == nil {
+					slog.ErrorContext(workerCtx, "refresh expired message status: "+err.Error())
+				}
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+		defer func() { stopWorker(); <-workerDone }()
+	}
 	results := make(chan error, len(endpoints))
 	for index, item := range endpoints {
 		listener := listeners[index]

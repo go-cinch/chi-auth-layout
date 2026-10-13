@@ -8,7 +8,7 @@
 - Organize business code by capability under `internal/modules/<capability>`.
 - Do not introduce global `handler`, `service`, `repository`, or `model` folders.
 - Use the capability's concrete `Module` as its business entry point; follow the [business module guidelines](internal/modules/AGENTS.md) instead of adding a `Service`/`Repository` layer around the same capability.
-- `internal/common` must not import concrete business packages under `internal/modules/<capability>`. HTTP server infrastructure may depend on the interfaces defined in `internal/modules`: `HTTPModule` (also aliased as `Module`), `IdempotentHTTPModule`, `PublicHTTPModule`, `HTTPPermissionAuthorizer`, and `AnonymousHTTPModule`.{{ if .Computed.enable_grpc_final }} RPC server infrastructure may depend on `GRPCModule` in the same package.{{ end }}
+- `internal/common` must not import concrete business packages under `internal/modules/<capability>`. HTTP server infrastructure may depend on the interfaces defined in `internal/modules`: `HTTPModule` (also aliased as `Module`), `IdempotentHTTPModule`, `PublicHTTPModule`, `HTTPPermissionAuthorizer`, `AnonymousHTTPModule`, and `HTTPAuditRecorder`.{{ if .Computed.enable_grpc_final }} RPC server infrastructure may depend on `GRPCModule` in the same package.{{ end }}
 - Business modules may depend on common infrastructure and small interfaces.
 - Wire dependencies explicitly in `internal/app`; avoid package globals.
 - Propagate `context.Context` through database, Redis, and downstream calls.
@@ -28,7 +28,7 @@
 
 ### Timestamps and Numeric Representation
 
-- Date/time response fields use `int64` Unix milliseconds since `1970-01-01T00:00:00Z` in Go{{ if .Computed.enable_grpc_final }} and Proto{{ end }}. Convert database time values with `UnixMilli()`.
+- Date/time response fields use `int64` Unix milliseconds since `1970-01-01T00:00:00Z` in Go{{ if .Computed.enable_grpc_final }} and Proto{{ end }}. Store the same Unix-millisecond values as `BIGINT` in the database. Keep timestamp values as `int64` across SQL, business code, and HTTP; do not explicitly convert them to UTC. Use `time.Now().UnixMilli()` for application instants or `FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint` for database instants. Convert to a selected timezone only for calendar grouping or frontend display.
 - Name event timestamps consistently with a past participle followed by `At`: `CreatedAt`, `UpdatedAt`, `StartedAt`, and `EndedAt` in Go. Use `created_at`, `updated_at`, `started_at`, and `ended_at` in HTTP JSON, SQL{{ if .Computed.enable_grpc_final }}, and Proto{{ end }}. Do not mix these with `starts_at`/`ends_at` or `start_at`/`end_at`. Apply this convention to requests, responses, configuration, examples, and tests.
 - HTTP JSON uses numbers.{{ if .Computed.enable_grpc_final }} ProtoJSON uses decimal strings for `int64`.{{ end }} Convert to JavaScript `Number` only within its safe integer range (±(2^53−1)); otherwise use `BigInt` or lossless JSON parsing.
 
@@ -67,7 +67,7 @@
 
 ### Responses and Errors
 
-- Response bodies use JSON; errors use `{"error_code":"STABLE_CODE","msg":"localized message"}`. For HTTP 200 with no response body, call `WriteOK(w)` without a body argument; it writes only the status code and no body.
+- Response bodies use JSON. File downloads, including CSV exports, are an explicit exception: use the actual media type, a download filename, and matching OpenAPI content; download errors still use the shared JSON error format. Other errors use `{"error_code":"STABLE_CODE","msg":"localized message"}`. For HTTP 200 with no response body, call `WriteOK(w)` without a body argument; it writes only the status code and no body.
 - A missing business/database record returns HTTP 404 with a stable `error_code` and localized `msg` (for example `{"error_code":"GAME_NOT_FOUND","msg":"game not found"}`). Unmatched routes also return HTTP 404.
 - Apply this mapping at the module's HTTP boundary. Return HTTP 400 for malformed input or invalid business fields, and HTTP 500 for unexpected database/server failures; do not globally rewrite error status codes.
 - Generated OpenAPI response statuses and body schemas must match the actual HTTP behavior.

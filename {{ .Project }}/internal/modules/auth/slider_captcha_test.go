@@ -21,11 +21,11 @@ func newSliderCaptchaTestManager(t *testing.T, enableE2ETest bool) *SliderCaptch
 func validSliderVerification(challengeID, purpose, username string) SliderCaptchaVerification {
 	return SliderCaptchaVerification{
 		CaptchaID: challengeID,
-		Purpose: purpose,
-		Username: username,
-		Duration: 100,
-		Distance: 200,
-		Width: 200,
+		Purpose:   purpose,
+		Username:  username,
+		Duration:  100,
+		Distance:  200,
+		Width:     200,
 		Tracks: []SliderCaptchaTrack{
 			{X: 0, T: 0},
 			{X: 100, T: 50},

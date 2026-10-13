@@ -26,7 +26,7 @@ type SliderCaptchaConfig struct {
 	TTL             time.Duration
 	MinimumDuration time.Duration
 	// EnableE2ETest is evaluated per validation. Nil disables E2E.
-	EnableE2ETest   func() bool
+	EnableE2ETest func() bool
 }
 
 type SliderCaptchaChallenge struct {
@@ -61,10 +61,10 @@ type sliderCaptchaRecord struct {
 }
 
 type SliderCaptcha struct {
-	store              PointCaptchaStore
-	ttl                time.Duration
-	minimumDuration    time.Duration
-	enableE2ETest      func() bool
+	store           PointCaptchaStore
+	ttl             time.Duration
+	minimumDuration time.Duration
+	enableE2ETest   func() bool
 }
 
 func NewSliderCaptcha(store PointCaptchaStore, cfg SliderCaptchaConfig) (*SliderCaptcha, error) {
@@ -81,10 +81,10 @@ func NewSliderCaptcha(store PointCaptchaStore, cfg SliderCaptchaConfig) (*Slider
 		cfg.EnableE2ETest = func() bool { return false }
 	}
 	return &SliderCaptcha{
-		store:              store,
-		ttl:                cfg.TTL,
-		minimumDuration:    cfg.MinimumDuration,
-		enableE2ETest:      cfg.EnableE2ETest,
+		store:           store,
+		ttl:             cfg.TTL,
+		minimumDuration: cfg.MinimumDuration,
+		enableE2ETest:   cfg.EnableE2ETest,
 	}, nil
 }
 

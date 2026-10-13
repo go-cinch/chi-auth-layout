@@ -30,6 +30,7 @@ func (*Module) Idempotent() bool { return true }
 {{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("", m.list)
+ r.GET("/summary", m.summary)
 	r.GET("/:id", m.get)
 	r.POST("", m.create)
 	r.PATCH("/:id", m.update)
@@ -39,6 +40,7 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 func (m *Module) HTTP() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", m.list)
+ r.Get("/summary", m.summary)
 	r.Get("/{id}", m.get)
 	r.Post("/", m.create)
 	r.Patch("/{id}", m.update)
@@ -158,9 +160,27 @@ func (m *Module) list(c *gin.Context) {
 {{ else -}}
 func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 {{ end }}
-	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
-	query := r.URL.Query()
+	query, err := url.ParseQuery(r.URL.RawQuery)
+ if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
 	input := ListRolesInput{Name: query.Get("name"), Word: query.Get("word"), ActionCode: query.Get("action_code")}
+	if values, provided := query["group_exact"]; provided {
+		if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+		input.GroupExact = &values[0]
+	}
+	if values, provided := query["groups_all"]; provided {
+		if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+		// Pointers reject JSON null elements instead of silently treating them as empty groups.
+		var groups []*string
+		if err := json.Unmarshal([]byte(values[0]), &groups); err != nil || groups == nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+		for _, group := range groups {
+			if group == nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+			input.GroupsAll = append(input.GroupsAll, *group)
+		}
+	}
+ if values,provided:=query["has_permissions"];provided{
+  if len(values)!=1 || (values[0]!="true" && values[0]!="false"){server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery);return}
+  parsed,_:=strconv.ParseBool(values[0]);input.HasPermissions=&parsed
+ }
 	if values, provided := query["p"]; provided {
 		if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.Page); return }
 		parsed, err := strconv.ParseInt(values[0], 10, 32)
@@ -180,4 +200,21 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	server.WriteOK(w, value)
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) summary(c *gin.Context) {
+ w,r := c.Writer,c.Request
+{{ else -}}
+func (m *Module) summary(w http.ResponseWriter,r *http.Request) {
+{{ end }}
+ query, err := url.ParseQuery(r.URL.RawQuery)
+ if err != nil || len(query) != 0 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ value, err := m.Summary(r.Context())
+ if err != nil {
+  slog.ErrorContext(r.Context(), "summarize role failed: "+err.Error())
+  server.WriteError(w,r,http.StatusInternalServerError,apperror.Internal)
+  return
+ }
+ server.WriteOK(w,value)
 }

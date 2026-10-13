@@ -1,8 +1,10 @@
 package role
 
 import (
+	"database/sql/driver"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -66,4 +68,69 @@ func TestRoleHTTP(t *testing.T) {
 	request(http.MethodPost, "/", `{"name":"Missing","word":"missing","action_codes":["MISSING1"]}`, http.StatusNotFound)
 	mock.ExpectQuery("SELECT COUNT.*FROM t_role").WillReturnError(sqlmock.ErrCancelled)
 	request(http.MethodGet, "/", "", http.StatusInternalServerError)
+}
+
+func TestRoleExactGroupHTTP(t *testing.T) {
+	m, mock := newTestModule(t)
+{{ if eq .Computed.http_router_final "gin" -}}
+	router := gin.New(); m.HTTP(router.Group("")); handler := http.Handler(router)
+{{ else -}}
+	handler := m.HTTP()
+{{ end -}}
+	for _, query := range []string{"group_exact=One&group_exact=Two", "group_exact=&group_exact=", "group_exact=%zz"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?"+query, nil))
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), `"error_code":"HTTP_INVALID_QUERY"`) {
+			t.Fatalf("invalid group query %q: %d %s", query, recorder.Code, recorder.Body.String())
+		}
+	}
+	for _, group := range []string{"", "Missing", "Finance, 100%_'"} {
+		mock.ExpectQuery(`SELECT COUNT.*FROM t_role WHERE EXISTS .*a.action_group = \$1`).WithArgs(group).
+			WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?group_exact="+url.QueryEscape(group), nil))
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"items":[]`) || !strings.Contains(recorder.Body.String(), `"t":0`) {
+			t.Fatalf("exact group %q: %d %s", group, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestRoleAllGroupsHTTP(t *testing.T) {
+	m, mock := newTestModule(t)
+{{ if eq .Computed.http_router_final "gin" -}}
+	router := gin.New(); m.HTTP(router.Group("")); handler := http.Handler(router)
+{{ else -}}
+	handler := m.HTTP()
+{{ end -}}
+	invalid := []string{"", "null", `{}`, `"Finance"`, `["Finance",null]`, `[1]`, `[true]`, `[["Finance"]]`, `["Finance"] []`, `["Finance"`}
+	for _, value := range invalid {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?groups_all="+url.QueryEscape(value), nil))
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), `"error_code":"HTTP_INVALID_QUERY"`) {
+			t.Fatalf("invalid all-groups value %q: %d %s", value, recorder.Code, recorder.Body.String())
+		}
+	}
+	for _, query := range []string{"groups_all=%zz", "groups_all=%5B%5D&groups_all=%5B%5D", "groups_all=%5B%22A%22%5D&groups_all=%5B%22B%22%5D"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?"+query, nil))
+		if recorder.Code != http.StatusBadRequest { t.Fatalf("invalid all-groups query %q: %d %s", query, recorder.Code, recorder.Body.String()) }
+	}
+	cases := []struct {
+		query string
+		sql string
+		args []driver.Value
+	}{
+		{"groups_all="+url.QueryEscape(`[]`), `SELECT COUNT\(\*\) FROM t_role$`, nil},
+		{"groups_all="+url.QueryEscape(`["Finance, 100%_'","Operations","Audit","Finance, 100%_'"]`), `SELECT COUNT.*a.action_group = \$1\) AND EXISTS .*a.action_group = \$2\) AND EXISTS .*a.action_group = \$3\)$`, []driver.Value{"Finance, 100%_'", "Operations", "Audit"}},
+		{"groups_all="+url.QueryEscape(`[""," spaced ","SPACED"]`), `SELECT COUNT.*a.action_group = \$1\) AND EXISTS .*a.action_group = \$2\) AND EXISTS .*a.action_group = \$3\)$`, []driver.Value{"", " spaced ", "SPACED"}},
+		{"group_exact=Legacy&has_permissions=true&groups_all="+url.QueryEscape(`["Finance","Legacy"]`), `SELECT COUNT.* = \$1 AND EXISTS .*a.action_group = \$2\) AND EXISTS .*a.action_group = \$3\)$`, []driver.Value{true, "Legacy", "Finance"}},
+	}
+	for _, tc := range cases {
+		mock.ExpectQuery(tc.sql).WithArgs(tc.args...).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?"+tc.query, nil))
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"items":[]`) || !strings.Contains(recorder.Body.String(), `"t":0`) {
+			t.Fatalf("all-groups query %q: %d %s", tc.query, recorder.Code, recorder.Body.String())
+		}
+	}
 }

@@ -82,5 +82,8 @@
   "AUTH_INVALID_PASSWORD_RESET": "请输入新密码",
   "MSG_INVALID": "消息字段无效：标题最多 200 字，正文最多 20000 字，过期时间须晚于当前时间",
   "MSG_INVALID_RECIPIENT": "定向消息须选择 1–1000 个有效用户；全员消息不能指定收件人",
-  "MSG_NOT_FOUND": "消息不存在或不可见"
+  "MSG_NOT_FOUND": "消息不存在或不可见",
+  "AUDIT_FILTER_INVALID": "审计筛选条件或时间范围无效（最长 90 天）。",
+  "AUDIT_NOT_FOUND": "审计记录不存在。",
+  "AUDIT_EXPORT_LIMIT": "超过 10,000 条记录，请缩小筛选范围后导出。"
 }

@@ -94,6 +94,14 @@ Keep these three path layers distinct:
 - Propagate the request context and stop work when it is canceled.
 - Use PATCH for partial updates: the module-local item route is `/{id}` (chi) or `/:id` (Gin), mounted under the resource path by the application. Preserve omitted fields; use pointer fields in HTTP inputs{{ if .Computed.enable_grpc_final }} and Proto `optional` fields{{ end }} to distinguish omission from an explicit empty value.
 
+### Time Ranges and Calendar Days
+
+- Express time queries as half-open intervals `[from, to)`: SQL uses `timestamp >= from AND timestamp < to`. Apply identical predicates to total counts, paginated records and any matching aggregates.
+- A business-day filter starts at that local calendar date's `00:00` and ends at the next local calendar date's `00:00`. Do not use `23:59:59` or truncate to seconds: BIGINT Unix-millisecond records such as `23:59:59.999` would be lost. The next midnight is excluded and belongs only to the following day.
+- Resolve both calendar boundaries in the selected business IANA timezone. Advance calendar dates instead of adding a fixed 24 hours; DST days may be 23 or 25 hours. If a zone skips or repeats midnight, use the actual boundary of that local calendar date.
+- Preserve optional bounds using pointers. Validate supplied Unix-millisecond values, duplicates and ordering; when both bounds are present require `from < to`. A single bound constrains only its corresponding side, subject to the business meaning of missing/zero timestamps.
+- Return complete calendar-day boundaries when chart buckets serve as list drilldown ranges, including today's bucket. If live statistics exclude future records, apply a separate captured-request cutoff to their SQL aggregates; do not silently replace the public next-midnight bound with the current instant.
+
 ### Idempotency
 
 - Modules that use `x-idempotent` for POST create operations must implement `modules.IdempotentHTTPModule`; clients reuse one key for retries of the same logical creation. Repeated keys return HTTP 409 as specified by the root guidelines.

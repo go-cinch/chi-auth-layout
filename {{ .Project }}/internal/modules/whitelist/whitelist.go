@@ -73,7 +73,7 @@ func (m *Module) Get(ctx context.Context, id int64) (*Whitelist, error) {
 func get(ctx context.Context, executor db.SQLExecutor, id int64) (*Whitelist, error) {
 	const query = `SELECT id, created_at, updated_at, category, resource FROM t_whitelist WHERE id = $1`
 	var value Whitelist
-	var createdAt, updatedAt time.Time
+	var createdAt, updatedAt int64
 	err := executor.QueryRowContext(ctx, query, id).Scan(&value.ID, &createdAt, &updatedAt, &value.Category, &value.Resource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -81,8 +81,8 @@ func get(ctx context.Context, executor db.SQLExecutor, id int64) (*Whitelist, er
 	if err != nil {
 		return nil, fmt.Errorf("query whitelist entry: %w", err)
 	}
-	value.CreatedAt = createdAt.UnixMilli()
-	value.UpdatedAt = updatedAt.UnixMilli()
+	value.CreatedAt = createdAt
+	value.UpdatedAt = updatedAt
 	return &value, nil
 }
 
@@ -93,7 +93,7 @@ func (m *Module) Create(ctx context.Context, input CreateWhitelistInput) (*White
 	}
 	var value *Whitelist
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		now := time.Now().UnixMilli()
 		var id int64
 		err := m.store.SQL(ctx).QueryRowContext(ctx, `INSERT INTO t_whitelist (created_at, updated_at, category, resource) VALUES ($1, $2, $3, $4) RETURNING id`, now, now, input.Category, input.Resource).Scan(&id)
 		if err != nil {
@@ -139,7 +139,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateWhitelistInpu
 		if input.Resource != nil {
 			add("resource", *input.Resource)
 		}
-		add("updated_at", time.Now().UTC().Truncate(time.Microsecond))
+		add("updated_at", time.Now().UnixMilli())
 		args = append(args, id)
 		query := "UPDATE t_whitelist SET " + strings.Join(sets, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
 		result, err := m.store.SQL(ctx).ExecContext(ctx, query, args...)
@@ -207,12 +207,12 @@ func (m *Module) List(ctx context.Context, input ListWhitelistsInput) (*ListWhit
 	defer rows.Close()
 	for rows.Next() {
 		var item Whitelist
-		var createdAt, updatedAt time.Time
+		var createdAt, updatedAt int64
 		if err := rows.Scan(&item.ID, &createdAt, &updatedAt, &item.Category, &item.Resource); err != nil {
 			return nil, fmt.Errorf("scan whitelist entry: %w", err)
 		}
-		item.CreatedAt = createdAt.UnixMilli()
-		item.UpdatedAt = updatedAt.UnixMilli()
+		item.CreatedAt = createdAt
+		item.UpdatedAt = updatedAt
 		value.Items = append(value.Items, item)
 	}
 	if err := rows.Err(); err != nil {

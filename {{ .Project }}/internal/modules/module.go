@@ -2,6 +2,7 @@ package modules
 
 import (
 	"context"
+ "{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"net/http"
 {{- if eq .Computed.http_router_final "gin" }}
 	"github.com/gin-gonic/gin"
@@ -59,3 +60,9 @@ type GRPCModule interface {
  GRPC(grpc.ServiceRegistrar)
 }
 {{ end -}}
+
+// HTTPAuditRecorder classifies business targets and persists sanitized audit events.
+type HTTPAuditRecorder interface {
+ AuditTarget(method, path string) auditctx.Target
+ RecordHTTP(context.Context, auditctx.Event) error
+}

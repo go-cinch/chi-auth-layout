@@ -81,7 +81,7 @@ func (m *Module) ResetPassword(ctx context.Context, input PasswordResetInput) (*
 		if err != nil {
 			return fmt.Errorf("hash reset password: %w", err)
 		}
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		now := time.Now().UnixMilli()
 		_, err = m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_user SET password = $1, credential_version = credential_version + 1, login_count = 1, last_logged_in_at = $2, wrong = 0, metadata = metadata - 'password_change_failures', updated_at = $2 WHERE id = $3 AND code = $4`, string(hash), now, identity.UserID, identity.Code)
 		if err != nil {
 			return fmt.Errorf("reset password: %w", err)

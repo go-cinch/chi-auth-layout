@@ -11,8 +11,8 @@ import (
 )
 
 type IdentityValidator struct {
-	store    *db.Store
-	sessions *Sessions
+	store                 *db.Store
+	sessions              *Sessions
 	passwordResetRequired bool
 }
 

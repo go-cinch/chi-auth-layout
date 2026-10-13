@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/lib/pq"
@@ -46,6 +45,7 @@ type CreateInput struct {
 }
 
 type ListInput struct {
+	Query    string
 	Page     *int32
 	PageSize *int32
 	Read     *bool
@@ -74,6 +74,10 @@ func New(store *db.Store, limits pagination.Limits) *Module {
 	return &Module{store: store, limits: limits}
 }
 
+// PostgreSQL supplies one Unix-millisecond instant per statement, including statements issued
+// after transaction locks are acquired. Application clocks never define visibility.
+const messageTime = "(FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint)"
+
 // All recipient operations use this same visibility predicate. Deleted states are
 // retained so a broadcast cannot reappear. Users created later do not see old broadcasts.
 // Drive targeted lookups from the user's recipient index. The disjoint union
@@ -87,7 +91,7 @@ const inboxFrom = ` FROM (
  JOIN t_user u ON u.id = $1
  LEFT JOIN t_msg_recipient r ON r.msg_id = m.id AND r.user_id = u.id
  WHERE ((m.scope = 'all' AND m.published_at >= u.created_at) OR (m.scope = 'targeted' AND r.id IS NOT NULL))
- AND m.published_at <= $2 AND (m.expired_at IS NULL OR m.expired_at > $2)`
+ AND m.published_at <= ` + messageTime + ` AND (m.expired_at IS NULL OR m.expired_at > ` + messageTime + `)`
 
 const columns = `m.id, m.created_at, m.updated_at, m.title, m.content, m.type, m.scope, m.sender_id, m.published_at, m.expired_at`
 
@@ -95,16 +99,16 @@ type scanner interface{ Scan(...any) error }
 
 func scanMessage(row scanner) (Message, error) {
 	var value Message
-	var created, updated, published time.Time
-	var expired, read sql.NullTime
+	var created, updated, published int64
+	var expired, read sql.NullInt64
 	err := row.Scan(&value.ID, &created, &updated, &value.Title, &value.Content, &value.Type, &value.Scope, &value.SenderID, &published, &expired, &read)
-	value.CreatedAt, value.UpdatedAt, value.PublishedAt = created.UnixMilli(), updated.UnixMilli(), published.UnixMilli()
+	value.CreatedAt, value.UpdatedAt, value.PublishedAt = created, updated, published
 	if expired.Valid {
-		n := expired.Time.UnixMilli()
+		n := expired.Int64
 		value.ExpiredAt = &n
 	}
 	if read.Valid {
-		n := read.Time.UnixMilli()
+		n := read.Int64
 		value.ReadAt = &n
 	}
 	return value, err
@@ -115,13 +119,12 @@ func (m *Module) Create(ctx context.Context, senderID int64, input CreateInput) 
 	if senderID <= 0 || input.Title == "" || utf8.RuneCountInString(input.Title) > 200 || input.Content == "" || utf8.RuneCountInString(input.Content) > 20000 || !validType(input.Type) || !validScope(input.Scope) {
 		return nil, ErrInvalid
 	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
 	var expiry any
 	if input.ExpiredAt != nil {
-		if *input.ExpiredAt <= now.UnixMilli() || *input.ExpiredAt > 253402300799999 {
+		if *input.ExpiredAt <= 0 || *input.ExpiredAt > 253402300799999 {
 			return nil, ErrInvalid
 		}
-		expiry = time.UnixMilli(*input.ExpiredAt).UTC()
+		expiry = *input.ExpiredAt
 	}
 	ids := make([]int64, 0, len(input.RecipientIDs))
 	seen := make(map[int64]bool)
@@ -138,10 +141,23 @@ func (m *Module) Create(ctx context.Context, senderID int64, input CreateInput) 
 		}
 	}
 	var value *Message
-	err := m.store.Tx(ctx, func(ctx context.Context) error {
+	users := ids
+	if input.Scope == "all" {
+		users = nil
+	}
+	err := m.statusTx(ctx, users, func(ctx context.Context) error {
+		if err := m.refreshStatus(ctx, users, true); err != nil {
+			return err
+		}
 		executor := m.store.SQL(ctx)
 		var id int64
-		err := executor.QueryRowContext(ctx, `INSERT INTO t_msg (created_at, updated_at, title, content, type, scope, sender_id, published_at, expired_at) VALUES ($1,$1,$2,$3,$4,$5,$6,$1,$7) RETURNING id`, now, input.Title, input.Content, input.Type, input.Scope, senderID, expiry).Scan(&id)
+		var now int64
+		err := executor.QueryRowContext(ctx, `INSERT INTO t_msg (created_at, updated_at, title, content, type, scope, sender_id, published_at, expired_at)
+ SELECT `+messageTime+`, `+messageTime+`, $1, $2, $3, $4, $5, `+messageTime+`, $6
+ WHERE $6::bigint IS NULL OR $6 > `+messageTime+` RETURNING id, published_at`, input.Title, input.Content, input.Type, input.Scope, senderID, expiry).Scan(&id, &now)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalid
+		}
 		if err != nil {
 			return err
 		}
@@ -158,6 +174,9 @@ func (m *Module) Create(ctx context.Context, senderID int64, input CreateInput) 
 				return ErrRecipient
 			}
 		}
+		if err := m.addStatus(ctx, users, now, expiry); err != nil {
+			return err
+		}
 		value, err = m.GetSent(ctx, id)
 		return err
 	})
@@ -171,7 +190,7 @@ func (m *Module) Get(ctx context.Context, userID, id int64) (*Message, error) {
 	if userID <= 0 || id <= 0 {
 		return nil, ErrInvalid
 	}
-	value, err := scanMessage(m.store.SQL(ctx).QueryRowContext(ctx, `SELECT `+columns+`, r.read_at`+inboxFrom+` AND r.deleted_at IS NULL AND m.id = $3`, userID, time.Now().UTC(), id))
+	value, err := scanMessage(m.store.SQL(ctx).QueryRowContext(ctx, `SELECT `+columns+`, r.read_at`+inboxFrom+` AND r.deleted_at IS NULL AND m.id = $2`, userID, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -185,7 +204,7 @@ func (m *Module) GetSent(ctx context.Context, id int64) (*Message, error) {
 	if id <= 0 {
 		return nil, ErrInvalid
 	}
-	value, err := scanMessage(m.store.SQL(ctx).QueryRowContext(ctx, `SELECT `+columns+`, NULL::timestamp FROM t_msg m WHERE m.id = $1`, id))
+	value, err := scanMessage(m.store.SQL(ctx).QueryRowContext(ctx, `SELECT `+columns+`, NULL::bigint FROM t_msg m WHERE m.id = $1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -238,9 +257,14 @@ func (m *Module) listMessages(ctx context.Context, userID int64, input ListInput
 		return value, nil
 	}
 	from, selected := inboxFrom+` AND r.deleted_at IS NULL`, columns+`, r.read_at`
-	args := []any{userID, time.Now().UTC()}
+	args := []any{userID}
 	if sent {
-		from, selected, args = ` FROM t_msg m WHERE TRUE`, columns+`, NULL::timestamp`, []any{}
+		from, selected, args = ` FROM t_msg m WHERE TRUE`, columns+`, NULL::bigint`, []any{}
+	}
+	if sent && strings.TrimSpace(input.Query) != "" {
+		escaped := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(strings.TrimSpace(input.Query)) + "%"
+		args = append(args, escaped)
+		from += fmt.Sprintf(" AND (m.title ILIKE $%d ESCAPE '!' OR m.content ILIKE $%d ESCAPE '!')", len(args), len(args))
 	}
 	if input.Read != nil {
 		if *input.Read {
@@ -283,47 +307,71 @@ func (m *Module) listMessages(ctx context.Context, userID int64, input ListInput
 	return value, nil
 }
 
-func (m *Module) UnreadCount(ctx context.Context, userID int64) (int64, error) {
-	if userID <= 0 {
-		return 0, ErrInvalid
-	}
-	var count int64
-	err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT COUNT(*)`+inboxFrom+` AND r.deleted_at IS NULL AND r.read_at IS NULL`, userID, time.Now().UTC()).Scan(&count)
-	return count, err
+// UnreadStatus is a compact snapshot, independent of inbox pagination. The same
+// visibility predicate covers broadcasts, targeted delivery, deletion and expiry.
+// ObservedAt provides a server-clock anchor for local notification acknowledgements.
+type UnreadStatus struct {
+	UserID         int64  `json:"user_id"`
+	Count          int64  `json:"count"`
+	LatestUnreadAt *int64 `json:"latest_unread_at"`
+	ObservedAt     int64  `json:"observed_at"`
 }
 
-// Read and Delete use one statement: authorization and the sparse state write
-// share a snapshot. Concurrent upserts preserve deletion and the first read time.
+func (m *Module) UnreadCount(ctx context.Context, userID int64) (int64, error) {
+	value, err := m.Status(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	return value.Count, nil
+}
+
+// Receipt writes and persisted statistics commit together. Locking precedes the
+// mutation so concurrent sends/reads cannot overwrite a newer aggregate.
 func (m *Module) Read(ctx context.Context, userID, id int64) error {
 	if userID <= 0 || id <= 0 {
 		return ErrInvalid
 	}
-	result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_msg_recipient (msg_id, user_id, read_at)
- SELECT m.id, $1, $2`+inboxFrom+` AND r.deleted_at IS NULL AND m.id = $3
+	return m.statusTx(ctx, []int64{userID}, func(ctx context.Context) error {
+		result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_msg_recipient (msg_id, user_id, read_at)
+ SELECT m.id, $1, `+messageTime+inboxFrom+` AND r.deleted_at IS NULL AND m.id = $2
  ON CONFLICT (msg_id, user_id) DO UPDATE SET read_at = COALESCE(t_msg_recipient.read_at, EXCLUDED.read_at), updated_at = EXCLUDED.read_at
- WHERE t_msg_recipient.deleted_at IS NULL`, userID, time.Now().UTC(), id)
-	return affected(result, err)
+ WHERE t_msg_recipient.deleted_at IS NULL`, userID, id)
+		if err := affected(result, err); err != nil {
+			return err
+		}
+		return m.refreshStatus(ctx, []int64{userID}, false)
+	})
 }
 
 func (m *Module) Delete(ctx context.Context, userID, id int64) error {
 	if userID <= 0 || id <= 0 {
 		return ErrInvalid
 	}
-	result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_msg_recipient (msg_id, user_id, deleted_at)
- SELECT m.id, $1, $2`+inboxFrom+` AND m.id = $3
- ON CONFLICT (msg_id, user_id) DO UPDATE SET deleted_at = COALESCE(t_msg_recipient.deleted_at, EXCLUDED.deleted_at), updated_at = EXCLUDED.deleted_at`, userID, time.Now().UTC(), id)
-	return affected(result, err)
+	return m.statusTx(ctx, []int64{userID}, func(ctx context.Context) error {
+		result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_msg_recipient (msg_id, user_id, deleted_at)
+ SELECT m.id, $1, `+messageTime+inboxFrom+` AND m.id = $2
+ ON CONFLICT (msg_id, user_id) DO UPDATE SET deleted_at = COALESCE(t_msg_recipient.deleted_at, EXCLUDED.deleted_at), updated_at = EXCLUDED.deleted_at`, userID, id)
+		if err := affected(result, err); err != nil {
+			return err
+		}
+		return m.refreshStatus(ctx, []int64{userID}, false)
+	})
 }
 
 func (m *Module) ReadAll(ctx context.Context, userID int64) error {
 	if userID <= 0 {
 		return ErrInvalid
 	}
-	_, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_msg_recipient (msg_id, user_id, read_at)
- SELECT m.id, $1, $2`+inboxFrom+` AND r.deleted_at IS NULL AND r.read_at IS NULL
+	return m.statusTx(ctx, []int64{userID}, func(ctx context.Context) error {
+		_, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_msg_recipient (msg_id, user_id, read_at)
+ SELECT m.id, $1, `+messageTime+inboxFrom+` AND r.deleted_at IS NULL AND r.read_at IS NULL
  ON CONFLICT (msg_id, user_id) DO UPDATE SET read_at = COALESCE(t_msg_recipient.read_at, EXCLUDED.read_at), updated_at = EXCLUDED.read_at
- WHERE t_msg_recipient.deleted_at IS NULL`, userID, time.Now().UTC())
-	return err
+ WHERE t_msg_recipient.deleted_at IS NULL`, userID)
+		if err != nil {
+			return err
+		}
+		return m.refreshStatus(ctx, []int64{userID}, false)
+	})
 }
 
 // DeleteSent removes the published message for everyone. It is a separately
@@ -332,8 +380,13 @@ func (m *Module) DeleteSent(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return ErrInvalid
 	}
-	result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_msg WHERE id = $1`, id)
-	return affected(result, err)
+	return m.statusTx(ctx, nil, func(ctx context.Context) error {
+		result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_msg WHERE id = $1`, id)
+		if err := affected(result, err); err != nil {
+			return err
+		}
+		return m.refreshStatus(ctx, nil, false)
+	})
 }
 
 func affected(result sql.Result, err error) error {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	
 	"log/slog"
+ "{{ .Computed.module_name_final }}/internal/common/auditctx"
 	
 	"net/http"
 	"strings"
@@ -39,7 +40,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(Locale(), AccessLog(policy), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
+	r.Use(Locale(), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
 	r.NoRoute(func(c *gin.Context) {
 		WriteError(c.Writer, c.Request, http.StatusNotFound, apperror.NotFound)
 	})
@@ -98,6 +99,7 @@ func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.H
 			return
 		}
 		c.Request = request
+        identity, _ := authn.FromContext(request.Context()); auditctx.Identity(request.Context(),identity.UserID,identity.Username)
 		if authorizer != nil && c.Request.URL.Path != permissionEndpoint {
 			allowed, err := authorizer.AuthorizeHTTP(c.Request.Context(), c.Request.Method, c.Request.URL.Path)
 			if err != nil {
@@ -164,6 +166,7 @@ import (
 	"errors"
 	
 	"log/slog"
+ "{{ .Computed.module_name_final }}/internal/common/auditctx"
 	
 	"net/http"
 	"strings"
@@ -190,7 +193,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(Locale(), AccessLog(policy), Recoverer())
+	r.Use(Locale(), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer())
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, http.StatusNotFound, apperror.NotFound)
@@ -253,7 +256,8 @@ func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.H
             } else { WriteError(w, r, http.StatusUnauthorized, apperror.Unauthorized) }
 			return
 		}
-		if authorizer != nil && request.URL.Path != permissionEndpoint {
+		identity, _ := authn.FromContext(request.Context()); auditctx.Identity(request.Context(),identity.UserID,identity.Username)
+        if authorizer != nil && request.URL.Path != permissionEndpoint {
 			allowed, err := authorizer.AuthorizeHTTP(request.Context(), request.Method, request.URL.Path)
 			if err != nil {
 				slog.ErrorContext(request.Context(), "authorize http request failed: "+err.Error())

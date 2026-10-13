@@ -31,6 +31,7 @@ func (*Module) Idempotent() bool { return true }
 {{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("", m.list)
+ r.GET("/summary", m.summary)
 	r.GET("/:id", m.get)
 	r.POST("", m.create)
 	r.PATCH("/:id", m.update)
@@ -40,6 +41,7 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 func (m *Module) HTTP() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", m.list)
+ r.Get("/summary", m.summary)
 	r.Get("/{id}", m.get)
 	r.Post("/", m.create)
 	r.Patch("/{id}", m.update)
@@ -135,4 +137,21 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 	value, err := m.List(r.Context(), input)
 	if err != nil { slog.ErrorContext(r.Context(), "list dictionaries failed: "+err.Error()); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
 	server.WriteOK(w, value)
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) summary(c *gin.Context) {
+ w,r := c.Writer,c.Request
+{{ else -}}
+func (m *Module) summary(w http.ResponseWriter,r *http.Request) {
+{{ end }}
+ query, err := url.ParseQuery(r.URL.RawQuery)
+ if err != nil || len(query) != 0 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ value, err := m.Summary(r.Context())
+ if err != nil {
+  slog.ErrorContext(r.Context(), "summarize dictionary failed: "+err.Error())
+  server.WriteError(w,r,http.StatusInternalServerError,apperror.Internal)
+  return
+ }
+ server.WriteOK(w,value)
 }

@@ -32,6 +32,7 @@ func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	a.wireBusinessModules()
 	want := map[string]modules.HTTPModule{
+ "/audit": a.auditModule,
 		"/action": a.actionModule,
  "/msg": a.msgModule,
 		"/auth": a.authModule,
@@ -101,7 +102,7 @@ func TestBusinessModuleWiring(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(7)).WillReturnRows(
 		sqlmock.NewRows([]string{"id","created_at","updated_at","role_id","action","username","code","last_logged_in_at","status","metadata","wrong","login_count"}).
-		AddRow(7,time.Now(),time.Now(),nil,"","operator","TEST0007",nil,1,[]byte(`{}`),0,1))
+		AddRow(7,time.Now().UnixMilli(),time.Now().UnixMilli(),nil,"","operator","TEST0007",nil,1,[]byte(`{}`),0,1))
 	token, _, err := a.authenticator.Issue(authn.Identity{CredentialVersion: 1, UserID:7,Username:"operator",Code:"TEST0007"})
 	if err != nil { t.Fatal(err) }
 	r := httptest.NewRequest("GET","/user/7",nil)

@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	CacheTTL                          = 10 * time.Minute
-	PointCaptchaEnglishDictionaryID  = int64(1)
-	PointCaptchaChineseDictionaryID  = int64(2)
+	CacheTTL                        = 10 * time.Minute
+	PointCaptchaEnglishDictionaryID = int64(1)
+	PointCaptchaChineseDictionaryID = int64(2)
 )
 
 var (
@@ -253,7 +253,7 @@ func (m *Module) getCached(ctx context.Context, id int64) (*Dictionary, bool, er
 func get(ctx context.Context, executor db.SQLExecutor, id int64) (*Dictionary, error) {
 	const query = `SELECT id, created_at, updated_at, dictionary_key, name, value, description, enabled FROM t_dictionary WHERE id = $1`
 	var value Dictionary
-	var createdAt, updatedAt time.Time
+	var createdAt, updatedAt int64
 	err := executor.QueryRowContext(ctx, query, id).Scan(&value.ID, &createdAt, &updatedAt, &value.Key, &value.Name, &value.Value, &value.Description, &value.Enabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -261,8 +261,8 @@ func get(ctx context.Context, executor db.SQLExecutor, id int64) (*Dictionary, e
 	if err != nil {
 		return nil, fmt.Errorf("query dictionary: %w", err)
 	}
-	value.CreatedAt = createdAt.UnixMilli()
-	value.UpdatedAt = updatedAt.UnixMilli()
+	value.CreatedAt = createdAt
+	value.UpdatedAt = updatedAt
 	return &value, nil
 }
 
@@ -279,7 +279,7 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 	}
 	var value *Dictionary
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		now := time.Now().UnixMilli()
 		var id int64
 		err := m.store.SQL(ctx).QueryRowContext(ctx, `INSERT INTO t_dictionary (created_at, updated_at, dictionary_key, name, value, description, enabled) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id`, now, now, input.Key, input.Name, string(input.Value), input.Description, enabled).Scan(&id)
 		if err != nil {
@@ -353,7 +353,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateDictionaryInp
 		if input.Enabled != nil {
 			add("enabled", *input.Enabled)
 		}
-		add("updated_at", time.Now().UTC().Truncate(time.Microsecond))
+		add("updated_at", time.Now().UnixMilli())
 		args = append(args, id)
 		query := "UPDATE t_dictionary SET " + strings.Join(sets, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
 		result, err := m.store.SQL(ctx).ExecContext(ctx, query, args...)
@@ -434,12 +434,12 @@ func (m *Module) List(ctx context.Context, input ListDictionariesInput) (*ListDi
 	defer rows.Close()
 	for rows.Next() {
 		var item Dictionary
-		var createdAt, updatedAt time.Time
+		var createdAt, updatedAt int64
 		if err := rows.Scan(&item.ID, &createdAt, &updatedAt, &item.Key, &item.Name, &item.Value, &item.Description, &item.Enabled); err != nil {
 			return nil, fmt.Errorf("scan dictionary: %w", err)
 		}
-		item.CreatedAt = createdAt.UnixMilli()
-		item.UpdatedAt = updatedAt.UnixMilli()
+		item.CreatedAt = createdAt
+		item.UpdatedAt = updatedAt
 		value.Items = append(value.Items, item)
 	}
 	if err := rows.Err(); err != nil {

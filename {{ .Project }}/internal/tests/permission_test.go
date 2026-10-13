@@ -77,7 +77,7 @@ func permissionDatabase(t *testing.T) *db.Store {
 			t.Fatalf("migration %s: %v", file, err)
 		}
 	}
-	if _, err := database.ExecContext(t.Context(), `UPDATE t_user SET status=2, metadata='{"lock_expired_at":1790000000000}', last_logged_in_at=TIMESTAMP '2026-09-01 00:00:00' WHERE id=3`); err != nil {
+	if _, err := database.ExecContext(t.Context(), `UPDATE t_user SET status=2, metadata='{"lock_expired_at":1790000000000}', last_logged_in_at=1788220800000 WHERE id=3`); err != nil {
 		t.Fatal(err)
 	}
 	return &db.Store{DB: database}
@@ -198,11 +198,11 @@ func TestPermissionSQL(t *testing.T) {
 		}
 	}
 	var lockedAt int64
-	var loggedAt time.Time
+	var loggedAt int64
 	if err := store.DB.QueryRowContext(ctx, `SELECT (metadata->>'lock_expired_at')::bigint, last_logged_in_at FROM t_user WHERE id=3`).Scan(&lockedAt, &loggedAt); err != nil {
 		t.Fatal(err)
 	}
-	if lockedAt != 1790000000000 || loggedAt.UnixMilli() != time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC).UnixMilli() {
+	if lockedAt != 1790000000000 || loggedAt != time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC).UnixMilli() {
 		t.Fatalf("timestamp migration: %d %v", lockedAt, loggedAt)
 	}
 	exec(`UPDATE t_action SET resource='GET|/default', menu='/common', btn='common' WHERE word='default'`)

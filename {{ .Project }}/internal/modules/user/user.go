@@ -101,11 +101,15 @@ type UpdateUserInput struct {
 }
 
 type ListUsersInput struct {
-	Username string
-	Code     string
-	Statuses []int16
-	Page     *int32
-	PageSize *int32
+	LastLoggedInFrom *int64
+	LastLoggedInTo   *int64
+	CreatedFrom      *int64
+	CreatedTo        *int64
+	Username         string
+	Code             string
+	Statuses         []int16
+	Page             *int32
+	PageSize         *int32
 }
 
 type ListUsersResult struct {
@@ -184,10 +188,10 @@ func (m *Module) lookup(ctx context.Context, executor db.SQLExecutor, id int64) 
 
 func (m *Module) scan(row interface{ Scan(...any) error }) (*User, error) {
 	var value User
-	var createdAt, updatedAt time.Time
+	var createdAt, updatedAt int64
 	var roleID sql.NullInt64
 	var codes string
-	var lastLoggedInAt sql.NullTime
+	var lastLoggedInAt sql.NullInt64
 	var metadata []byte
 	err := row.Scan(
 		&value.ID, &createdAt, &updatedAt, &roleID, &codes, &value.Username,
@@ -199,8 +203,8 @@ func (m *Module) scan(row interface{ Scan(...any) error }) (*User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query user: %w", err)
 	}
-	value.CreatedAt = createdAt.UnixMilli()
-	value.UpdatedAt = updatedAt.UnixMilli()
+	value.CreatedAt = createdAt
+	value.UpdatedAt = updatedAt
 	if err := json.Unmarshal(metadata, &value.Metadata); err != nil {
 		return nil, fmt.Errorf("decode user metadata: %w", err)
 	}
@@ -208,7 +212,7 @@ func (m *Module) scan(row interface{ Scan(...any) error }) (*User, error) {
 		return nil, fmt.Errorf("decode user metadata keys: %w", err)
 	}
 	if lastLoggedInAt.Valid {
-		milliseconds := lastLoggedInAt.Time.UnixMilli()
+		milliseconds := lastLoggedInAt.Int64
 		value.LastLoggedInAt = &milliseconds
 	}
 	value.ActionCodes = m.actions.SplitCodes(codes)
@@ -248,15 +252,15 @@ func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, erro
 		if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT nextval('t_user_id_seq')`).Scan(&id); err != nil {
 			return err
 		}
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		// Keep registration and message publication on the same database clock.
 		inserted := false
 		for range 5 {
 			userCode, err := code.Generate()
 			if err != nil {
 				return err
 			}
-			result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_user (id, created_at, updated_at, role_id, action, username, code, password, status, metadata, wrong) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0) ON CONFLICT ON CONSTRAINT uk_user_code DO NOTHING`,
-				id, now, now, nullableRole(input.RoleID), strings.Join(codes, ","), input.Username, userCode, string(password), StatusActive, metadata)
+			result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_user (id, created_at, updated_at, role_id, action, username, code, password, status, metadata, wrong) VALUES ($1, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, $2, $3, $4, $5, $6, $7, $8, 0) ON CONFLICT ON CONSTRAINT uk_user_code DO NOTHING`,
+				id, nullableRole(input.RoleID), strings.Join(codes, ","), input.Username, userCode, string(password), StatusActive, metadata)
 			if err != nil {
 				return mapWriteError(err)
 			}
@@ -394,7 +398,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 				sets = append(sets, "metadata = "+metadataExpression)
 			}
 		}
-		add("updated_at", time.Now().UTC().Truncate(time.Microsecond))
+		add("updated_at", time.Now().UnixMilli())
 		args = append(args, id)
 		query := "UPDATE t_user SET " + strings.Join(sets, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
 		result, err := m.store.SQL(ctx).ExecContext(ctx, query, args...)
@@ -451,7 +455,18 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 	return nil
 }
 
+// Time filters preserve optional bounds and use JavaScript-safe Unix milliseconds.
+func validTimeRange(from, to *int64) bool {
+	const maxTimestamp int64 = 9007199254740991
+	return (from == nil || (*from >= 0 && *from <= maxTimestamp)) &&
+		(to == nil || (*to >= 0 && *to <= maxTimestamp)) &&
+		(from == nil || to == nil || *from < *to)
+}
+
 func (m *Module) List(ctx context.Context, input ListUsersInput) (*ListUsersResult, error) {
+	if !validTimeRange(input.CreatedFrom, input.CreatedTo) || !validTimeRange(input.LastLoggedInFrom, input.LastLoggedInTo) {
+		return nil, ErrInvalid
+	}
 	for _, status := range input.Statuses {
 		if !validStatus(status) {
 			return nil, ErrInvalid
@@ -658,6 +673,26 @@ func filters(input ListUsersInput, now int64) (string, []any) {
 	} else if len(input.Statuses) > 1 {
 		args = append(args, pq.Array(input.Statuses))
 		parts = append(parts, statusColumn+" = ANY($"+strconv.Itoa(len(args))+")")
+	}
+	if input.CreatedFrom != nil {
+		args = append(args, *input.CreatedFrom)
+		parts = append(parts, "created_at >= $"+strconv.Itoa(len(args)))
+	}
+	if input.CreatedTo != nil {
+		args = append(args, *input.CreatedTo)
+		parts = append(parts, "created_at < $"+strconv.Itoa(len(args)))
+	}
+	// Missing and zero timestamps mean the account has never completed a login.
+	if input.LastLoggedInFrom != nil || input.LastLoggedInTo != nil {
+		parts = append(parts, "last_logged_in_at > 0")
+	}
+	if input.LastLoggedInFrom != nil {
+		args = append(args, *input.LastLoggedInFrom)
+		parts = append(parts, "last_logged_in_at >= $"+strconv.Itoa(len(args)))
+	}
+	if input.LastLoggedInTo != nil {
+		args = append(args, *input.LastLoggedInTo)
+		parts = append(parts, "last_logged_in_at < $"+strconv.Itoa(len(args)))
 	}
 	if len(parts) == 0 {
 		return "", args

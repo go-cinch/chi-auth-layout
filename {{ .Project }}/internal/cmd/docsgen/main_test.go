@@ -191,3 +191,60 @@ func handler(w http.ResponseWriter,r *http.Request){
 		t.Fatal(got)
 	}
 }
+
+func TestRawJSONResponseSchema(t *testing.T) {
+	g := &generator{}
+	value := g.typeSchema(nil, &ast.SelectorExpr{X: ast.NewIdent("json"), Sel: ast.NewIdent("RawMessage")})
+	var output strings.Builder
+	renderSchema(&output, value, 0)
+	for _, part := range []string{"oneOf:", "type: object", "type: array", "nullable: true", "type: string", "type: number", "type: boolean"} {
+		if !strings.Contains(output.String(), part) {
+			t.Fatal(output.String())
+		}
+	}
+}
+
+func TestNullableTimestampSchema(t *testing.T) {
+	g := &generator{}
+	value := g.typeSchema(nil, &ast.StarExpr{X: ast.NewIdent("int64")})
+	var output strings.Builder
+	renderSchema(&output, value, 0)
+	for _, part := range []string{"type: integer", "format: int64", "nullable: true"} {
+		if !strings.Contains(output.String(), part) {
+			t.Fatal(output.String())
+		}
+	}
+}
+
+func TestImportedResponseSchema(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "conf/http.yml", "http:\n  docs:\n    servers: []\n")
+	writeSource(t, root, "common/report/summary.go", `package report
+ type ManagementPoint struct { Count int64 `+"`json:\"count\"`"+` }
+ type ManagementSummary struct { Total int64 `+"`json:\"total\"`"+`; Trend []ManagementPoint `+"`json:\"trend\"`"+` }
+ `)
+	writeSource(t, root, "modules/example/http.go", `package example
+ import (
+  "net/http"
+  chart "example.com/service/internal/common/report"
+ )
+ type Module struct{}
+ func (*Module) Name() string {return "/example"}
+ func (m *Module) Summary() (*chart.ManagementSummary,error) {return nil,nil}
+ func (m *Module) HTTP() http.Handler {r:=chi.NewRouter();r.Get("/summary",m.summary);return r}
+ func (m *Module) summary(w http.ResponseWriter,r *http.Request) {value,err:=m.Summary();if err!=nil{return};server.WriteOK(w,value)}
+ `)
+	output := filepath.Join(root, "docs/openapi.yaml")
+	if err := run(root, filepath.Join(root, "conf"), output, "Summary"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`$ref: "#/components/schemas/ManagementSummary"`, `ManagementPoint:`, `total:`, `trend:`, `count:`} {
+		if !strings.Contains(string(content), expected) {
+			t.Fatalf("missing %s: %s", expected, content)
+		}
+	}
+}

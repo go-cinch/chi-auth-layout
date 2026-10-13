@@ -2,6 +2,10 @@ package app
 
 import (
 	"bytes"
+"github.com/DATA-DOG/go-sqlmock"
+"{{ .Computed.module_name_final }}/internal/infra/db"
+"{{ .Computed.module_name_final }}/internal/common/pagination"
+"{{ .Computed.module_name_final }}/internal/modules/msg"
 	"context"
 	"log/slog"
 	"net"
@@ -115,3 +119,33 @@ func TestGRPCLifecycle(t *testing.T) {
 	probe.Close()
 }
 {{ end -}}
+func TestRunStopsMessageExpiryWorker(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	mock.ExpectQuery("SELECT user_id FROM t_user_msg_status.*LIMIT 100").WillReturnRows(sqlmock.NewRows([]string{"user_id"}))
+	limits, _ := pagination.New(100, 100)
+	application := &Application{server: &http.Server{Addr: "127.0.0.1:0", Handler: http.NotFoundHandler()}, msgModule: msg.New(&db.Store{DB: database}, limits)}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- application.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for mock.ExpectationsWereMet() != nil && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expiry worker did not stop")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

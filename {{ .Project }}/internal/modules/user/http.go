@@ -50,6 +50,7 @@ func (*Module) Idempotent() bool { return true }
 {{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("", m.list)
+	r.GET("/summary", m.summary)
 	r.GET("/:id", m.get)
 	r.POST("", m.create)
 	r.PATCH("/:id", m.update)
@@ -59,6 +60,7 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 func (m *Module) HTTP() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", m.list)
+	r.Get("/summary", m.summary)
 	r.Get("/{id}", m.get)
 	r.Post("/", m.create)
 	r.Patch("/{id}", m.update)
@@ -220,9 +222,33 @@ func (m *Module) list(c *gin.Context) {
 {{ else -}}
 func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 {{ end }}
-	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
-	query := r.URL.Query()
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
 	input := ListUsersInput{Username: query.Get("username"), Code: query.Get("code")}
+ if values, provided := query["created_from"]; provided {
+  if len(values) != 1 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  parsed, err := strconv.ParseInt(values[0],10,64)
+  if err != nil || !validTimeRange(&parsed,nil) { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  input.CreatedFrom = &parsed
+ }
+ if values, provided := query["created_to"]; provided {
+  if len(values) != 1 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  parsed, err := strconv.ParseInt(values[0],10,64)
+  if err != nil || !validTimeRange(&parsed,nil) { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  input.CreatedTo = &parsed
+ }
+ if values,provided:=query["last_logged_in_from"];provided{
+  if len(values)!=1{server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery);return}
+  parsed,err:=strconv.ParseInt(values[0],10,64)
+  if err!=nil || !validTimeRange(&parsed,nil){server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery);return}
+  input.LastLoggedInFrom=&parsed
+ }
+ if values,provided:=query["last_logged_in_to"];provided{
+  if len(values)!=1{server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery);return}
+  parsed,err:=strconv.ParseInt(values[0],10,64)
+  if err!=nil || !validTimeRange(&parsed,nil){server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery);return}
+  input.LastLoggedInTo=&parsed
+ }
 	if values, provided := query["status"]; provided {
 		if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.UserStatus); return }
 		statuses, ok := parseStatuses(values[0])
@@ -267,4 +293,33 @@ func parseStatuses(value string) ([]int16, bool) {
 		result = append(result, status)
 	}
 	return result, len(result) > 0
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) summary(c *gin.Context) {
+ w,r := c.Writer,c.Request
+{{ else -}}
+func (m *Module) summary(w http.ResponseWriter,r *http.Request) {
+{{ end }}
+ query, err := url.ParseQuery(r.URL.RawQuery)
+ if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ input := SummaryInput{}
+ for key := range query { if key != "days" && key != "time_zone" { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return } }
+ if values,provided := query["days"]; provided {
+  if len(values)!=1 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  input.Days,err = strconv.Atoi(values[0])
+  if err!=nil || (input.Days!=14 && input.Days!=30) { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ }
+ if values,provided := query["time_zone"]; provided {
+  if len(values)!=1 || values[0]=="" { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  input.TimeZone=values[0]
+ }
+ value, err := m.Summary(r.Context(),input)
+ if errors.Is(err,ErrInvalid) { server.WriteError(w,r,http.StatusBadRequest,ErrInvalid); return }
+ if err != nil {
+  slog.ErrorContext(r.Context(),"summarize users failed: "+err.Error())
+  server.WriteError(w,r,http.StatusInternalServerError,apperror.Internal)
+  return
+ }
+ server.WriteOK(w,value)
 }

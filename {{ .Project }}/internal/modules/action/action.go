@@ -58,15 +58,17 @@ type UpdateActionInput struct {
 }
 
 type ListActionsInput struct {
-	Code     string
-	Name     string
-	Group    string
-	Word     string
-	Resource string
-	Menu     string
-	Button   string
-	Page     *int32
-	PageSize *int32
+	GroupsExact []string
+	GroupExact *string
+	Code       string
+	Name       string
+	Group      string
+	Word       string
+	Resource   string
+	Menu       string
+	Button     string
+	Page       *int32
+	PageSize   *int32
 }
 
 type ListActionsResult struct {
@@ -81,9 +83,9 @@ type ListActionGroupsResult struct {
 }
 
 type Module struct {
-	store                   *db.Store
-	limits                  pagination.Limits
-	protectSuper            bool
+	store        *db.Store
+	limits       pagination.Limits
+	protectSuper bool
 }
 
 func New(store *db.Store, limits pagination.Limits, protectSuper bool) *Module {
@@ -104,7 +106,7 @@ func (*Module) LookupByID(ctx context.Context, executor db.SQLExecutor, id int64
 func get(ctx context.Context, executor db.SQLExecutor, id int64) (*Action, error) {
 	const query = `SELECT id, created_at, updated_at, code, name, action_group, word, resource, menu, btn FROM t_action WHERE id = $1`
 	var value Action
-	var createdAt, updatedAt time.Time
+	var createdAt, updatedAt int64
 	err := executor.QueryRowContext(ctx, query, id).Scan(
 		&value.ID, &createdAt, &updatedAt, &value.Code, &value.Name,
 		&value.Group, &value.Word, &value.Resource, &value.Menu, &value.Button,
@@ -115,8 +117,8 @@ func get(ctx context.Context, executor db.SQLExecutor, id int64) (*Action, error
 	if err != nil {
 		return nil, fmt.Errorf("query action: %w", err)
 	}
-	value.CreatedAt = createdAt.UnixMilli()
-	value.UpdatedAt = updatedAt.UnixMilli()
+	value.CreatedAt = createdAt
+	value.UpdatedAt = updatedAt
 	return &value, nil
 }
 
@@ -135,7 +137,7 @@ func (m *Module) Create(ctx context.Context, input CreateActionInput) (*Action, 
 		if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT nextval('t_action_id_seq')`).Scan(&id); err != nil {
 			return err
 		}
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		now := time.Now().UnixMilli()
 		inserted := false
 		for range 5 {
 			actionCode, err := code.Generate()
@@ -233,7 +235,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateActionInput) 
 		if input.Button != nil {
 			add("btn", *input.Button)
 		}
-		add("updated_at", time.Now().UTC().Truncate(time.Microsecond))
+		add("updated_at", time.Now().UnixMilli())
 		args = append(args, id)
 		query := "UPDATE t_action SET " + strings.Join(sets, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
 		result, err := m.store.SQL(ctx).ExecContext(ctx, query, args...)
@@ -355,12 +357,12 @@ type scanner interface{ Scan(...any) error }
 
 func scan(row scanner) (*Action, error) {
 	var value Action
-	var createdAt, updatedAt time.Time
+	var createdAt, updatedAt int64
 	if err := row.Scan(&value.ID, &createdAt, &updatedAt, &value.Code, &value.Name, &value.Group, &value.Word, &value.Resource, &value.Menu, &value.Button); err != nil {
 		return nil, fmt.Errorf("scan action: %w", err)
 	}
-	value.CreatedAt = createdAt.UnixMilli()
-	value.UpdatedAt = updatedAt.UnixMilli()
+	value.CreatedAt = createdAt
+	value.UpdatedAt = updatedAt
 	return &value, nil
 }
 
@@ -461,6 +463,15 @@ func actionFilters(input ListActionsInput) (string, []any) {
 		args = append(args, like(field.value))
 		parts = append(parts, "LOWER("+field.column+") LIKE LOWER($"+strconv.Itoa(len(args))+") ESCAPE '!'")
 	}
+	if input.GroupExact != nil {
+		args = append(args, *input.GroupExact)
+		parts = append(parts, "action_group = $"+strconv.Itoa(len(args)))
+	}
+	if len(input.GroupsExact) > 0 {
+		args = append(args, pq.Array(input.GroupsExact))
+		parts = append(parts, "action_group = ANY($"+strconv.Itoa(len(args))+")")
+	}
+
 	if len(parts) == 0 {
 		return "", args
 	}

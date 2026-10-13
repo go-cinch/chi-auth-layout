@@ -19,7 +19,7 @@ import (
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
 )
 
-var userTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC)
+var userTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
 
 type passwordFailureClearerStub struct {
 	ids []int64
@@ -72,7 +72,7 @@ func TestUserCRUD(t *testing.T) {
 	}
 	expectUserGet(mock, 1, "super", "89HEK28Y")
 	value, err := m.Get(ctx, 1)
-	if err != nil || value.Username != "super" || value.CreatedAt != userTestTime.UnixMilli() {
+	if err != nil || value.Username != "super" || value.CreatedAt != userTestTime {
 		t.Fatalf("get: %#v %v", value, err)
 	}
 	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(2)).WillReturnRows(
@@ -91,8 +91,8 @@ func TestUserCRUD(t *testing.T) {
 	}
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(6))
-	mock.ExpectExec("INSERT INTO t_user").WithArgs(int64(6), sqlmock.AnyArg(), sqlmock.AnyArg(), nil, "", "operator", sqlmock.AnyArg(), sqlmock.AnyArg(), StatusActive, "{}").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("INSERT INTO t_user").WithArgs(int64(6), sqlmock.AnyArg(), sqlmock.AnyArg(), nil, "", "operator", sqlmock.AnyArg(), sqlmock.AnyArg(), StatusActive, "{}").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO t_user").WithArgs(int64(6), nil, "", "operator", sqlmock.AnyArg(), sqlmock.AnyArg(), StatusActive, "{}").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO t_user").WithArgs(int64(6), nil, "", "operator", sqlmock.AnyArg(), sqlmock.AnyArg(), StatusActive, "{}").WillReturnResult(sqlmock.NewResult(0, 1))
 	expectUserGet(mock, 6, "operator", "ABCDEFGH")
 	mock.ExpectCommit()
 	value, err = m.Create(ctx, CreateUserInput{Username: " operator ", Password: "x"})
@@ -390,5 +390,44 @@ func TestUserListRejectsPartialResults(t *testing.T) {
 				t.Fatalf("partial result on %s failure: %#v %v", stage, result, err)
 			}
 		})
+	}
+}
+
+func TestLastLoggedInTimeRanges(t *testing.T) {
+	m, mock := newTestModule(t)
+	from, to := int64(100), int64(200)
+	for _, input := range []ListUsersInput{
+		{LastLoggedInFrom: &from}, {LastLoggedInTo: &to}, {LastLoggedInFrom: &from, LastLoggedInTo: &to},
+	} {
+		expected := mock.ExpectQuery("SELECT COUNT.*last_logged_in_at > 0")
+		if input.LastLoggedInFrom != nil && input.LastLoggedInTo != nil {
+			expected.WithArgs(from, to)
+		} else if input.LastLoggedInFrom != nil {
+			expected.WithArgs(from)
+		} else {
+			expected.WithArgs(to)
+		}
+		expected.WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+		if value, err := m.List(t.Context(), input); err != nil || value.Total != 0 {
+			t.Fatalf("single/paired bounds: %#v %v", value, err)
+		}
+	}
+	for _, bounds := range [][2]int64{ {-1, 1}, {1, -1}, {2, 1}, {1, 1}, {9007199254740992, 9007199254740993}} {
+		if _, err := m.List(t.Context(), ListUsersInput{LastLoggedInFrom: &bounds[0], LastLoggedInTo: &bounds[1]}); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("accepted invalid last-login range %v: %v", bounds, err)
+		}
+	}
+	// Count and page SQL share both timestamp predicates and the status filter.
+	createdFrom, createdTo := int64(10), int64(20)
+	size := int32(10)
+	mock.ExpectQuery("SELECT COUNT.*created_at >=.*created_at <.*last_logged_in_at > 0.*last_logged_in_at >=.*last_logged_in_at <").
+		WithArgs(sqlmock.AnyArg(), StatusActive, createdFrom, createdTo, from, to).
+		WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(1))
+	mock.ExpectQuery("SELECT id, created_at.*created_at >=.*created_at <.*last_logged_in_at > 0.*last_logged_in_at >=.*last_logged_in_at <.*ORDER BY id DESC").
+		WithArgs(sqlmock.AnyArg(), StatusActive, createdFrom, createdTo, from, to, sqlmock.AnyArg(), size, int64(0)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "role_id", "action", "username", "code", "last_logged_in_at", "status", "metadata", "wrong", "login_count"}).AddRow(1, 15, 15, nil, "", "time-filter", "TIME0001", 150, StatusActive, []byte(`{}`), 0, 1))
+	value, err := m.List(t.Context(), ListUsersInput{CreatedFrom: &createdFrom, CreatedTo: &createdTo, LastLoggedInFrom: &from, LastLoggedInTo: &to, Statuses: []int16{StatusActive}, PageSize: &size})
+	if err != nil || value.Total != 1 || len(value.Items) != 1 || value.Items[0].LastLoggedInAt == nil || *value.Items[0].LastLoggedInAt != 150 {
+		t.Fatalf("combined list: %#v %v", value, err)
 	}
 }

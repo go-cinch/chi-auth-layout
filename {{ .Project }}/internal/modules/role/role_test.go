@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
 )
 
-var roleTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC)
+var roleTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
 
 func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 	t.Helper()
@@ -72,7 +73,7 @@ func TestRoleCRUD(t *testing.T) {
 	}
 	expectRoleGet(mock, 1, "Admin", "admin")
 	value, err := m.Get(ctx, 1)
-	if err != nil || value.Name != "Admin" || value.CreatedAt != roleTestTime.UnixMilli() {
+	if err != nil || value.Name != "Admin" || value.CreatedAt != roleTestTime {
 		t.Fatalf("get: %#v %v", value, err)
 	}
 
@@ -270,5 +271,54 @@ func TestRoleListRejectsActionFailure(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code = ANY").WillReturnError(sql.ErrConnDone)
 	if result, err := m.List(t.Context(), ListRolesInput{}); result != nil || !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("partial role: %#v %v", result, err)
+	}
+}
+
+func TestRoleListExactGroupPreservesPageAssociations(t *testing.T) {
+	m, mock := newTestModule(t)
+	group, size, page, assigned := "Finance, 100%_'", int32(1), int32(2), true
+	where := ` WHERE LOWER(name) LIKE LOWER($1) ESCAPE '!' AND (` + assignedPermissionsSQL + `) = $2 AND EXISTS (SELECT 1 FROM t_action a WHERE a.code = ANY(regexp_split_to_array(BTRIM(t_role.action), '\s*,\s*')) AND a.action_group = $3)`
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM t_role"+where)).
+		WithArgs("%Reader%", assigned, group).
+		WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(2))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, created_at, updated_at, name, word, action FROM t_role"+where+" ORDER BY id DESC LIMIT $4 OFFSET $5")).
+		WithArgs("%Reader%", assigned, group, size, int64(1)).
+		WillReturnRows(roleRows(1, "Reader", "reader", "READ,WRITE,READ")).RowsWillBeClosed()
+	mock.ExpectQuery("SELECT .* FROM t_action WHERE code = ANY").
+		WithArgs(pq.Array([]string{"READ", "WRITE"})).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
+			AddRow(1, roleTestTime, roleTestTime, "READ", "Read", group, "read", "", "", "").
+			AddRow(2, roleTestTime, roleTestTime, "WRITE", "Write", "Other", "write", "", "", ""))
+	result, err := m.List(t.Context(), ListRolesInput{Name: "Reader", HasPermissions: &assigned, GroupExact: &group, Page: &page, PageSize: &size})
+	if err != nil || result.Total != 2 || len(result.Items) != 1 || result.Page != page {
+		t.Fatalf("group page: %#v %v", result, err)
+	}
+	if got := result.Items[0].Actions; len(got) != 2 || got[0].Code != "READ" || got[1].Code != "WRITE" {
+		t.Fatalf("complete ordered associations: %#v", got)
+	}
+}
+
+func TestRoleListAllGroupsPreservesPageAssociations(t *testing.T) {
+	m, mock := newTestModule(t)
+	group, size, page := "Finance, 100%_'", int32(1), int32(2)
+	where := ` WHERE EXISTS (SELECT 1 FROM t_action a WHERE a.code = ANY(regexp_split_to_array(BTRIM(t_role.action), '\s*,\s*')) AND a.action_group = $1) AND EXISTS (SELECT 1 FROM t_action a WHERE a.code = ANY(regexp_split_to_array(BTRIM(t_role.action), '\s*,\s*')) AND a.action_group = $2) AND EXISTS (SELECT 1 FROM t_action a WHERE a.code = ANY(regexp_split_to_array(BTRIM(t_role.action), '\s*,\s*')) AND a.action_group = $3)`
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM t_role"+where)).
+		WithArgs(group, "Operations", "Audit").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(2))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, created_at, updated_at, name, word, action FROM t_role"+where+" ORDER BY id DESC LIMIT $4 OFFSET $5")).
+		WithArgs(group, "Operations", "Audit", size, int64(1)).
+		WillReturnRows(roleRows(1, "Reader", "reader", "READ,OPS,AUDIT,EXTRA,READ")).RowsWillBeClosed()
+	mock.ExpectQuery("SELECT .* FROM t_action WHERE code = ANY").
+		WithArgs(pq.Array([]string{"READ", "OPS", "AUDIT", "EXTRA"})).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
+			AddRow(1, roleTestTime, roleTestTime, "READ", "Read", group, "read", "", "", "").
+			AddRow(2, roleTestTime, roleTestTime, "OPS", "Operations", "Operations", "ops", "", "", "").
+			AddRow(3, roleTestTime, roleTestTime, "AUDIT", "Audit", "Audit", "audit", "", "", "").
+			AddRow(4, roleTestTime, roleTestTime, "EXTRA", "Extra", "Other", "extra", "", "", ""))
+	result, err := m.List(t.Context(), ListRolesInput{GroupExact: &group, GroupsAll: []string{group, "Operations", "Audit", "Operations"}, Page: &page, PageSize: &size})
+	if err != nil || result.Total != 2 || len(result.Items) != 1 || result.Page != page {
+		t.Fatalf("all-groups page: %#v %v", result, err)
+	}
+	if got := result.Items[0].Actions; len(got) != 4 || got[0].Code != "READ" || got[1].Code != "OPS" || got[2].Code != "AUDIT" || got[3].Code != "EXTRA" {
+		t.Fatalf("complete ordered associations: %#v", got)
 	}
 }

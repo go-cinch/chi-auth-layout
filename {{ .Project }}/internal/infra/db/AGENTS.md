@@ -46,8 +46,8 @@ return store.Tx(ctx, func(txCtx context.Context) error {
 - Give each table an independent primary key. Use `BIGSERIAL PRIMARY KEY` for PostgreSQL unless the schema has a stronger established convention.
 - Keep business identity separate from the primary key and enforce natural or composite keys with named unique constraints or indexes.
 - Name business tables with `t_` followed by a singular noun in snake case, such as `t_user` or `t_user_group`.
-- Every business table must place `created_at`, then `updated_at`, immediately after `id`; both use `TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`.
-- On updates, preserve `created_at` and explicitly set `updated_at` in SQL; the default applies only to inserts. Use UTC for application-supplied timestamps.
+- Every business table must place `created_at`, then `updated_at`, immediately after `id`; both use `BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint)`. All business instants, including nullable timestamps, store Unix milliseconds as `BIGINT`; HTTP and Go use the same integer values. Do not store timezone-dependent wall-clock timestamps or explicitly convert values to UTC.
+- On updates, preserve `created_at` and explicitly set `updated_at` in SQL; the default applies only to inserts. Use `time.Now().UnixMilli()` for application-supplied timestamps.
 - Name indexes and constraints with descriptive prefixes such as `idx_`, `uk_`, `ck_`, and `fk_`.
 - Avoid reserved or ambiguous identifiers when practical. If a reserved name is intentional, quote it consistently for the selected database dialect.
 - Declare nullability, defaults, uniqueness, referential integrity, and domain checks explicitly in SQL.
@@ -62,6 +62,7 @@ return store.Tx(ctx, func(txCtx context.Context) error {
 - Include both `-- +migrate Up` and `-- +migrate Down` sections. Keep `Down` symmetrical with `Up`, removing dependent objects before the object introduced by the migration.
 - When the embedded migrations directory contains no `.sql` files, migration execution must be skipped without touching the database handle.
 - An uncommitted migration may be revised with its related code. Keep one table's complete initial definition together instead of immediately adding follow-up alterations.
+- Format every SQL migration consistently: four-space indentation, uppercase SQL keywords, one column or constraint per line, a blank line between statements and between table definitions, comments and indexes, and spaces after commas. Preserve intentional newlines inside seeded permission strings; do not mix indentation styles. Keep schema in the schema migration and seed rows in the data migration.
 - Keep migrations simple and readable. Seed only data required for local development or first boot.
 
 ## Security and Observability

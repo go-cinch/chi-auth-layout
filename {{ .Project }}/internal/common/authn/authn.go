@@ -74,7 +74,7 @@ func (m *Manager) Issue(identity Identity) (string, time.Time, error) {
 	if identity.CredentialVersion <= 0 || identity.UserID <= 0 || identity.Username == "" || identity.Code == "" || (m.sessions != nil && identity.SessionID == "") {
 		return "", time.Time{}, ErrUnauthorized
 	}
-	now := time.Now().UTC()
+	now := time.Now()
 	expiredAt := now.Add(m.ttl)
 	tokenIDBytes := make([]byte, 16)
 	if _, err := rand.Read(tokenIDBytes); err != nil {

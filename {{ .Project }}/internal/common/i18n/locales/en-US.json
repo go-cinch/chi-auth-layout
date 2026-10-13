@@ -82,5 +82,8 @@
   "AUTH_INVALID_PASSWORD_RESET": "New password is required",
   "MSG_INVALID": "Invalid message fields: title up to 200 characters, content up to 20000, and expiry must be in the future",
   "MSG_INVALID_RECIPIENT": "Choose 1–1000 existing users for targeted messages; broadcasts cannot specify recipients",
-  "MSG_NOT_FOUND": "Message not found or unavailable"
+  "MSG_NOT_FOUND": "Message not found or unavailable",
+  "AUDIT_FILTER_INVALID": "Invalid audit filter or time range (maximum 90 days).",
+  "AUDIT_NOT_FOUND": "Audit event not found.",
+  "AUDIT_EXPORT_LIMIT": "More than 10,000 events. Narrow the filters before exporting."
 }

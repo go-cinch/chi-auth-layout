@@ -106,7 +106,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	state := func(count, version int64, logged bool) {
 		t.Helper()
 		var gotCount, gotVersion int64
-		var last sql.NullTime
+		var last sql.NullInt64
 		if err := store.DB.QueryRowContext(ctx, `SELECT login_count,credential_version,last_logged_in_at FROM t_user WHERE id=101`).Scan(&gotCount, &gotVersion, &last); err != nil {
 			t.Fatal(err)
 		}

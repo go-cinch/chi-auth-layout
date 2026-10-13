@@ -17,7 +17,7 @@ import (
 	usermodule "{{ .Computed.module_name_final }}/internal/modules/user"
 )
 
-var userGroupTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC)
+var userGroupTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
 
 func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 	t.Helper()

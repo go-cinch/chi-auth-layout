@@ -19,7 +19,8 @@ import (
 
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
-	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
+	auditmodule "{{ .Computed.module_name_final }}/internal/modules/audit"
+ authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
  msgmodule "{{ .Computed.module_name_final }}/internal/modules/msg"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
 	dictionarymodule "{{ .Computed.module_name_final }}/internal/modules/dictionary"
@@ -47,6 +48,7 @@ import (
 )
 
 type Application struct {
+ auditModule *auditmodule.Module
  msgModule *msgmodule.Module
 	pagination      pagination.Limits
 
@@ -276,7 +278,8 @@ func authSwitchesFromConfig(cfg *config.Config) authmodule.Switches {
 func (a *Application) wireBusinessModules() {
 	// Build in dependency order; generatedModules registers these same instances.
 	// The dictionary is initialized earlier because captcha construction needs it.
-	a.actionModule = actionmodule.New(a.db, a.pagination, a.authSwitches.ProtectSuper)
+	a.auditModule = auditmodule.New(a.db,a.pagination)
+ a.actionModule = actionmodule.New(a.db, a.pagination, a.authSwitches.ProtectSuper)
 	a.roleModule = rolemodule.New(a.db, a.pagination, a.actionModule, a.authSwitches.ProtectSuper)
 	a.userModule = usermodule.New(a.db, a.pagination, a.credentials, a.passwordGuard, a.actionModule, a.roleModule, a.authSwitches)
 	a.groupModule = groupmodule.New(a.db, a.pagination, a.actionModule, a.userModule)

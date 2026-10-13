@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
@@ -172,14 +173,14 @@ func (m *Module) Register(ctx context.Context, input RegisterInput) error {
 	if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT nextval('t_user_id_seq')`).Scan(&id); err != nil {
 		return fmt.Errorf("allocate registered user id: %w", err)
 	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	// Broadcast eligibility compares this timestamp with database publication time.
 	for range 5 {
 		userCode, err := code.Generate()
 		if err != nil {
 			return fmt.Errorf("create registered user code: %w", err)
 		}
-		result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_user (id, created_at, updated_at, role_id, action, username, code, password, status, wrong) VALUES ($1, $2, $3, NULL, '', $4, $5, $6, 0, 0) ON CONFLICT ON CONSTRAINT uk_user_code DO NOTHING`,
-			id, now, now, input.Username, userCode, string(passwordHash))
+		result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_user (id, created_at, updated_at, role_id, action, username, code, password, status, wrong) VALUES ($1, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, NULL, '', $2, $3, $4, 0, 0) ON CONFLICT ON CONSTRAINT uk_user_code DO NOTHING`,
+			id, input.Username, userCode, string(passwordHash))
 		if err != nil {
 			var postgresError *pq.Error
 			if errors.As(err, &postgresError) && postgresError.Code == "23505" && postgresError.Constraint == "uk_user_username" {
@@ -331,7 +332,7 @@ func (m *Module) ChangePassword(ctx context.Context, input PasswordChangeInput) 
 		if err != nil {
 			return fmt.Errorf("hash changed password: %w", err)
 		}
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		now := time.Now().UnixMilli()
 		result, err := m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_user SET password = $1, credential_version = credential_version + 1, wrong = 0, updated_at = $2 WHERE id = $3 AND code = $4`, string(passwordHash), now, identity.UserID, identity.Code)
 		if err != nil {
 			return fmt.Errorf("update current password: %w", err)
@@ -388,7 +389,7 @@ func (m *Module) passwordChangeLocked(ctx context.Context, identity authn.Identi
 }
 
 func (m *Module) persistPasswordChangeLock(ctx context.Context, identity authn.Identity) error {
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	now := time.Now().UnixMilli()
 	result, err := m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_user SET metadata = jsonb_set(metadata, '{password_change_failures}', to_jsonb($1::bigint), true), updated_at = $2 WHERE id = $3 AND code = $4`,
 		m.passwordGuard.LockThreshold(), now, identity.UserID, identity.Code)
 	if err != nil {
@@ -501,7 +502,7 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	now := time.Now().UnixMilli()
 	var loginCount int64
 	query := `UPDATE t_user SET last_logged_in_at = CASE WHEN login_count > 0 THEN $1 ELSE last_logged_in_at END, login_count = CASE WHEN login_count > 0 THEN login_count + 1 ELSE 0 END, wrong = 0, updated_at = $1 WHERE id = $2 AND credential_version = $3 AND status = $4 RETURNING login_count`
 	if !m.switches.PasswordResetRequired {
@@ -515,6 +516,7 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 		}
 		return nil, fmt.Errorf("update user login: %w", err)
 	}
+	auditctx.Identity(ctx, user.identity.UserID, user.identity.Username)
 	result.PasswordResetRequired = m.switches.PasswordResetRequired && loginCount == 0
 	return result, nil
 }
@@ -588,9 +590,9 @@ func (m *Module) loginUser(ctx context.Context, username string) (*loginUser, er
 }
 
 func (m *Module) unlockExpiredUser(ctx context.Context, userID int64) (bool, error) {
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	now := time.Now().UnixMilli()
 	result, err := m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_user SET status = $1, metadata = metadata - 'lock_expired_at', updated_at = $2 WHERE id = $3 AND status = $4 AND metadata ? 'lock_expired_at' AND metadata ->> 'lock_expired_at' ~ '^[0-9]+$' AND (metadata ->> 'lock_expired_at')::numeric > 0 AND (metadata ->> 'lock_expired_at')::numeric <= $5`,
-		userStatusActive, now, userID, userStatusLocked, now.UnixMilli())
+		userStatusActive, now, userID, userStatusLocked, now)
 	if err != nil {
 		return false, fmt.Errorf("unlock expired user: %w", err)
 	}
@@ -604,7 +606,7 @@ func (m *Module) unlockExpiredUser(ctx context.Context, userID int64) (bool, err
 func (m *Module) recordWrongPassword(ctx context.Context, userID int64) (int64, error) {
 	const query = `UPDATE t_user SET wrong = wrong + 1, updated_at = $1 WHERE id = $2 RETURNING wrong`
 	var wrong int64
-	if err := m.store.SQL(ctx).QueryRowContext(ctx, query, time.Now().UTC().Truncate(time.Microsecond), userID).Scan(&wrong); err != nil {
+	if err := m.store.SQL(ctx).QueryRowContext(ctx, query, time.Now().UnixMilli(), userID).Scan(&wrong); err != nil {
 		return 0, fmt.Errorf("record wrong password: %w", err)
 	}
 	return wrong, nil

@@ -72,11 +72,13 @@ type UpdateUserGroupInput struct {
 }
 
 type ListUserGroupsInput struct {
-	Name       string
-	Word       string
-	ActionCode string
-	Page       *int32
-	PageSize   *int32
+	HasPermissions *bool
+	HasMembers     *bool
+	Name           string
+	Word           string
+	ActionCode     string
+	Page           *int32
+	PageSize       *int32
 }
 
 type ListUserGroupsResult struct {
@@ -137,7 +139,7 @@ func (m *Module) lookup(ctx context.Context, executor db.SQLExecutor, id int64) 
 
 func (m *Module) scan(row interface{ Scan(...any) error }) (*UserGroup, error) {
 	var value UserGroup
-	var createdAt, updatedAt time.Time
+	var createdAt, updatedAt int64
 	var codes string
 	err := row.Scan(&value.ID, &createdAt, &updatedAt, &value.Name, &value.Word, &codes)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -146,8 +148,8 @@ func (m *Module) scan(row interface{ Scan(...any) error }) (*UserGroup, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query user group: %w", err)
 	}
-	value.CreatedAt = createdAt.UnixMilli()
-	value.UpdatedAt = updatedAt.UnixMilli()
+	value.CreatedAt = createdAt
+	value.UpdatedAt = updatedAt
 	value.ActionCodes = m.actions.SplitCodes(codes)
 	return &value, nil
 }
@@ -177,7 +179,7 @@ func (m *Module) Create(ctx context.Context, input CreateUserGroupInput) (*UserG
 		if err != nil {
 			return err
 		}
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		now := time.Now().UnixMilli()
 		var id int64
 		err = m.store.SQL(ctx).QueryRowContext(ctx, `INSERT INTO t_user_group (created_at, updated_at, name, word, action) VALUES ($1, $2, $3, $4, $5) RETURNING id`, now, now, input.Name, input.Word, strings.Join(codes, ",")).Scan(&id)
 		if err != nil {
@@ -254,7 +256,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInpu
 				return err
 			}
 		}
-		add("updated_at", time.Now().UTC().Truncate(time.Microsecond))
+		add("updated_at", time.Now().UnixMilli())
 		args = append(args, id)
 		query := "UPDATE t_user_group SET " + strings.Join(sets, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
 		result, err := m.store.SQL(ctx).ExecContext(ctx, query, args...)
@@ -378,6 +380,9 @@ func (m *Module) List(ctx context.Context, input ListUserGroupsInput) (*ListUser
 	return value, nil
 }
 
+// Compare the resolved action association, not orphaned or duplicate stored codes.
+const assignedPermissionsSQL = `EXISTS (SELECT 1 FROM t_action a WHERE a.code = ANY(regexp_split_to_array(BTRIM(t_user_group.action), '\s*,\s*')))`
+
 func filters(input ListUserGroupsInput) (string, []any) {
 	fields := []struct {
 		column, value string
@@ -397,6 +402,14 @@ func filters(input ListUserGroupsInput) (string, []any) {
 		}
 		args = append(args, like(field.value))
 		parts = append(parts, "LOWER("+field.column+") LIKE LOWER($"+strconv.Itoa(len(args))+") ESCAPE '!'")
+	}
+	if input.HasPermissions != nil {
+		args = append(args, *input.HasPermissions)
+		parts = append(parts, "("+assignedPermissionsSQL+") = $"+strconv.Itoa(len(args)))
+	}
+	if input.HasMembers != nil {
+		args = append(args, *input.HasMembers)
+		parts = append(parts, "EXISTS (SELECT 1 FROM t_user_user_group_relation r WHERE r.user_group_id=t_user_group.id) = $"+strconv.Itoa(len(args)))
 	}
 	if len(parts) == 0 {
 		return "", args

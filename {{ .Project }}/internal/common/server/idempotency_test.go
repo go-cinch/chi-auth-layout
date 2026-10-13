@@ -82,7 +82,7 @@ func TestValidIdempotencyKey(t *testing.T) {
 		"request_1.example:value":              true,
 		"":                                     false,
 		"contains whitespace":                  false,
-		strings.Repeat("a", 129):                false,
+		strings.Repeat("a", 129):               false,
 	} {
 		if got := validIdempotencyKey(value); got != want {
 			t.Fatalf("validIdempotencyKey(%q) = %v, want %v", value, got, want)

@@ -4,6 +4,7 @@ import (
  "{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"encoding/json"
+ "{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"errors"
 	"io"
 	"log/slog"
@@ -712,7 +713,9 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
-	loginResult, err := m.Login(r.Context(), input)
+	auditctx.Identity(r.Context(),0,strings.TrimSpace(input.Username))
+ loginResult, err := m.Login(r.Context(), input)
+ if err != nil { auditctx.Error(r.Context(),apperror.Code(err)) }
 	if errors.Is(err, ErrSliderCaptchaRequired) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
 		return

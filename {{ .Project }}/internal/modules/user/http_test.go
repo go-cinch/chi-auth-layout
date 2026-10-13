@@ -116,3 +116,25 @@ func TestUserHTTP(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT.*FROM t_user").WillReturnError(sqlmock.ErrCancelled)
 	request(http.MethodGet, "/", "", http.StatusInternalServerError)
 }
+
+func TestUserLastLoggedInRangeHTTP(t *testing.T) {
+ m,mock:=newTestModule(t)
+{{ if eq .Computed.http_router_final "gin" -}}
+ router:=gin.New();m.HTTP(router.Group(""));handler:=http.Handler(router)
+{{ else -}}
+ handler:=m.HTTP()
+{{ end -}}
+ request:=func(query string,want int){t.Helper();w:=httptest.NewRecorder();handler.ServeHTTP(w,httptest.NewRequest(http.MethodGet,"/?"+query,nil));if w.Code!=want{t.Fatalf("%s: %d %s",query,w.Code,w.Body.String())}}
+ for _,query:=range []string{
+  "last_logged_in_from=","last_logged_in_to=","last_logged_in_from=-1","last_logged_in_to=-1",
+  "last_logged_in_from=bad","last_logged_in_to=1.5","last_logged_in_from=9007199254740992","last_logged_in_to=9223372036854775808",
+  "last_logged_in_from=1&last_logged_in_from=2","last_logged_in_to=1&last_logged_in_to=2",
+  "last_logged_in_from=2&last_logged_in_to=2","last_logged_in_from=3&last_logged_in_to=2",
+ }{request(query,http.StatusBadRequest)}
+ mock.ExpectQuery("SELECT COUNT.*last_logged_in_at > 0.*last_logged_in_at >=").WithArgs(int64(0)).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+ request("last_logged_in_from=0",http.StatusOK)
+ mock.ExpectQuery("SELECT COUNT.*last_logged_in_at > 0.*last_logged_in_at <").WithArgs(int64(9007199254740991)).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+ request("last_logged_in_to=9007199254740991",http.StatusOK)
+ mock.ExpectQuery("SELECT COUNT.*last_logged_in_at >=.*last_logged_in_at <").WithArgs(sqlmock.AnyArg(),StatusActive,int64(100),int64(200)).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+ request("last_logged_in_from=100&last_logged_in_to=200&status=1",http.StatusOK)
+}

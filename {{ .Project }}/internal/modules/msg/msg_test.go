@@ -27,8 +27,8 @@ func testModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 }
 
 func messageRows(scope string) *sqlmock.Rows {
-	now := time.Now().UTC()
-	return sqlmock.NewRows([]string{"id", "created_at", "updated_at", "title", "content", "type", "scope", "sender_id", "published_at", "expired_at", "read_at"}).AddRow(1, now, now, "title", "body", "notice", scope, 1, now, now.Add(time.Hour), now)
+	now := time.Now()
+	return sqlmock.NewRows([]string{"id", "created_at", "updated_at", "title", "content", "type", "scope", "sender_id", "published_at", "expired_at", "read_at"}).AddRow(1, now.UnixMilli(), now.UnixMilli(), "title", "body", "notice", scope, 1, now.UnixMilli(), now.Add(time.Hour).UnixMilli(), now.UnixMilli())
 }
 
 func TestCreate(t *testing.T) {
@@ -41,11 +41,13 @@ func TestCreate(t *testing.T) {
 			}
 			expiry := time.Now().Add(time.Hour).UnixMilli()
 			input.ExpiredAt = &expiry
-			mock.ExpectBegin()
-			mock.ExpectQuery("INSERT INTO t_msg").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+			expectStatusTx(mock)
+			expectStatusRefresh(mock)
+			mock.ExpectQuery("INSERT INTO t_msg").WillReturnRows(sqlmock.NewRows([]string{"id", "published_at"}).AddRow(1, time.Now().UnixMilli()))
 			if scope == "targeted" {
 				mock.ExpectExec("INSERT INTO t_msg_recipient").WillReturnResult(sqlmock.NewResult(1, 1))
 			}
+			expectStatusRefresh(mock) // Increment after successful delivery.
 			mock.ExpectQuery("SELECT .* FROM t_msg m WHERE").WillReturnRows(messageRows(scope))
 			if scope == "targeted" {
 				mock.ExpectQuery("SELECT user_id").WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(2))
@@ -69,8 +71,9 @@ func TestCreate(t *testing.T) {
 	if _, err := m.Create(t.Context(), 1, CreateInput{Title: "x", Content: "x", Scope: "all", Type: "system", ExpiredAt: &expired}); err == nil {
 		t.Fatal("expired create accepted")
 	}
-	mock.ExpectBegin()
-	mock.ExpectQuery("INSERT INTO t_msg").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	expectStatusTx(mock)
+	expectStatusRefresh(mock)
+	mock.ExpectQuery("INSERT INTO t_msg").WillReturnRows(sqlmock.NewRows([]string{"id", "published_at"}).AddRow(1, time.Now().UnixMilli()))
 	mock.ExpectExec("INSERT INTO t_msg_recipient").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
 	if _, err := m.Create(t.Context(), 1, CreateInput{Title: "x", Content: "x", Scope: "targeted", Type: "system", RecipientIDs: []int64{999}}); !errors.Is(err, ErrRecipient) {
@@ -80,7 +83,7 @@ func TestCreate(t *testing.T) {
 
 func TestInboxAndManagement(t *testing.T) {
 	m, mock := testModule(t)
-	mock.ExpectQuery("SELECT .* FROM").WithArgs(int64(2), sqlmock.AnyArg(), int64(1)).WillReturnRows(messageRows("all"))
+	mock.ExpectQuery("SELECT .* FROM").WithArgs(int64(2), int64(1)).WillReturnRows(messageRows("all"))
 	if _, err := m.Get(t.Context(), 2, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -120,17 +123,23 @@ func TestInboxAndManagement(t *testing.T) {
 	if _, err := m.List(t.Context(), 2, ListInput{Read: &read}); err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	mock.ExpectQuery("SELECT unread_count").WillReturnRows(statusRows(3, time.Now(), nil))
 	if n, err := m.UnreadCount(t.Context(), 2); err != nil || n != 3 {
 		t.Fatal(n, err)
 	}
 	for _, operation := range []func() error{func() error { return m.Read(t.Context(), 2, 1) }, func() error { return m.Delete(t.Context(), 2, 1) }, func() error { return m.ReadAll(t.Context(), 2) }} {
+		expectStatusTx(mock)
 		mock.ExpectExec("INSERT INTO t_msg_recipient").WillReturnResult(sqlmock.NewResult(0, 1))
+		expectStatusRefresh(mock)
+		mock.ExpectCommit()
 		if err := operation(); err != nil {
 			t.Fatal(err)
 		}
 	}
+	expectStatusTx(mock)
 	mock.ExpectExec("DELETE FROM t_msg").WillReturnResult(sqlmock.NewResult(0, 1))
+	expectStatusRefresh(mock)
+	mock.ExpectCommit()
 	if err := m.DeleteSent(t.Context(), 1); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +194,8 @@ func TestFailures(t *testing.T) {
 	if _, err := m.ListSent(t.Context(), ListInput{}); err == nil {
 		t.Fatal("error hidden")
 	}
-	mock.ExpectBegin()
+	expectStatusTx(mock)
+	expectStatusRefresh(mock)
 	mock.ExpectQuery("INSERT INTO t_msg").WillReturnError(sqlmock.ErrCancelled)
 	mock.ExpectRollback()
 	if _, err := m.Create(t.Context(), 1, CreateInput{Title: "x", Content: "x", Scope: "all", Type: "system"}); err == nil {
@@ -194,5 +204,17 @@ func TestFailures(t *testing.T) {
 	mock.ExpectQuery("SELECT id, username").WillReturnError(sqlmock.ErrCancelled)
 	if _, err := m.RecipientOptions(t.Context(), ""); err == nil {
 		t.Fatal("options failure hidden")
+	}
+}
+
+func TestCreateRejectsExpiredAtDatabaseTime(t *testing.T) {
+	m, mock := testModule(t)
+	expectStatusTx(mock)
+	expectStatusRefresh(mock)
+	mock.ExpectQuery("INSERT INTO t_msg").WillReturnRows(sqlmock.NewRows([]string{"id", "published_at"}))
+	mock.ExpectRollback()
+	expiry := time.Now().Add(time.Hour).UnixMilli()
+	if _, err := m.Create(t.Context(), 1, CreateInput{Title: "expired", Content: "body", Type: "notice", Scope: "all", ExpiredAt: &expiry}); !errors.Is(err, ErrInvalid) {
+		t.Fatal(err)
 	}
 }

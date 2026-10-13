@@ -72,7 +72,6 @@ func TestDictionaryHTTP(t *testing.T) {
 	request(http.MethodDelete, "/99", "", http.StatusNotFound)
 }
 
-
 func TestDictionaryHTTPHitHeader(t *testing.T) {
     m, cache, mock := newTestModule(t)
 {{ if eq .Computed.http_router_final "gin" -}}

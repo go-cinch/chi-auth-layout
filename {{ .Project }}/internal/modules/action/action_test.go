@@ -15,7 +15,7 @@ import (
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
 
-var actionTestTime = time.Date(2026, 9, 18, 3, 0, 0, 123000000, time.UTC)
+var actionTestTime = time.Date(2026, 9, 18, 3, 0, 0, 123000000, time.UTC).UnixMilli()
 
 func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 	t.Helper()
@@ -62,7 +62,7 @@ func TestActionCRUD(t *testing.T) {
 	}
 	expectActionGet(mock, 1, "ABCDEFGH", "Demo")
 	value, err := m.Get(ctx, 1)
-	if err != nil || value.ID != 1 || value.Group != "Demo" || value.CreatedAt != actionTestTime.UnixMilli() {
+	if err != nil || value.ID != 1 || value.Group != "Demo" || value.CreatedAt != actionTestTime {
 		t.Fatalf("get: %#v %v", value, err)
 	}
 

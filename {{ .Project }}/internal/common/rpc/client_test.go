@@ -1,8 +1,12 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,5 +119,67 @@ func TestClientValidationAndLazyInitialization(t *testing.T) {
 	cleanup()
 	if _, _, err := NewClient(t.Context(), "remote", cfg, healthpb.NewHealthClient, grpc.WithTransportCredentials(nil)); err == nil {
 		t.Fatal("invalid credentials accepted")
+	}
+}
+
+func TestClientInitializationLog(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	for _, test := range []struct{ address, loggedAddress string }{
+		{"localhost:1", "localhost:1"},
+		{"dns://user:password@localhost/remote", "dns://user:pas***ord@localhost/remote"},
+	} {
+		output.Reset()
+		client, cleanup, err := NewClient(t.Context(), "Remote", ClientConfig{Addr: test.address}, func(conn grpc.ClientConnInterface) grpc.ClientConnInterface { return conn })
+		if err != nil {
+			t.Fatal(err)
+		}
+		cleanup()
+		if client.(*grpc.ClientConn).Target() != test.address {
+			t.Fatal("dial target altered by log redaction")
+		}
+		if strings.Contains(output.String(), "password") {
+			t.Fatalf("address password leaked: %s", output.String())
+		}
+		entries := readRPCLogs(t, &output)
+		if len(entries) != 1 {
+			t.Fatalf("logs: %#v", entries)
+		}
+		entry := entries[0]
+		if entry["msg"] != "initialize Remote grpc client: "+test.loggedAddress || entry["client"] != "Remote" || entry["addr"] != test.loggedAddress || entry["operation"] != "initialize_grpc_client" || entry["outcome"] != "success" {
+			t.Fatalf("client initialization log: %#v", entry)
+		}
+	}
+}
+
+func TestClientUnaryLog(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	const method = "/remote.v1.UserService/GetUser"
+	for _, code := range []codes.Code{codes.OK, codes.NotFound, codes.Unavailable} {
+		output.Reset()
+		expected := status.Error(code, "missing")
+		ctx := metadata.AppendToOutgoingContext(t.Context(), "authorization", "secret-token")
+		err := clientUnary("Remote", time.Second)(ctx, method, "secret-request", "secret-response", nil,
+			func(context.Context, string, any, any, *grpc.ClientConn, ...grpc.CallOption) error { return expected })
+		if err != expected {
+			t.Fatalf("call error: %v, want %v", err, expected)
+		}
+		if strings.Contains(output.String(), "secret-") {
+			t.Fatalf("sensitive data logged: %s", output.String())
+		}
+		entries := readRPCLogs(t, &output)
+		if len(entries) != 1 {
+			t.Fatalf("logs: %#v", entries)
+		}
+		entry := entries[0]
+		duration := assertRPCLogFields(t, entry, method, code)
+		if entry["client"] != "Remote" || entry["msg"] != fmt.Sprintf("call Remote %s %s %dms", method, code, duration) {
+			t.Fatalf("client call log: %#v", entry)
+		}
 	}
 }

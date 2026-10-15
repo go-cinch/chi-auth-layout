@@ -366,7 +366,7 @@ func (m *Module) ChangePassword(ctx context.Context, input PasswordChangeInput) 
 		return err
 	}
 	if err := m.passwordGuard.Clear(ctx, identity.UserID); err != nil {
-		slog.WarnContext(ctx, "clear password change failures failed: "+err.Error())
+		slog.WarnContext(ctx, "clear password change failures failed: "+err.Error(), "operation", "clear_password_change_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
 	}
 	return nil
 }
@@ -403,7 +403,7 @@ func (m *Module) persistPasswordChangeLock(ctx context.Context, identity authn.I
 		return ErrUnauthorized
 	}
 	if err := m.passwordGuard.Clear(ctx, identity.UserID); err != nil {
-		slog.WarnContext(ctx, "clear locked password change failures failed: "+err.Error())
+		slog.WarnContext(ctx, "clear locked password change failures failed: "+err.Error(), "operation", "clear_locked_password_change_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
 	}
 	return nil
 }

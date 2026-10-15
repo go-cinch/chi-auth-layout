@@ -11,6 +11,7 @@ import (
 )
 
 type SummaryInput struct {
+	Fields   report.Fields
 	Days     int
 	TimeZone string
 }
@@ -18,6 +19,9 @@ type SummaryInput struct {
 // Summary uses one request instant and one SQL statement for the status and
 // creation/login aggregates. Reading an expired temporary lock never writes the user.
 func (m *Module) Summary(ctx context.Context, input SummaryInput) (*report.ManagementSummary, error) {
+	if err := input.Fields.Validate("total", "counts", "trend"); err != nil {
+		return nil, ErrInvalid
+	}
 	now := time.Now()
 	buckets, err := creationBuckets(input, now)
 	if err != nil {
@@ -31,20 +35,42 @@ func (m *Module) Summary(ctx context.Context, input SummaryInput) (*report.Manag
 	// exclude future instants while sharing the same captured request time.
 	cutoff := min(buckets[len(buckets)-1].To, now.UnixMilli()+1)
 	value := report.New("pending", "active", "locked", "recent_logged_in_users")
+	value.Fields = input.Fields
+	if !input.Fields.Has("counts") && !input.Fields.Has("trend") {
+		err := m.store.SQL(ctx).QueryRowContext(ctx, "SELECT COUNT(*) FROM t_user").Scan(&value.Total)
+		return value, err
+	}
 	var pending, active, locked, recentLoggedInUsers int64
 	var countsJSON, loginCountsJSON []byte
-	query := `WITH effective AS (SELECT CASE WHEN ` + expiredLockSQL("$1") + ` THEN 1 ELSE status END AS status, created_at, last_logged_in_at FROM t_user),
+	projection := report.Projection{Fields: input.Fields}
+	projection.Add("total", "COUNT(*)", &value.Total)
+	projection.Add("counts", "COUNT(*) FILTER (WHERE status = 0)", &pending)
+	projection.Add("counts", "COUNT(*) FILTER (WHERE status = 1)", &active)
+	projection.Add("counts", "COUNT(*) FILTER (WHERE status = 2)", &locked)
+	projection.Add("counts", "COUNT(*) FILTER (WHERE last_logged_in_at > 0 AND last_logged_in_at >= ($2::bigint[])[1] AND last_logged_in_at < $3)", &recentLoggedInUsers)
+	projection.Add("trend", "COALESCE((SELECT json_agg(COALESCE(c.count, 0) ORDER BY b.bucket) FROM buckets b LEFT JOIN bucket_counts c ON c.bucket = b.bucket), '[]'::json)", &countsJSON)
+	projection.Add("trend", "COALESCE((SELECT json_agg(COALESCE(l.count, 0) ORDER BY b.bucket) FROM buckets b LEFT JOIN login_counts l ON l.bucket = b.bucket), '[]'::json)", &loginCountsJSON)
+	prefix := `WITH effective AS (SELECT CASE WHEN ` + expiredLockSQL("$1") + ` THEN 1 ELSE status END AS status, created_at, last_logged_in_at FROM t_user)`
+	if input.Fields.Has("trend") {
+		prefix += `,
  bucket_counts AS (SELECT width_bucket(created_at, $2::bigint[]) AS bucket, COUNT(*) AS count FROM effective
  WHERE created_at >= ($2::bigint[])[1] AND created_at < $3 GROUP BY bucket),
  login_counts AS (SELECT width_bucket(last_logged_in_at, $2::bigint[]) AS bucket, COUNT(*) AS count FROM effective
  WHERE last_logged_in_at > 0 AND last_logged_in_at >= ($2::bigint[])[1] AND last_logged_in_at < $3 GROUP BY bucket),
- buckets AS (SELECT * FROM unnest($2::bigint[]) WITH ORDINALITY AS b(started_at, bucket))
- SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 0), COUNT(*) FILTER (WHERE status = 1), COUNT(*) FILTER (WHERE status = 2),
- COUNT(*) FILTER (WHERE last_logged_in_at > 0 AND last_logged_in_at >= ($2::bigint[])[1] AND last_logged_in_at < $3),
- COALESCE((SELECT json_agg(COALESCE(c.count, 0) ORDER BY b.bucket) FROM buckets b LEFT JOIN bucket_counts c ON c.bucket = b.bucket), '[]'::json),
- COALESCE((SELECT json_agg(COALESCE(l.count, 0) ORDER BY b.bucket) FROM buckets b LEFT JOIN login_counts l ON l.bucket = b.bucket), '[]'::json) FROM effective`
-	if err := m.store.SQL(ctx).QueryRowContext(ctx, query, now.UnixMilli(), pq.Array(starts), cutoff).Scan(&value.Total, &pending, &active, &locked, &recentLoggedInUsers, &countsJSON, &loginCountsJSON); err != nil {
+ buckets AS (SELECT * FROM unnest($2::bigint[]) WITH ORDINALITY AS b(started_at, bucket))`
+	}
+	from := "effective"
+	if !input.Fields.Has("total") && !input.Fields.Has("counts") {
+		from = ""
+	}
+	query := prefix + " " + projection.SQL(from)
+	if err := m.store.SQL(ctx).QueryRowContext(ctx, query, now.UnixMilli(), pq.Array(starts), cutoff).Scan(projection.Targets...); err != nil {
 		return nil, fmt.Errorf("summarize users: %w", err)
+	}
+	value.Counts["pending"], value.Counts["active"], value.Counts["locked"] = pending, active, locked
+	value.Counts["recent_logged_in_users"] = recentLoggedInUsers
+	if !input.Fields.Has("trend") {
+		return value, nil
 	}
 	var counts, loginCounts []int64
 	if err := json.Unmarshal(countsJSON, &counts); err != nil {
@@ -59,8 +85,6 @@ func (m *Module) Summary(ctx context.Context, input SummaryInput) (*report.Manag
 	if len(loginCounts) != len(buckets) {
 		return nil, fmt.Errorf("latest-login bucket count mismatch")
 	}
-	value.Counts["pending"], value.Counts["active"], value.Counts["locked"] = pending, active, locked
-	value.Counts["recent_logged_in_users"] = recentLoggedInUsers
 	for i := range buckets {
 		buckets[i].Count = counts[i]
 		buckets[i].RecentLoggedInUsers = loginCounts[i]

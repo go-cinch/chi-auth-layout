@@ -154,6 +154,9 @@ func run(source, configDir, output, title string) error {
 	for index := range routes {
 		gen.describeRoute(&routes[index])
 		gen.describeAuditRoute(&routes[index])
+        gen.describeSummaryRoute(&routes[index])
+        gen.describeUserGroupRoute(&routes[index])
+        gen.describeListFields(&routes[index])
 		if routes[index].idempotent && routes[index].method == http.MethodPost {
 			routes[index].parameters = append(routes[index].parameters, parameter{
 				in: "header", name: "X-Idempotent", schema: schema{typeName: "string"},

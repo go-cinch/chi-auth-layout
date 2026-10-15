@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
@@ -21,18 +22,21 @@ var (
 )
 
 type Message struct {
-	ID           int64   `json:"id"`
-	CreatedAt    int64   `json:"created_at"`
-	UpdatedAt    int64   `json:"updated_at"`
-	Title        string  `json:"title"`
-	Content      string  `json:"content"`
-	Type         string  `json:"type"`
-	Scope        string  `json:"scope"`
-	SenderID     *int64  `json:"sender_id"`
-	PublishedAt  int64   `json:"published_at"`
-	ExpiredAt    *int64  `json:"expired_at"`
-	ReadAt       *int64  `json:"read_at"`
-	RecipientIDs []int64 `json:"recipient_ids,omitempty"`
+	selectedFields report.Fields
+	Summary        string      `json:"summary,omitempty"`
+	ID             int64       `json:"id"`
+	CreatedAt      int64       `json:"created_at"`
+	UpdatedAt      int64       `json:"updated_at"`
+	Title          string      `json:"title"`
+	Content        string      `json:"content"`
+	Type           string      `json:"type"`
+	Scope          string      `json:"scope"`
+	SenderID       *int64      `json:"sender_id"`
+	PublishedAt    int64       `json:"published_at"`
+	ExpiredAt      *int64      `json:"expired_at"`
+	ReadAt         *int64      `json:"read_at"`
+	RecipientIDs   []int64     `json:"recipient_ids,omitempty"`
+	Recipients     []Recipient `json:"recipients,omitempty"`
 }
 
 type CreateInput struct {
@@ -45,6 +49,7 @@ type CreateInput struct {
 }
 
 type ListInput struct {
+	Fields   report.Fields
 	Query    string
 	Page     *int32
 	PageSize *int32
@@ -58,6 +63,12 @@ type ListResult struct {
 	Total    int64     `json:"t"`
 	Page     int32     `json:"p"`
 	PageSize int32     `json:"s"`
+}
+
+type Recipient struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Code     string `json:"code"`
 }
 
 type RecipientOption struct {
@@ -212,18 +223,20 @@ func (m *Module) GetSent(ctx context.Context, id int64) (*Message, error) {
 		return nil, err
 	}
 	if value.Scope == "targeted" {
-		rows, err := m.store.SQL(ctx).QueryContext(ctx, `SELECT user_id FROM t_msg_recipient WHERE msg_id = $1 ORDER BY user_id`, id)
+		rows, err := m.store.SQL(ctx).QueryContext(ctx, `SELECT r.user_id, COALESCE(u.username, ''), COALESCE(u.code, '') FROM t_msg_recipient r LEFT JOIN t_user u ON u.id = r.user_id WHERE r.msg_id = $1 ORDER BY r.user_id`, id)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
 		value.RecipientIDs = make([]int64, 0)
+		value.Recipients = make([]Recipient, 0)
 		for rows.Next() {
-			var userID int64
-			if err := rows.Scan(&userID); err != nil {
+			var recipient Recipient
+			if err := rows.Scan(&recipient.ID, &recipient.Username, &recipient.Code); err != nil {
 				return nil, err
 			}
-			value.RecipientIDs = append(value.RecipientIDs, userID)
+			value.RecipientIDs = append(value.RecipientIDs, recipient.ID)
+			value.Recipients = append(value.Recipients, recipient)
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err
@@ -248,6 +261,9 @@ func (m *Module) ListSent(ctx context.Context, input ListInput) (*ListResult, er
 }
 
 func (m *Module) listMessages(ctx context.Context, userID int64, input ListInput, sent bool) (*ListResult, error) {
+	if err := input.Fields.Validate(listFields...); err != nil {
+		return nil, err
+	}
 	if (input.Type != "" && !validType(input.Type)) || (input.Scope != "" && !validScope(input.Scope)) || (sent && input.Read != nil) {
 		return nil, ErrInvalid
 	}
@@ -261,7 +277,7 @@ func (m *Module) listMessages(ctx context.Context, userID int64, input ListInput
 	if sent {
 		from, selected, args = ` FROM t_msg m WHERE TRUE`, columns+`, NULL::bigint`, []any{}
 	}
-	if sent && strings.TrimSpace(input.Query) != "" {
+	if strings.TrimSpace(input.Query) != "" {
 		escaped := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(strings.TrimSpace(input.Query)) + "%"
 		args = append(args, escaped)
 		from += fmt.Sprintf(" AND (m.title ILIKE $%d ESCAPE '!' OR m.content ILIKE $%d ESCAPE '!')", len(args), len(args))
@@ -289,6 +305,19 @@ func (m *Module) listMessages(ctx context.Context, userID int64, input ListInput
 		return value, nil
 	}
 	args = append(args, size, offset)
+	if input.Fields != nil {
+		build := func(item *Message, fields report.Fields) report.Projection {
+			// read_at is user-specific; sent records have no personal receipt.
+			projection := listProjection(item, fields)
+			if !sent {
+				projection.Replace("NULL::bigint", "r.read_at")
+			}
+			return projection
+		}
+		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, build, from+fmt.Sprintf(` ORDER BY m.published_at DESC, m.id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+		value.Items = items
+		return value, err
+	}
 	rows, err := m.store.SQL(ctx).QueryContext(ctx, `SELECT `+selected+from+fmt.Sprintf(` ORDER BY m.published_at DESC, m.id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, err

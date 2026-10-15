@@ -46,7 +46,22 @@ func TestManagementSummaryPostgres(t *testing.T) {
 	}
 	whitelists := whitelist.New(store, limits)
 	messages := msg.New(store, limits)
-	operations := []func(context.Context) (*report.ManagementSummary, error){actions.Summary, roles.Summary, groups.Summary, dictionaries.Summary, whitelists.Summary, messages.SentSummary}
+	operations := []func(context.Context, ...string) (*report.ManagementSummary, error){actions.Summary, roles.Summary, groups.Summary, dictionaries.Summary, whitelists.Summary, messages.SentSummary}
+ // Selective aggregates must also return one row on an empty database.
+ for _, operation := range operations {
+  value, err := operation(ctx, "total")
+  if err != nil || value.Total != 0 { t.Fatalf("selected total: %#v %v", value, err) }
+  if _, err := operation(ctx, "counts"); err != nil { t.Fatal(err) }
+ }
+ for _, operation := range []func(context.Context, ...string) (*report.ManagementSummary, error){actions.Summary, roles.Summary, groups.Summary} {
+  value, err := operation(ctx, "groups")
+  if err != nil || len(value.Groups) != 0 { t.Fatalf("empty selected groups: %#v %v", value, err) }
+ }
+ selectedUsers := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+ for _, fields := range []report.Fields{ {"total"}, {"counts"}, {"trend"}, {"total", "counts"}, {"total", "trend"}} {
+  value, err := selectedUsers.Summary(ctx, user.SummaryInput{Fields:fields})
+  if err != nil || value.Total != 0 { t.Fatalf("selected user %v: %#v %v", fields, value, err) }
+ }
 	for _, operation := range operations {
 		value, err := operation(ctx)
 		if err != nil || value.Total != 0 || value.Groups == nil || value.Trend == nil {

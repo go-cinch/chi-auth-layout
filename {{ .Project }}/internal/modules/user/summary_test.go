@@ -3,6 +3,9 @@ package user
 import (
  "database/sql/driver"
  "errors"
+ "encoding/json"
+ "regexp"
+ "{{ .Computed.module_name_final }}/internal/common/report"
  "net/http"
  "net/http/httptest"
  "strings"
@@ -81,7 +84,7 @@ func TestUserSummaryHTTP(t *testing.T) {
  handler:=m.HTTP()
 {{ end -}}
  request:=func(target string,want int)string{t.Helper();w:=httptest.NewRecorder();handler.ServeHTTP(w,httptest.NewRequest(http.MethodGet,target,nil));if w.Code!=want{t.Fatalf("%s: %d %s",target,w.Code,w.Body.String())};return w.Body.String()}
- for _,q:=range []string{"days=0","days=15","days=a","days=14&days=30","time_zone=","time_zone=Local","time_zone=Not/A_Zone","x=y","days=%zz"} {request("/summary?"+q,400)}
+ for _,q:=range []string{"f=","f=unknown","f=total&f=counts","f=total,total","days=0","days=15","days=a","days=14&days=30","time_zone=","time_zone=Local","time_zone=Not/A_Zone","x=y","days=%zz"} {request("/summary?"+q,400)}
  mock.ExpectQuery("WITH effective AS").WillReturnRows(sqlmock.NewRows([]string{"total","pending","active","locked","recent_logged_in_users","trend","login_trend"}).AddRow(0,0,0,0,0,zeroCreationCounts,zeroCreationCounts))
  if body:=request("/summary?days=14&time_zone=Asia%2FShanghai",200);!strings.Contains(body,`"pending":0`)||strings.Count(body,`"recent_logged_in_users":0`)!=15||!strings.Contains(body,`"groups":[]`){t.Fatal(body)}
  mock.ExpectQuery("WITH effective AS").WillReturnError(sqlmock.ErrCancelled)
@@ -130,4 +133,17 @@ func TestUserSummaryRejectsInvalidLoginBuckets(t *testing.T) {
   mock.ExpectQuery("WITH effective AS").WillReturnRows(sqlmock.NewRows([]string{"total","pending","active","locked","recent_logged_in_users","trend","login_trend"}).AddRow(0,0,0,0,0,zeroCreationCounts,broken))
   if _,err:=m.Summary(t.Context(),SummaryInput{});err==nil{t.Fatalf("accepted latest-login buckets %s",broken)}
  }
+}
+
+func TestSelectedUserSummary(t *testing.T) {
+ m,mock:=newTestModule(t)
+ mock.ExpectQuery("^"+regexp.QuoteMeta("SELECT COUNT(*) FROM t_user")+"$").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+ value,err:=m.Summary(t.Context(),SummaryInput{Fields:report.Fields{"total"}})
+ if err!=nil{t.Fatal(err)}
+ data,err:=json.Marshal(value)
+ if err!=nil || string(data)!=`{"total":0}`{t.Fatal(string(data),err)}
+ if _,err:=m.Summary(t.Context(),SummaryInput{Fields:report.Fields{"unknown"}});err==nil{t.Fatal("accepted unknown field")}
+ mock.ExpectQuery(`WITH effective AS \(SELECT .* FROM t_user\) SELECT COUNT\(\*\) FILTER`).WillReturnRows(sqlmock.NewRows([]string{"pending","active","locked","recent"}).AddRow(0,2,0,1))
+ value,err=m.Summary(t.Context(),SummaryInput{Fields:report.Fields{"counts"}})
+ if err!=nil||value.Counts["active"]!=2{t.Fatal(value,err)}
 }

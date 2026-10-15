@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/code"
@@ -27,16 +28,17 @@ var (
 const AllPermissionsActionID int64 = 1
 
 type Action struct {
-	ID        int64  `json:"id"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
-	Code      string `json:"code"`
-	Name      string `json:"name"`
-	Group     string `json:"group"`
-	Word      string `json:"word"`
-	Resource  string `json:"resource"`
-	Menu      string `json:"menu"`
-	Button    string `json:"button"`
+	selectedFields report.Fields
+	ID             int64  `json:"id"`
+	CreatedAt      int64  `json:"created_at"`
+	UpdatedAt      int64  `json:"updated_at"`
+	Code           string `json:"code"`
+	Name           string `json:"name"`
+	Group          string `json:"group"`
+	Word           string `json:"word"`
+	Resource       string `json:"resource"`
+	Menu           string `json:"menu"`
+	Button         string `json:"button"`
 }
 
 type CreateActionInput struct {
@@ -58,17 +60,19 @@ type UpdateActionInput struct {
 }
 
 type ListActionsInput struct {
+	Fields      report.Fields
+	Q           string
 	GroupsExact []string
-	GroupExact *string
-	Code       string
-	Name       string
-	Group      string
-	Word       string
-	Resource   string
-	Menu       string
-	Button     string
-	Page       *int32
-	PageSize   *int32
+	GroupExact  *string
+	Code        string
+	Name        string
+	Group       string
+	Word        string
+	Resource    string
+	Menu        string
+	Button      string
+	Page        *int32
+	PageSize    *int32
 }
 
 type ListActionsResult struct {
@@ -288,6 +292,9 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 }
 
 func (m *Module) List(ctx context.Context, input ListActionsInput) (*ListActionsResult, error) {
+	if err := input.Fields.Validate(listFields...); err != nil {
+		return nil, err
+	}
 	page, size, inRange := m.limits.Normalize(input.Page, input.PageSize)
 	value := &ListActionsResult{Items: make([]Action, 0), Page: page, PageSize: size}
 	if !inRange {
@@ -300,6 +307,12 @@ func (m *Module) List(ctx context.Context, input ListActionsInput) (*ListActions
 	offset := int64(page-1) * int64(size)
 	if offset >= value.Total {
 		return value, nil
+	}
+	if input.Fields != nil {
+		selectedArgs := append(args, size, offset)
+		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, listProjection, " FROM t_action"+where+" ORDER BY id DESC LIMIT $"+strconv.Itoa(len(selectedArgs)-1)+" OFFSET $"+strconv.Itoa(len(selectedArgs)), selectedArgs...)
+		value.Items = items
+		return value, err
 	}
 	args = append(args, size, offset)
 	query := "SELECT id, created_at, updated_at, code, name, action_group, word, resource, menu, btn FROM t_action" + where +
@@ -435,6 +448,10 @@ func (m *Module) SplitCodes(value string) []string {
 func actionFilters(input ListActionsInput) (string, []any) {
 	parts := make([]string, 0, 7)
 	args := make([]any, 0, 7)
+	if strings.TrimSpace(input.Q) != "" {
+		args = append(args, like(input.Q))
+		parts = append(parts, "(LOWER(name) LIKE LOWER($1) ESCAPE '!' OR LOWER(word) LIKE LOWER($1) ESCAPE '!' OR LOWER(code) LIKE LOWER($1) ESCAPE '!')")
+	}
 	code := strings.TrimSpace(input.Code)
 	if code != "" {
 		if strings.Contains(code, ",") {

@@ -17,7 +17,8 @@ type ErrorResponse struct {
 func WriteJSON(w http.ResponseWriter, status int, body any) {
 	data, err := json.Marshal(body)
 	if err != nil {
-		slog.Error("encode json response failed: " + err.Error())
+		slog.Error("encode json response failed: "+err.Error(),
+			"operation", "encode_json_response", "outcome", "failure", "status", http.StatusInternalServerError, "error", err)
 		status = http.StatusInternalServerError
 		data, _ = json.Marshal(ErrorResponse{ErrorCode: apperror.Code(apperror.Internal), Msg: i18n.Translate(w.Header().Get("Content-Language"), apperror.Code(apperror.Internal), apperror.Internal.Error())})
 	}
@@ -25,7 +26,8 @@ func WriteJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if _, err := w.Write(data); err != nil {
-		slog.Debug("write json response failed: " + err.Error())
+		slog.Debug("write json response failed: "+err.Error(),
+			"operation", "write_json_response", "outcome", "failure", "status", status, "error", err)
 	}
 }
 

@@ -45,6 +45,11 @@ func TestHTTP(t *testing.T) {
 	for _, route := range []string{"summary", "option", "export"} {
 		call("/audit/login/"+route+"?p=bad", 400)
 	}
+ for _, q := range []string{"f=", "f=metrics&f=trend", "f=unknown", "f=metrics,metrics", "f=metrics,", "f=%zz"} {
+  call("/audit/login/summary?"+q, 400)
+ }
+ mock.ExpectQuery("SELECT module").WillReturnRows(sqlmock.NewRows([]string{"name","total","failed"}))
+ if body := call("/audit/operation/summary?f=modules",200); !strings.Contains(body,`"modules":[]`) || strings.Contains(body,`"total":`) || strings.Contains(body,`"trend":`) { t.Fatal(body) }
 	call("/audit/login/detail/abc", 400)
 	call("/audit/login/detail/0", 400)
 	call("/audit/login/missing", 404)

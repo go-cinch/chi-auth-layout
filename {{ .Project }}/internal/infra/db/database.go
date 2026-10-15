@@ -87,10 +87,11 @@ func New(ctx context.Context, cfg *config.Config) (*Store, func(), error) {
 
 	cleanup := func() {
 		if err := db.Close(); err != nil {
-			logger.Error("close database failed: " + err.Error())
+			logger.Error("close database failed: "+err.Error(), slog.String("operation", "database_close"), slog.String("outcome", "failure"), slog.String("driver", driver), slog.Any("error", err))
 		}
 	}
-	logger.InfoContext(ctx, "database initialized: "+redact.DSN(dsn))
+	loggedDSN := redact.DSN(dsn)
+	logger.InfoContext(ctx, "database initialized: "+loggedDSN, slog.String("operation", "database_init"), slog.String("outcome", "success"), slog.String("driver", driver), slog.String("dsn", loggedDSN))
 	return &Store{DB: db}, cleanup, nil
 }
 

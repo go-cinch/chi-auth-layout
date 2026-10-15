@@ -36,10 +36,11 @@ func New(ctx context.Context, cfg *config.Config) (*Client, func(), error) {
 	}
 	cleanup := func() {
 		if err := client.Close(); err != nil {
-			logger.Error("close redis failed: " + err.Error())
+			logger.Error("close redis failed: "+err.Error(), slog.String("operation", "redis_close"), slog.String("outcome", "failure"), slog.Any("error", err))
 		}
 	}
-	logger.InfoContext(ctx, "redis initialized: "+redact.DSN(dsn))
+	loggedDSN := redact.DSN(dsn)
+	logger.InfoContext(ctx, "redis initialized: "+loggedDSN, slog.String("operation", "redis_init"), slog.String("outcome", "success"), slog.String("dsn", loggedDSN))
 	return client, cleanup, nil
 }
 

@@ -7,6 +7,8 @@ import (
 "{{ .Computed.module_name_final }}/internal/common/pagination"
 "{{ .Computed.module_name_final }}/internal/modules/msg"
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,6 +22,10 @@ import (
 )
 
 func TestRunAndClose(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	application := &Application{
 		server:         &http.Server{Addr: "127.0.0.1:0", Handler: http.NotFoundHandler(), ReadHeaderTimeout: time.Second},
 		profilerServer: &http.Server{Addr: "127.0.0.1:0", Handler: http.NotFoundHandler(), ReadHeaderTimeout: time.Second},
@@ -34,6 +40,27 @@ func TestRunAndClose(t *testing.T) {
 	application.Close()
 	if !closed {
 		t.Fatal("cleanup was not called")
+	}
+	decoder := json.NewDecoder(&output)
+	for _, name := range []string{"http", "profiler"} {
+		var record map[string]any
+		if err := decoder.Decode(&record); err != nil {
+			t.Fatal(err)
+		}
+		address, ok := record["address"].(string)
+		if !ok || !strings.HasPrefix(address, "127.0.0.1:") || strings.HasSuffix(address, ":0") {
+			t.Fatalf("listening address = %#v", record["address"])
+		}
+		if record["operation"] != "server_start" || record["outcome"] != "success" || record["server"] != name || record["msg"] != name+" server running at "+address {
+			t.Fatalf("startup log = %#v", record)
+		}
+	}
+	var stopped map[string]any
+	if err := decoder.Decode(&stopped); err != nil {
+		t.Fatal(err)
+	}
+	if stopped["operation"] != "server_stop" || stopped["outcome"] != "success" || stopped["msg"] != "servers stopped" {
+		t.Fatalf("shutdown log = %#v", stopped)
 	}
 	application = &Application{server: &http.Server{Addr: "127.0.0.1:-1", Handler: http.NotFoundHandler()}}
 	if err := application.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "http server") {
@@ -74,6 +101,58 @@ func TestRunDoesNotLogBeforeListenSucceeds(t *testing.T) {
 	cancel()
 	if err := (&Application{}).Run(canceled); err != nil {
 		t.Fatalf("canceled Run() error = %v", err)
+	}
+}
+
+func TestRunLogsShutdownFailure(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	addresses := make(chan string, 1)
+	application := &Application{
+		shutdownTimeout: time.Millisecond,
+		server: &http.Server{
+			Addr: "127.0.0.1:0",
+			BaseContext: func(listener net.Listener) context.Context {
+				addresses <- listener.Addr().String()
+				return t.Context()
+			},
+			Handler: http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				cancel()
+				<-request.Context().Done()
+			}),
+		},
+	}
+	requestDone := make(chan struct{})
+	go func() {
+		defer close(requestDone)
+		select {
+		case address := <-addresses:
+			client := &http.Client{Timeout: time.Second}
+			response, err := client.Get("http://" + address)
+			if err == nil {
+				_ = response.Body.Close()
+			}
+		case <-ctx.Done():
+		}
+	}()
+	if err := application.Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown error = %v", err)
+	}
+	<-requestDone
+	decoder := json.NewDecoder(&output)
+	var record map[string]any
+	if err := decoder.Decode(&record); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoder.Decode(&record); err != nil {
+		t.Fatal(err)
+	}
+	if record["operation"] != "server_stop" || record["outcome"] != "failure" || record["level"] != "ERROR" || record["error"] != context.DeadlineExceeded.Error() || record["msg"] != "servers stopped with errors: "+context.DeadlineExceeded.Error() {
+		t.Fatalf("shutdown failure log = %#v", record)
 	}
 }
 

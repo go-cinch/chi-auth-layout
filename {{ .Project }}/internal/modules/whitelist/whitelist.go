@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
@@ -23,11 +24,12 @@ var (
 )
 
 type Whitelist struct {
-	ID        int64  `json:"id"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
-	Category  int16  `json:"category"`
-	Resource  string `json:"resource"`
+	selectedFields report.Fields
+	ID             int64  `json:"id"`
+	CreatedAt      int64  `json:"created_at"`
+	UpdatedAt      int64  `json:"updated_at"`
+	Category       int16  `json:"category"`
+	Resource       string `json:"resource"`
 }
 
 type CreateWhitelistInput struct {
@@ -41,6 +43,7 @@ type UpdateWhitelistInput struct {
 }
 
 type ListWhitelistsInput struct {
+	Fields   report.Fields
 	Category *int16
 	Resource string
 	Page     *int32
@@ -185,6 +188,9 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 }
 
 func (m *Module) List(ctx context.Context, input ListWhitelistsInput) (*ListWhitelistsResult, error) {
+	if err := input.Fields.Validate(listFields...); err != nil {
+		return nil, err
+	}
 	page, size, inRange := m.limits.Normalize(input.Page, input.PageSize)
 	value := &ListWhitelistsResult{Items: make([]Whitelist, 0), Page: page, PageSize: size}
 	if !inRange {
@@ -197,6 +203,12 @@ func (m *Module) List(ctx context.Context, input ListWhitelistsInput) (*ListWhit
 	offset := int64(page-1) * int64(size)
 	if offset >= value.Total {
 		return value, nil
+	}
+	if input.Fields != nil {
+		selectedArgs := append(args, size, offset)
+		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, listProjection, " FROM t_whitelist"+where+" ORDER BY id DESC LIMIT $"+strconv.Itoa(len(selectedArgs)-1)+" OFFSET $"+strconv.Itoa(len(selectedArgs)), selectedArgs...)
+		value.Items = items
+		return value, err
 	}
 	args = append(args, size, offset)
 	query := "SELECT id, created_at, updated_at, category, resource FROM t_whitelist" + where + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args)-1) + " OFFSET $" + strconv.Itoa(len(args))

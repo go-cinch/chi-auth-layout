@@ -50,7 +50,8 @@ func (h *Health) HTTP() http.Handler {
 		healthy := true
 		for _, check := range h.checks {
 			if err := check(ctx); err != nil {
-				slog.WarnContext(ctx, "health check failed: "+err.Error())
+				slog.WarnContext(ctx, "health check failed: "+err.Error(),
+					"operation", "health_check", "outcome", "failure", "error", err)
 				healthy = false
 			}
 		}

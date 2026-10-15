@@ -32,6 +32,6 @@ func MigrateUp(ctx context.Context, db *sql.DB, dialect string) error {
 	if err != nil {
 		return fmt.Errorf("run database migrations: %w", err)
 	}
-	logger.InfoContext(ctx, "database migrations applied: "+strconv.Itoa(applied))
+	logger.InfoContext(ctx, "database migrations applied: "+strconv.Itoa(applied), slog.String("operation", "database_migrate"), slog.String("outcome", "success"), slog.Int("applied", applied), slog.String("driver", dialect))
 	return nil
 }

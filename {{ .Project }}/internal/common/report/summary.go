@@ -1,12 +1,15 @@
 // Package report defines the stable JSON shape for aggregate management views.
 package report
 
-// Summary always returns initialized collections, including for an empty database.
+import "encoding/json"
+
+// ManagementSummary returns initialized requested collections, even for an empty database.
 type ManagementSummary struct {
-	Total  int64             `json:"total"`
-	Counts map[string]int64  `json:"counts"`
-	Groups []ManagementGroup `json:"groups"`
-	Trend  []ManagementPoint `json:"trend"`
+	Fields Fields            `json:"-"`
+	Total  int64             `json:"total,omitempty"`
+	Counts map[string]int64  `json:"counts,omitempty"`
+	Groups []ManagementGroup `json:"groups,omitempty"`
+	Trend  []ManagementPoint `json:"trend,omitempty"`
 }
 
 type ManagementGroup struct {
@@ -30,4 +33,21 @@ func New(keys ...string) *ManagementSummary {
 		value.Counts[key] = 0
 	}
 	return value
+}
+
+func (s ManagementSummary) MarshalJSON() ([]byte, error) {
+	value := map[string]any{}
+	if s.Fields.Has("total") {
+		value["total"] = s.Total
+	}
+	if s.Fields.Has("counts") {
+		value["counts"] = s.Counts
+	}
+	if s.Fields.Has("groups") {
+		value["groups"] = s.Groups
+	}
+	if s.Fields.Has("trend") {
+		value["trend"] = s.Trend
+	}
+	return json.Marshal(value)
 }

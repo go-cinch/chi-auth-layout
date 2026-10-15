@@ -46,14 +46,18 @@ func invoke(ctx context.Context,cfg *config.Config,method string,timeout time.Du
 {{- end }}
  defer func(){
   if recovered:=recover();recovered!=nil {
-   slog.ErrorContext(ctx,"panic recovered: "+fmt.Sprint(recovered),"stack",string(debug.Stack()))
+   message:=fmt.Sprint(recovered)
+   slog.ErrorContext(ctx,"panic recovered: "+message,"operation","recover_panic","outcome","failure","method",method,"error",message,"stack",string(debug.Stack()))
    err=status.Error(codes.Internal,"internal server error")
   }
   if err==nil && ctx.Err()!=nil {err=ctx.Err()}
   if errors.Is(err,context.Canceled)||errors.Is(err,context.DeadlineExceeded) {err=status.FromContextError(err).Err()}
   address:=""
   if remote,ok:=peer.FromContext(ctx);ok && remote.Addr!=nil {address=remote.Addr.String()}
-  slog.InfoContext(ctx,fmt.Sprintf("%s %s %dms",method,status.Code(err),time.Since(started).Milliseconds()),"remote_addr",address)
+  code:=status.Code(err)
+  duration:=time.Since(started).Milliseconds()
+  slog.InfoContext(ctx,fmt.Sprintf("%s %s %dms",method,code,duration),
+   "method",method,"grpc_code",int(code),"grpc_status",code.String(),"duration_ms",duration,"remote_addr",address)
  }()
  return next(ctx)
 }

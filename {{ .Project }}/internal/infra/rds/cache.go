@@ -50,7 +50,7 @@ func NewRedisNamespaceCache(dsn, keyPrefix, namespace string) (*NamespaceCache, 
 	}
 	return cache, func() {
 		if err := client.Close(); err != nil {
-			slog.Error("close dictionary cache redis failed: " + err.Error())
+			slog.Error("close dictionary cache redis failed: "+err.Error(), slog.String("operation", "cache_close"), slog.String("outcome", "failure"), slog.String("namespace", cache.prefix), slog.Any("error", err))
 		}
 	}, nil
 }

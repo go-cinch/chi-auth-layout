@@ -84,6 +84,20 @@ func TestMessageDeliveryAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var recipientName, recipientCode string
+	if err := store.DB.QueryRowContext(ctx, `SELECT username, code FROM t_user WHERE id = 2`).Scan(&recipientName, &recipientCode); err != nil {
+		t.Fatal(err)
+	}
+	if len(targeted.Recipients) != 1 || targeted.Recipients[0].Username != recipientName || targeted.Recipients[0].Code != recipientCode {
+		t.Fatalf("recipient identity: %#v", targeted.Recipients)
+	}
+	if _, err := store.DB.ExecContext(ctx, `UPDATE t_user SET username = 'renamed-recipient' WHERE id = 2`); err != nil {
+		t.Fatal(err)
+	}
+	current, err := m.GetSent(ctx, targeted.ID)
+	if err != nil || len(current.Recipients) != 1 || current.Recipients[0].Username != "renamed-recipient" || current.Recipients[0].Code != recipientCode {
+		t.Fatalf("current recipient identity: %#v %v", current, err)
+	}
 	if _, err := m.Get(ctx, 3, targeted.ID); !errors.Is(err, msg.ErrNotFound) {
 		t.Fatal("non-recipient can read", err)
 	}

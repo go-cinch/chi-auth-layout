@@ -39,6 +39,9 @@ func TestHTTP(t *testing.T) {
  request("POST","/","{",400,true);request("POST","/","{}",400,true)
  for _,query:=range []string{"p=","p=1&p=2","p=x","p=2147483648","s=x","read=x","type=","bad=%zz"} {request("GET","/inbox?"+query,"",400,true)}
  request("GET","/recipient-option?q=a&q=b","",400,true)
+ request("GET","/inbox?q=a&q=b","",400,true)
+ mock.ExpectQuery("SELECT COUNT.*m.title ILIKE.*OR m.content ILIKE").WithArgs(int64(2), "%upgrade%").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+ request("GET","/inbox?q=upgrade","",200,true)
  mock.ExpectQuery("SELECT .* FROM").WillReturnRows(messageRows("all"));request("GET","/inbox/1","",200,true)
  mock.ExpectQuery("SELECT .* FROM").WillReturnRows(messageRows("all"));request("GET","/sent/1","",200,true)
  mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0));request("GET","/inbox?p=1&s=10&read=false&type=system&scope=all","",200,true)

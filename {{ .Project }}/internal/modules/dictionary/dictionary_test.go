@@ -300,10 +300,30 @@ func TestCommittedWritesSurviveCacheFailure(t *testing.T) {
 			if err != nil || attempts != 3 {
 				t.Fatalf("write error = %v, attempts = %d", err, attempts)
 			}
-			for _, want := range []string{`"event":"dictionary_cache_invalidation_failed"`, `"db_committed":true`, `"attempts":3`, `"operation":"` + operation + `"`} {
-				if !strings.Contains(logs.String(), want) {
-					t.Fatalf("missing %s in %s", want, logs.String())
+			var entry map[string]any
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+				t.Fatalf("decode cache failure log: %v: %s", err, logs.String())
+			}
+			for key, want := range map[string]any{
+				"event": "dictionary_cache_invalidation_failed", "db_committed": true,
+				"operation": "invalidate_dictionary_cache", "write_operation": operation,
+				"outcome": "failure", "attempts": float64(3), "error": "redis unavailable",
+			} {
+				if entry[key] != want {
+					t.Fatalf("%s = %#v, want %#v: %s", key, entry[key], want, logs.String())
 				}
+			}
+			duration, ok := entry["duration_ms"].(float64)
+			if !ok || duration < 0 || duration != float64(int64(duration)) {
+				t.Fatalf("duration_ms is not a non-negative integer: %#v", entry["duration_ms"])
+			}
+			ids, ok := entry["dictionary_ids"].([]any)
+			if !ok || len(ids) != 1 || ids[0] != float64(3) {
+				t.Fatalf("dictionary_ids = %#v", entry["dictionary_ids"])
+			}
+			wantMessage := fmt.Sprintf("dictionary %s saved but cache invalidation failed after 3 attempts in %dms: redis unavailable", operation, int64(duration))
+			if entry["msg"] != wantMessage {
+				t.Fatalf("message does not agree with fields: %s", logs.String())
 			}
 		})
 	}
@@ -385,6 +405,10 @@ func TestDictionaryReadCacheFailures(t *testing.T) {
 		for _, failure := range []string{"load", "store", "corrupt", "database"} {
 			t.Run(read+"/"+failure, func(t *testing.T) {
 				m, _, mock := newTestModule(t)
+				var logs bytes.Buffer
+				previous := slog.Default()
+				slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+				defer slog.SetDefault(previous)
 				stores := 0
 				m.cache = &faultValueCache{
 					load: func(context.Context, string) (string, bool, string, error) {
@@ -441,6 +465,27 @@ func TestDictionaryReadCacheFailures(t *testing.T) {
 				}
 				if stores != wantStores {
 					t.Fatalf("cache stores = %d", stores)
+				}
+				if failure == "load" || failure == "store" {
+					var entry map[string]any
+					if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+						t.Fatalf("decode cache warning: %v: %s", err, logs.String())
+					}
+					operation := "read_dictionary_cache"
+					if failure == "store" {
+						operation = "write_dictionary_cache"
+					}
+					if entry["operation"] != operation || entry["cache_kind"] != read || entry["outcome"] != "failure" || entry["error"] != "redis down" {
+						t.Fatalf("cache warning fields: %#v", entry)
+					}
+					if read == "record" && entry["dictionary_id"] != float64(1) {
+						t.Fatalf("dictionary_id is not numeric: %#v", entry["dictionary_id"])
+					}
+					if message, ok := entry["msg"].(string); !ok || !strings.Contains(message, "cache failed: redis down") {
+						t.Fatalf("unreadable cache warning: %#v", entry["msg"])
+					}
+				} else if logs.Len() != 0 {
+					t.Fatalf("unexpected cache warning: %s", logs.String())
 				}
 			})
 		}

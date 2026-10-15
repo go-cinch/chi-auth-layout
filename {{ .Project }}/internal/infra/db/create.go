@@ -49,7 +49,7 @@ func createDatabase(ctx context.Context, driver, dsn string) error {
 			return fmt.Errorf("create database: %w", err)
 		}
 	}
-	slog.InfoContext(ctx, "database created: "+name)
+	slog.InfoContext(ctx, "database created: "+name, slog.String("operation", "database_create"), slog.String("outcome", "success"), slog.String("database", name), slog.String("driver", driver))
 	return nil
 }
 

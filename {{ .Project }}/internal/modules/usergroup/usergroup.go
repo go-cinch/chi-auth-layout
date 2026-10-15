@@ -3,6 +3,7 @@ package usergroup
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
@@ -28,14 +30,19 @@ var (
 )
 
 type UserGroup struct {
-	ID          int64         `json:"id"`
-	CreatedAt   int64         `json:"created_at"`
-	UpdatedAt   int64         `json:"updated_at"`
-	Name        string        `json:"name"`
-	Word        string        `json:"word"`
-	ActionCodes []string      `json:"action_codes"`
-	Actions     []ActionView  `json:"actions"`
-	Users       []UserSummary `json:"users"`
+	selectedFields  report.Fields
+	selectedActions string
+	ID              int64          `json:"id"`
+	CreatedAt       int64          `json:"created_at"`
+	UpdatedAt       int64          `json:"updated_at"`
+	Name            string         `json:"name"`
+	Word            string         `json:"word"`
+	ActionCodes     []string       `json:"action_codes"`
+	Actions         []ActionView   `json:"actions,omitempty"`
+	Users           []UserSummary  `json:"users,omitempty"`
+	MemberCount     *int64         `json:"member_count,omitempty"`
+	MemberPreview   *[]UserSummary `json:"member_preview,omitempty"`
+	fields          report.Fields
 }
 
 type ActionView struct {
@@ -65,13 +72,16 @@ type CreateUserGroupInput struct {
 }
 
 type UpdateUserGroupInput struct {
-	Name        *string   `json:"name,omitempty"`
-	Word        *string   `json:"word,omitempty"`
-	ActionCodes *[]string `json:"action_codes,omitempty"`
-	UserIDs     *[]int64  `json:"user_ids,omitempty"`
+	AddUserIDs    *[]int64  `json:"add_user_ids,omitempty"`
+	RemoveUserIDs *[]int64  `json:"remove_user_ids,omitempty"`
+	Name          *string   `json:"name,omitempty"`
+	Word          *string   `json:"word,omitempty"`
+	ActionCodes   *[]string `json:"action_codes,omitempty"`
+	UserIDs       *[]int64  `json:"user_ids,omitempty"`
 }
 
 type ListUserGroupsInput struct {
+	Fields         report.Fields
 	HasPermissions *bool
 	HasMembers     *bool
 	Name           string
@@ -111,29 +121,46 @@ func New(store *db.Store, limits pagination.Limits, actions Actions, users Users
 	return &Module{store: store, limits: limits, actions: actions, users: users}
 }
 
-func (m *Module) Get(ctx context.Context, id int64) (*UserGroup, error) {
+func (m *Module) Get(ctx context.Context, id int64, fields ...string) (*UserGroup, error) {
 	if id <= 0 {
 		return nil, ErrInvalid
 	}
-	return m.lookup(ctx, m.store.SQL(ctx), id)
+	return m.lookup(ctx, m.store.SQL(ctx), id, fields...)
 }
 
-func (m *Module) lookup(ctx context.Context, executor db.SQLExecutor, id int64) (*UserGroup, error) {
+func (m *Module) lookup(ctx context.Context, executor db.SQLExecutor, id int64, fields ...string) (*UserGroup, error) {
+	selection, err := groupFields(fields)
+	if err != nil {
+		return nil, err
+	}
 	const query = `SELECT id, created_at, updated_at, name, word, action FROM t_user_group WHERE id = $1`
 	value, err := m.scan(executor.QueryRowContext(ctx, query, id))
 	if err != nil {
 		return nil, err
 	}
-	actions, err := m.actions.Lookup(ctx, executor, value.ActionCodes)
-	if err != nil {
+	withoutUsers := report.Fields{}
+	for _, field := range selection {
+		if field == "users" || (selection.Has("users") && (field == "member_count" || field == "member_preview")) {
+			continue
+		}
+		withoutUsers = append(withoutUsers, field)
+	}
+	items := []UserGroup{*value}
+	if err := m.enrich(ctx, executor, items, withoutUsers); err != nil {
 		return nil, err
 	}
-	value.Actions = actionViews(actions)
-	users, err := m.users.SummariesByGroup(ctx, executor, id)
-	if err != nil {
-		return nil, err
+	*value = items[0]
+	value.fields = selection
+	// Preserve the legacy single-group query and derive any selected previews from it.
+	if selection.Has("users") {
+		members, err := m.users.SummariesByGroup(ctx, executor, id)
+		if err != nil {
+			return nil, err
+		}
+		value.Users = userSummaries(members)
+		previewFromUsers(value, selection)
 	}
-	value.Users = userSummaries(users)
+
 	return value, nil
 }
 
@@ -154,7 +181,10 @@ func (m *Module) scan(row interface{ Scan(...any) error }) (*UserGroup, error) {
 	return &value, nil
 }
 
-func (m *Module) Create(ctx context.Context, input CreateUserGroupInput) (*UserGroup, error) {
+func (m *Module) Create(ctx context.Context, input CreateUserGroupInput, fields ...string) (*UserGroup, error) {
+	if _, err := groupFields(fields); err != nil {
+		return nil, err
+	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.Word = strings.TrimSpace(input.Word)
 	if !validName(input.Name) || !validName(input.Word) {
@@ -188,7 +218,7 @@ func (m *Module) Create(ctx context.Context, input CreateUserGroupInput) (*UserG
 		if err := replaceUsers(ctx, m.store.SQL(ctx), id, users); err != nil {
 			return err
 		}
-		value, err = m.lookup(ctx, m.store.SQL(ctx), id)
+		value, err = m.lookup(ctx, m.store.SQL(ctx), id, fields...)
 		return err
 	})
 	if err != nil {
@@ -200,7 +230,10 @@ func (m *Module) Create(ctx context.Context, input CreateUserGroupInput) (*UserG
 	return value, nil
 }
 
-func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInput) (*UserGroup, error) {
+func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInput, fields ...string) (*UserGroup, error) {
+	if _, err := groupFields(fields); err != nil {
+		return nil, err
+	}
 	if id <= 0 || allNil(input) {
 		return nil, ErrInvalid
 	}
@@ -218,8 +251,12 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInpu
 		}
 		input.Word = &value
 	}
+	added, removed, err := memberDelta(input)
+	if err != nil {
+		return nil, err
+	}
 	var value *UserGroup
-	err := m.store.Tx(ctx, func(ctx context.Context) error {
+	err = m.store.Tx(ctx, func(ctx context.Context) error {
 		sets := make([]string, 0, 4)
 		args := make([]any, 0, 5)
 		add := func(column string, field any) {
@@ -256,6 +293,14 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInpu
 				return err
 			}
 		}
+		if len(added) > 0 {
+			if _, err := m.users.ValidateIDs(ctx, m.store.SQL(ctx), added); err != nil {
+				if errors.Is(err, usermodule.ErrNotFound) {
+					return ErrUserNotFound
+				}
+				return err
+			}
+		}
 		add("updated_at", time.Now().UnixMilli())
 		args = append(args, id)
 		query := "UPDATE t_user_group SET " + strings.Join(sets, ", ") + " WHERE id = $" + strconv.Itoa(len(args))
@@ -275,7 +320,11 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInpu
 				return err
 			}
 		}
-		value, err = m.lookup(ctx, m.store.SQL(ctx), id)
+		// UPDATE above holds the group row lock until commit, including legacy replacements.
+		if err := applyMemberDelta(ctx, m.store.SQL(ctx), id, added, removed); err != nil {
+			return err
+		}
+		value, err = m.lookup(ctx, m.store.SQL(ctx), id, fields...)
 		return err
 	})
 	if err != nil {
@@ -319,6 +368,13 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 }
 
 func (m *Module) List(ctx context.Context, input ListUserGroupsInput) (*ListUserGroupsResult, error) {
+	selection, err := groupFields(input.Fields)
+	if hasListColumns(input.Fields) {
+		selection, err = input.Fields, input.Fields.Validate(append(append([]string{}, listFields...), "actions", "users", "member_count", "member_preview")...)
+	}
+	if err != nil {
+		return nil, err
+	}
 	page, size, inRange := m.limits.Normalize(input.Page, input.PageSize)
 	value := &ListUserGroupsResult{Items: make([]UserGroup, 0), Page: page, PageSize: size}
 	if !inRange {
@@ -330,6 +386,23 @@ func (m *Module) List(ctx context.Context, input ListUserGroupsInput) (*ListUser
 	}
 	offset := int64(page-1) * int64(size)
 	if offset >= value.Total {
+		return value, nil
+	}
+	if hasListColumns(input.Fields) {
+		selectedArgs := append(args, size, offset)
+		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, listProjection, " FROM t_user_group"+where+" ORDER BY id DESC LIMIT $"+strconv.Itoa(len(selectedArgs)-1)+" OFFSET $"+strconv.Itoa(len(selectedArgs)), selectedArgs...)
+		if err != nil {
+			return nil, err
+		}
+		if input.Fields.Has("actions") {
+			for i := range items {
+				items[i].ActionCodes = m.actions.SplitCodes(items[i].selectedActions)
+			}
+		}
+		if err := m.enrich(ctx, m.store.SQL(ctx), items, input.Fields); err != nil {
+			return nil, err
+		}
+		value.Items = items
 		return value, nil
 	}
 	args = append(args, size, offset)
@@ -352,30 +425,8 @@ func (m *Module) List(ctx context.Context, input ListUserGroupsInput) (*ListUser
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	codes := make([]string, 0)
-	for _, item := range value.Items {
-		codes = append(codes, item.ActionCodes...)
-	}
-	actions, err := m.actions.Lookup(ctx, m.store.SQL(ctx), codes)
-	if err != nil {
+	if err := m.enrich(ctx, m.store.SQL(ctx), value.Items, selection); err != nil {
 		return nil, err
-	}
-	byCode := make(map[string]ActionView, len(actions))
-	for _, item := range actionViews(actions) {
-		byCode[item.Code] = item
-	}
-	ids := make([]int64, 0, len(value.Items))
-	for _, item := range value.Items {
-		ids = append(ids, item.ID)
-	}
-	members, err := m.users.SummariesByGroups(ctx, m.store.SQL(ctx), ids)
-	if err != nil {
-		return nil, err
-	}
-	for i := range value.Items {
-		item := &value.Items[i]
-		item.Actions = orderedActions(item.ActionCodes, byCode)
-		item.Users = userSummaries(members[item.ID])
 	}
 	return value, nil
 }
@@ -460,7 +511,7 @@ func splitFilterValues(value string) []string {
 func validName(value string) bool { return value != "" && utf8.RuneCountInString(value) <= 50 }
 
 func allNil(input UpdateUserGroupInput) bool {
-	return input.Name == nil && input.Word == nil && input.ActionCodes == nil && input.UserIDs == nil
+	return input.AddUserIDs == nil && input.RemoveUserIDs == nil && input.Name == nil && input.Word == nil && input.ActionCodes == nil && input.UserIDs == nil
 }
 
 func normalizeIDs(ids []int64) ([]int64, error) {
@@ -518,4 +569,53 @@ func orderedActions(codes []string, byCode map[string]ActionView) []ActionView {
 		}
 	}
 	return result
+}
+
+// MarshalJSON preserves selected empty arrays and the legacy response without f.
+func (g UserGroup) MarshalJSON() ([]byte, error) {
+	type plain UserGroup
+	if g.selectedFields != nil {
+		fields := g.selectedFields
+		g.selectedFields = nil
+		g.fields = report.Fields{}
+		for _, name := range []string{"actions", "users", "member_count", "member_preview"} {
+			if fields.Has(name) {
+				g.fields = append(g.fields, name)
+			}
+		}
+		// No association selected: avoid legacy defaults when serializing base values.
+		if len(g.fields) == 0 {
+			return report.MarshalFields(plain(g), fields)
+		}
+		encoded, err := g.MarshalJSON()
+		if err != nil {
+			return nil, err
+		}
+		return report.MarshalFields(json.RawMessage(encoded), fields)
+	}
+	fields, err := groupFields(g.fields)
+	if err != nil {
+		return nil, err
+	}
+	var actions *[]ActionView
+	var users *[]UserSummary
+	if fields.Has("actions") {
+		values := g.Actions
+		if values == nil {
+			values = []ActionView{}
+		}
+		actions = &values
+	}
+	if fields.Has("users") {
+		values := g.Users
+		if values == nil {
+			values = []UserSummary{}
+		}
+		users = &values
+	}
+	return json.Marshal(struct {
+		plain
+		Actions *[]ActionView  `json:"actions,omitempty"`
+		Users   *[]UserSummary `json:"users,omitempty"`
+	}{plain(g), actions, users})
 }

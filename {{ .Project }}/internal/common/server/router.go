@@ -103,7 +103,8 @@ func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.H
 		if authorizer != nil && c.Request.URL.Path != permissionEndpoint {
 			allowed, err := authorizer.AuthorizeHTTP(c.Request.Context(), c.Request.Method, c.Request.URL.Path)
 			if err != nil {
-				slog.ErrorContext(c.Request.Context(), "authorize http request failed: "+err.Error())
+				slog.ErrorContext(c.Request.Context(), "authorize http request failed: "+err.Error(),
+					"operation", "authorize_http_request", "outcome", "failure", "method", c.Request.Method, "error", err)
 				c.Abort()
 				WriteError(c.Writer, c.Request, http.StatusInternalServerError, apperror.Internal)
 				return
@@ -260,7 +261,8 @@ func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.H
         if authorizer != nil && request.URL.Path != permissionEndpoint {
 			allowed, err := authorizer.AuthorizeHTTP(request.Context(), request.Method, request.URL.Path)
 			if err != nil {
-				slog.ErrorContext(request.Context(), "authorize http request failed: "+err.Error())
+				slog.ErrorContext(request.Context(), "authorize http request failed: "+err.Error(),
+					"operation", "authorize_http_request", "outcome", "failure", "method", request.Method, "error", err)
 				WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 				return
 			}

@@ -63,7 +63,7 @@ return store.Tx(ctx, func(txCtx context.Context) error {
 - When the embedded migrations directory contains no `.sql` files, migration execution must be skipped without touching the database handle.
 - An uncommitted migration may be revised with its related code. Keep one table's complete initial definition together instead of immediately adding follow-up alterations.
 - Format every SQL migration consistently: four-space indentation, uppercase SQL keywords, one column or constraint per line, a blank line between statements and between table definitions, comments and indexes, and spaces after commas. Preserve intentional newlines inside seeded permission strings; do not mix indentation styles. Keep schema in the schema migration and seed rows in the data migration.
-- Keep migrations simple and readable. Seed only data required for local development or first boot.
+- Keep migrations simple and readable.
 
 ## Security and Observability
 

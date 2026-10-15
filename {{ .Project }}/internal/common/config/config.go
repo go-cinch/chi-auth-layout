@@ -55,7 +55,13 @@ func LoadValues(dir string) (*koanf.Koanf, []Override, error) {
 
 func LogOverrides(overrides []Override) {
 	for _, override := range overrides {
-		slog.Info("load env: " + override.Environment + "=" + override.Value)
+		slog.Info("load env: "+override.Environment+"="+override.Value,
+			slog.String("operation", "config_override"),
+			slog.String("outcome", "success"),
+			slog.String("env_key", override.Environment),
+			slog.String("config_key", override.Key),
+			slog.String("value", override.Value),
+		)
 	}
 }
 

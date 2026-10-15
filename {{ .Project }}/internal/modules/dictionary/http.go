@@ -12,6 +12,7 @@ import (
 
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/server"
+ "{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/modules"
 
 {{- if eq .Computed.http_router_final "gin" }}
@@ -62,7 +63,7 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) {
 	value, cacheHit, err := m.getCached(r.Context(), id)
 	if errors.Is(err, ErrInvalid) { server.WriteError(w, r, http.StatusBadRequest, ErrInvalid); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
-	if err != nil { slog.ErrorContext(r.Context(), "get dictionary failed: "+err.Error()); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
+	if err != nil { slog.ErrorContext(r.Context(), "get dictionary failed: "+err.Error(), "operation", "get_dictionary", "outcome", "failure", "error", err, "dictionary_id", id); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
 	if cacheHit { w.Header().Set("X-Cache-Hit", "1") }
 	server.WriteOK(w, value)
 }
@@ -76,7 +77,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 	if !decodeDictionaryInput(w, r, &input) { return }
 	value, err := m.Create(r.Context(), input)
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) { server.WriteError(w, r, http.StatusBadRequest, err); return }
-	if err != nil { slog.ErrorContext(r.Context(), "create dictionary failed: "+err.Error()); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
+	if err != nil { slog.ErrorContext(r.Context(), "create dictionary failed: "+err.Error(), "operation", "create_dictionary", "outcome", "failure", "error", err); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
 	server.WriteOK(w, value)
 }
 
@@ -92,7 +93,7 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) { id, err := str
 	if errors.Is(err, apperror.FeatureDisabled) { server.WriteError(w, r, http.StatusForbidden, err); return }
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) { server.WriteError(w, r, http.StatusBadRequest, err); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
-	if err != nil { slog.ErrorContext(r.Context(), "update dictionary failed: "+err.Error()); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
+	if err != nil { slog.ErrorContext(r.Context(), "update dictionary failed: "+err.Error(), "operation", "update_dictionary", "outcome", "failure", "error", err, "dictionary_id", id); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
 	server.WriteOK(w, value)
 }
 
@@ -116,7 +117,7 @@ func (m *Module) delete(w http.ResponseWriter, r *http.Request) { parts := strin
 	if errors.Is(err, apperror.FeatureDisabled) { server.WriteError(w, r, http.StatusForbidden, err); return }
 	if errors.Is(err, ErrIDs) { server.WriteError(w, r, http.StatusBadRequest, ErrIDs); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
-	if err != nil { slog.ErrorContext(r.Context(), "delete dictionaries failed: "+err.Error()); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
+	if err != nil { slog.ErrorContext(r.Context(), "delete dictionaries failed: "+err.Error(), "operation", "delete_dictionaries", "outcome", "failure", "error", err, "count", len(ids)); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
 	server.WriteOK(w)
 }
 
@@ -127,7 +128,9 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
 	query := r.URL.Query()
-	input := ListDictionariesInput{Key: query.Get("key"), Name: query.Get("name")}
+	fields, fieldErr := report.ParseFields(query, listFields...)
+ if fieldErr != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ input := ListDictionariesInput{Fields: fields, Key: query.Get("key"), Name: query.Get("name")}
 	if values, provided := query["enabled"]; provided {
 		if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.DictionaryEnabled); return }
 		parsed, err := strconv.ParseBool(values[0]); if err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.DictionaryEnabled); return }; input.Enabled = &parsed
@@ -135,7 +138,7 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 	if values, provided := query["p"]; provided { if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.Page); return }; parsed, err := strconv.ParseInt(values[0], 10, 32); if err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.Page); return }; value := int32(parsed); input.Page = &value }
 	if values, provided := query["s"]; provided { if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.PageSize); return }; parsed, err := strconv.ParseInt(values[0], 10, 32); if err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.PageSize); return }; value := int32(parsed); input.PageSize = &value }
 	value, err := m.List(r.Context(), input)
-	if err != nil { slog.ErrorContext(r.Context(), "list dictionaries failed: "+err.Error()); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
+	if err != nil { slog.ErrorContext(r.Context(), "list dictionaries failed: "+err.Error(), "operation", "list_dictionaries", "outcome", "failure", "error", err); server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
 	server.WriteOK(w, value)
 }
 
@@ -146,10 +149,13 @@ func (m *Module) summary(c *gin.Context) {
 func (m *Module) summary(w http.ResponseWriter,r *http.Request) {
 {{ end }}
  query, err := url.ParseQuery(r.URL.RawQuery)
- if err != nil || len(query) != 0 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
- value, err := m.Summary(r.Context())
+ if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ for key := range query { if key != "f" { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return } }
+ fields, err := report.ParseFields(query, "total", "counts")
+ if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ value, err := m.Summary(r.Context(), fields...)
  if err != nil {
-  slog.ErrorContext(r.Context(), "summarize dictionary failed: "+err.Error())
+  slog.ErrorContext(r.Context(), "summarize dictionary failed: "+err.Error(), "operation", "summarize_dictionary", "outcome", "failure", "error", err)
   server.WriteError(w,r,http.StatusInternalServerError,apperror.Internal)
   return
  }

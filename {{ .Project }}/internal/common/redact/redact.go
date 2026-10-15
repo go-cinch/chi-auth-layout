@@ -88,26 +88,52 @@ func (p Policy) Value(name, value string) string {
 
 func Mask(value string) string {
 	runes := []rune(value)
+	if len(runes) <= 3 {
+		return "***"
+	}
 	if len(runes) <= 6 {
-		if len(runes) > 3 {
-			runes = runes[:3]
-		}
-		return string(runes) + "***"
+		return string(runes[:3]) + "***"
 	}
 	return string(runes[:3]) + "***" + string(runes[len(runes)-3:])
 }
 
 func DSN(value string) string {
-	if parsed, err := url.Parse(value); err == nil && parsed.User != nil {
-		if password, exists := parsed.User.Password(); exists {
-			parsed.User = url.UserPassword(parsed.User.Username(), Mask(password))
-			masked := parsed.String()
-			masked = strings.ReplaceAll(masked, "%2A", "*")
-			return strings.ReplaceAll(masked, "%2a", "*")
-		}
-		return value
+	policy := New("sslpassword")
+	if hasDSNOptions(value) {
+		return maskDSNOptions(value, policy)
 	}
-
+	if strings.Contains(value, "://") {
+		parsed, err := url.Parse(value)
+		if err != nil {
+			return "***"
+		}
+		if parsed.User != nil {
+			if password, exists := parsed.User.Password(); exists {
+				parsed.User = url.UserPassword(parsed.User.Username(), Mask(password))
+			}
+		}
+		query, err := url.ParseQuery(parsed.RawQuery)
+		if err != nil {
+			// A partial query must never expose a malformed credential value.
+			parsed.RawQuery = "***"
+		} else {
+			changed := false
+			for key, values := range query {
+				if !policy.IsSensitive(key) {
+					continue
+				}
+				for index, value := range values {
+					values[index] = Mask(value)
+				}
+				changed = true
+			}
+			if changed {
+				parsed.RawQuery = query.Encode()
+			}
+		}
+		masked := strings.ReplaceAll(parsed.String(), "%2A", "*")
+		return strings.ReplaceAll(masked, "%2a", "*")
+	}
 	separator := strings.LastIndex(value, "@")
 	if separator < 0 {
 		return value
@@ -118,6 +144,91 @@ func DSN(value string) string {
 		return value
 	}
 	return credentials[:password+1] + Mask(credentials[password+1:]) + value[separator:]
+}
+
+// Detect keyword DSNs from their first assignment, never from credential text.
+func hasDSNOptions(value string) bool {
+	key, _, found := strings.Cut(strings.TrimSpace(value), "=")
+	key = strings.TrimSpace(key)
+	if !found || key == "" {
+		return false
+	}
+	for index, char := range key {
+		if char != '_' && !(char >= 'a' && char <= 'z') && !(char >= 'A' && char <= 'Z') && !(index > 0 && char >= '0' && char <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// maskDSNOptions follows PostgreSQL's quoted and backslash-escaped option syntax.
+// Preserve connection context and formatting, but fail closed on malformed input.
+func maskDSNOptions(value string, policy Policy) string {
+	runes := []rune(value)
+	var output strings.Builder
+	last := 0
+	for index := 0; index < len(runes); {
+		for index < len(runes) && unicode.IsSpace(runes[index]) {
+			index++
+		}
+		if index == len(runes) {
+			break
+		}
+		keyStart := index
+		for index < len(runes) && !unicode.IsSpace(runes[index]) && runes[index] != '=' {
+			index++
+		}
+		key := string(runes[keyStart:index])
+		for index < len(runes) && unicode.IsSpace(runes[index]) {
+			index++
+		}
+		if key == "" || index == len(runes) || runes[index] != '=' {
+			return "***"
+		}
+		index++
+		for index < len(runes) && unicode.IsSpace(runes[index]) {
+			index++
+		}
+		start := index
+		quoted := index < len(runes) && runes[index] == '\''
+		if quoted {
+			index++
+		}
+		var decoded []rune
+		closed := !quoted
+		for index < len(runes) {
+			current := runes[index]
+			if quoted && current == '\'' {
+				index++
+				closed = true
+				break
+			}
+			if !quoted && unicode.IsSpace(current) {
+				break
+			}
+			if current == '\\' {
+				index++
+				if index == len(runes) {
+					return "***"
+				}
+				current = runes[index]
+			}
+			decoded = append(decoded, current)
+			index++
+		}
+		if !closed {
+			return "***"
+		}
+		if policy.IsSensitive(key) {
+			output.WriteString(string(runes[last:start]))
+			masked := Mask(string(decoded))
+			masked = strings.ReplaceAll(strings.ReplaceAll(masked, `\`, `\\`), `'`, `\'`)
+			output.WriteString("'" + masked + "'")
+			last = index
+		}
+	}
+	output.WriteString(string(runes[last:]))
+	return output.String()
 }
 
 func splitName(value string) []string {

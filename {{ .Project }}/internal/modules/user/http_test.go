@@ -1,10 +1,14 @@
 package user
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -137,4 +141,84 @@ func TestUserLastLoggedInRangeHTTP(t *testing.T) {
  request("last_logged_in_to=9007199254740991",http.StatusOK)
  mock.ExpectQuery("SELECT COUNT.*last_logged_in_at >=.*last_logged_in_at <").WithArgs(sqlmock.AnyArg(),StatusActive,int64(100),int64(200)).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
  request("last_logged_in_from=100&last_logged_in_to=200&status=1",http.StatusOK)
+}
+
+func TestUserKeywordHTTP(t *testing.T) {
+	m, mock := newTestModule(t)
+{{ if eq .Computed.http_router_final "gin" -}}
+	router := gin.New(); m.HTTP(router.Group("")); handler := http.Handler(router)
+{{ else -}}
+	handler := m.HTTP()
+{{ end -}}
+	for _, query := range []string{"q=one&q=two", "q=%zz"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?"+query, nil))
+		if recorder.Code != http.StatusBadRequest { t.Fatalf("invalid keyword %q: %d", query, recorder.Code) }
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM t_user WHERE (LOWER(username) LIKE LOWER($1) ESCAPE '!' OR LOWER(code) LIKE LOWER($1) ESCAPE '!')")).WithArgs("%Mixed!%!_!!%").
+		WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?q=+Mixed%25_!+", nil))
+	if recorder.Code != http.StatusOK { t.Fatalf("keyword: %d %s", recorder.Code, recorder.Body.String()) }
+}
+
+func TestUserHTTPFailureLogsAreQueryableWithoutCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, target, body, operation, message, logError string
+		prepare func(sqlmock.Sqlmock)
+		userID int64
+		count int
+	}{
+		{
+			name: "get", method: http.MethodGet, target: "/42?token=query-secret", operation: "get_user", userID: 42,
+			message: "get user 42 failed: query user: database unavailable", logError: "query user: database unavailable",
+			prepare: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(42)).WillReturnError(errors.New("database unavailable"))
+			},
+		},
+		{
+			name: "delete", method: http.MethodDelete, target: "/42,43?token=query-secret", operation: "delete_users", count: 2,
+			message: "delete 2 users failed: delete user: database unavailable", logError: "delete user: database unavailable",
+			prepare: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM t_user").WithArgs(pq.Array([]int64{42, 43})).WillReturnError(errors.New("database unavailable"))
+			},
+		},
+		{
+			name: "credential", method: http.MethodPost, target: "/?token=query-secret", operation: "decrypt_user_creation_credential",
+			body: `{"username":"private-username","challenge_id":"challenge-secret","credential":"server-error"}`,
+			message: "decrypt user creation credential failed: challenge store unavailable", logError: "challenge store unavailable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, mock := newTestModule(t)
+			m.registrationCredentials = &registrationCredentialsStub{}
+			if tc.prepare != nil { tc.prepare(mock) }
+{{ if eq .Computed.http_router_final "gin" -}}
+			router := gin.New(); m.HTTP(router.Group("")); handler := http.Handler(router)
+{{ else -}}
+			handler := m.HTTP()
+{{ end -}}
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			defer slog.SetDefault(previous)
+			request := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+			request.Header.Set("Authorization", "Bearer header-secret")
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusInternalServerError { t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String()) }
+			var entry map[string]any
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil { t.Fatalf("decode failure log: %v: %s", err, logs.String()) }
+			for key, want := range map[string]any{"operation": tc.operation, "outcome": "failure", "error": tc.logError, "msg": tc.message} {
+				if entry[key] != want { t.Fatalf("%s = %#v, want %#v", key, entry[key], want) }
+			}
+			if tc.userID != 0 && entry["user_id"] != float64(tc.userID) { t.Fatalf("user_id is not numeric: %#v", entry["user_id"]) }
+			if tc.count != 0 {
+				if entry["count"] != float64(tc.count) { t.Fatalf("count is not numeric: %#v", entry["count"]) }
+			}
+			for _, secret := range []string{"query-secret", "header-secret", "private-username", "challenge-secret", "server-error"} {
+				if strings.Contains(logs.String(), secret) { t.Fatalf("request secret %q leaked: %s", secret, logs.String()) }
+			}
+		})
+	}
 }

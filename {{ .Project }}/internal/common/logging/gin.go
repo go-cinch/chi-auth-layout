@@ -28,14 +28,15 @@ func logGinDebug(format string, values ...any) {
 		if strings.HasPrefix(warning, `Running in "debug" mode.`) {
 			warning = "debug mode; use GIN_MODE=release in production"
 		}
-		slog.Warn("gin: " + warning)
+		slog.Warn("gin: "+warning, "component", "gin", "operation", "gin_debug")
 		return
 	}
-	slog.Debug("gin: " + message)
+	slog.Debug("gin: "+message, "component", "gin", "operation", "gin_debug")
 }
 
 func logGinRoute(method, path, handler string, handlers int) {
 	slog.Info("register route: "+method+" "+path,
+		"component", "gin", "operation", "register_route", "outcome", "success", "method", method, "route", path,
 		"handler", handler, "handlers", handlers)
 }
 
@@ -45,7 +46,7 @@ func (ginErrorWriter) Write(data []byte) (int, error) {
 	message := strings.TrimSpace(string(data))
 	message = strings.TrimSpace(strings.TrimPrefix(message, "[GIN-debug] [ERROR]"))
 	if message != "" {
-		slog.Error("gin: " + message)
+		slog.Error("gin: "+message, "component", "gin", "operation", "gin_error", "outcome", "failure", "error", message)
 	}
 	return len(data), nil
 }

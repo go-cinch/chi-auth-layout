@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 {{- end }}
 	"{{ .Computed.module_name_final }}/internal/common/server"
+ "{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/modules"
 )
 
@@ -65,7 +66,7 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrInvalid) { server.WriteError(w, r, http.StatusBadRequest, ErrInvalid); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
 	if err != nil {
-		slog.ErrorContext(r.Context(), r.Method+" "+r.URL.Path+" failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "get role "+strconv.FormatInt(id, 10)+" failed: "+err.Error(), "operation", "get_role", "outcome", "failure", "error", err, "role_id", id)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -87,7 +88,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) { server.WriteError(w, r, http.StatusBadRequest, err); return }
 	if errors.Is(err, ErrActionNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrActionNotFound); return }
 	if err != nil {
-		slog.ErrorContext(r.Context(), r.Method+" "+r.URL.Path+" failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "create role failed: "+err.Error(), "operation", "create_role", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -117,7 +118,7 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
 	if errors.Is(err, ErrActionNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrActionNotFound); return }
 	if err != nil {
-		slog.ErrorContext(r.Context(), r.Method+" "+r.URL.Path+" failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "update role "+strconv.FormatInt(id, 10)+" failed: "+err.Error(), "operation", "update_role", "outcome", "failure", "error", err, "role_id", id)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -147,7 +148,7 @@ func (m *Module) delete(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrIDs) { server.WriteError(w, r, http.StatusBadRequest, ErrIDs); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
 	if err != nil {
-		slog.ErrorContext(r.Context(), r.Method+" "+r.URL.Path+" failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "delete "+strconv.Itoa(len(ids))+" roles failed: "+err.Error(), "operation", "delete_roles", "outcome", "failure", "error", err, "count", len(ids))
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -162,7 +163,12 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	query, err := url.ParseQuery(r.URL.RawQuery)
  if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
-	input := ListRolesInput{Name: query.Get("name"), Word: query.Get("word"), ActionCode: query.Get("action_code")}
+	fields, fieldErr := report.ParseFields(query, listFields...)
+ if fieldErr != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ input := ListRolesInput{Fields: fields, Q: query.Get("q"), Name: query.Get("name"), Word: query.Get("word"), ActionCode: query.Get("action_code")}
+	if values, provided := query["q"]; provided && len(values) != 1 {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return
+	}
 	if values, provided := query["group_exact"]; provided {
 		if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
 		input.GroupExact = &values[0]
@@ -195,7 +201,7 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 	}
 	value, err := m.List(r.Context(), input)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list roles failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "list roles failed: "+err.Error(), "operation", "list_roles", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -209,10 +215,13 @@ func (m *Module) summary(c *gin.Context) {
 func (m *Module) summary(w http.ResponseWriter,r *http.Request) {
 {{ end }}
  query, err := url.ParseQuery(r.URL.RawQuery)
- if err != nil || len(query) != 0 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
- value, err := m.Summary(r.Context())
+ if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ for key := range query { if key != "f" { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return } }
+ fields, err := report.ParseFields(query, "total", "counts", "groups")
+ if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ value, err := m.Summary(r.Context(), fields...)
  if err != nil {
-  slog.ErrorContext(r.Context(), "summarize role failed: "+err.Error())
+  slog.ErrorContext(r.Context(), "summarize role failed: "+err.Error(), "operation", "summarize_role", "outcome", "failure", "error", err)
   server.WriteError(w,r,http.StatusInternalServerError,apperror.Internal)
   return
  }

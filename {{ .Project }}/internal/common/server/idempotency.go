@@ -51,13 +51,15 @@ func claimIdempotency(w http.ResponseWriter, r *http.Request, store idempotency.
 		return false
 	}
 	if store == nil {
-		slog.ErrorContext(r.Context(), "claim idempotency key failed: store is unavailable")
+		slog.ErrorContext(r.Context(), "claim idempotency key failed: store is unavailable",
+			"operation", "claim_idempotency_key", "outcome", "failure", "error", "store is unavailable")
 		WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return false
 	}
 	claimed, err := store.Claim(r.Context(), key, ttl)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "claim idempotency key failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "claim idempotency key failed: "+err.Error(),
+			"operation", "claim_idempotency_key", "outcome", "failure", "error", err)
 		WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return false
 	}

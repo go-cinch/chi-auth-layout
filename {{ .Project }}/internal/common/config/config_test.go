@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -47,6 +48,19 @@ func TestLoadDirAndEnvironmentOverride(t *testing.T) {
 	LogOverrides(overrides)
 	if strings.Contains(output.String(), "abcdefghijk") || !strings.Contains(output.String(), "abc***ijk") {
 		t.Fatalf("override log = %q", output.String())
+	}
+	decoder := json.NewDecoder(&output)
+	for _, override := range overrides {
+		var record map[string]any
+		if err := decoder.Decode(&record); err != nil {
+			t.Fatal(err)
+		}
+		if record["operation"] != "config_override" || record["outcome"] != "success" || record["env_key"] != override.Environment || record["config_key"] != override.Key || record["value"] != override.Value {
+			t.Fatalf("override fields = %#v", record)
+		}
+		if record["msg"] != "load env: "+override.Environment+"="+override.Value {
+			t.Fatalf("override message disagrees with fields: %#v", record)
+		}
 	}
 }
 

@@ -58,6 +58,12 @@ local:
 		status=$$?; \
 		trap - EXIT INT TERM; \
 		if [ "$$delete_old_sql" = false ] || [ "$$status" -ne 0 ]; then \
+			if [ "$$status" -eq 0 ]; then \
+				for migration in "$$migrations_dir"/*.sql; do \
+					suffix=$$(basename "$$migration" | cut -c12-); \
+					if ! find "$$backup_dir/sql" -name "*-$$suffix" | grep -q .; then cp -p "$$migration" "$$backup_dir/sql/"; fi; \
+				done; \
+			fi; \
 			find "$$migrations_dir" -maxdepth 1 -type f -name '*.sql' -exec rm -f {} +; \
 			find "$$backup_dir/sql" -maxdepth 1 -type f -name '*.sql' -exec cp -p {} "$$migrations_dir/" \;; \
 		fi; \

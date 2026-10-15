@@ -115,7 +115,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := provider.Shutdown(shutdownCtx); err != nil {
-				slog.Error("shutdown tracer failed: " + err.Error())
+				slog.ErrorContext(shutdownCtx, "shutdown tracer failed: "+err.Error(), slog.String("operation", "tracer_shutdown"), slog.String("outcome", "failure"), slog.Any("error", err))
 			}
 		})
 	}

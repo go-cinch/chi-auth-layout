@@ -37,17 +37,16 @@ func TestGinStartupLogs(t *testing.T) {
 	if warning["level"] != "WARN" || warning["msg"] != "gin: debug mode; use GIN_MODE=release in production" {
 		t.Fatalf("warning: %#v", warning)
 	}
-	if route["level"] != "INFO" || route["msg"] != "register route: GET /user/:id" || route["handlers"] != float64(2) {
+	if route["level"] != "INFO" || route["msg"] != "register route: GET /user/:id" || route["handlers"] != float64(2) ||
+		route["operation"] != "register_route" || route["outcome"] != "success" || route["method"] != "GET" || route["route"] != "/user/:id" {
 		t.Fatalf("route: %#v", route)
 	}
 	if !strings.Contains(route["handler"].(string), "TestGinStartupLogs") {
 		t.Fatalf("handler: %#v", route)
 	}
 	for _, entry := range entries {
-		for _, key := range []string{"detail", "method", "route"} {
-			if _, exists := entry[key]; exists {
-				t.Fatalf("redundant field %s: %#v", key, entry)
-			}
+		if entry["component"] != "gin" {
+			t.Fatalf("component: %#v", entry)
 		}
 		caller, ok := entry["caller"].(string)
 		if !ok || !strings.HasPrefix(caller, "internal/common/logging/gin.go:") {
@@ -68,7 +67,7 @@ func TestGinStartupLogs(t *testing.T) {
 	}
 	r.GET("/later", func(c *gin.Context) { c.Status(204) })
 	entries = readGinLogs(t, &next)
-	if len(entries) != 1 || entries[0]["msg"] != "register route: GET /later" {
+	if len(entries) != 1 || entries[0]["msg"] != "register route: GET /later" || entries[0]["method"] != "GET" || entries[0]["route"] != "/later" {
 		t.Fatalf("new logger: %#v", entries)
 	}
 	if output.Len() != 0 {
@@ -106,15 +105,15 @@ func TestGinLogLevels(t *testing.T) {
 				t.Fatalf("logs: %#v", entries)
 			}
 			for _, entry := range entries {
-				if _, exists := entry["detail"]; exists {
-					t.Fatalf("diagnostic content left outside msg: %#v", entry)
+				if entry["component"] != "gin" {
+					t.Fatalf("component: %#v", entry)
 				}
 			}
 			last := entries[len(entries)-1]
-			if last["level"] != "ERROR" || last["msg"] != "gin: connection failed" {
+			if last["level"] != "ERROR" || last["msg"] != "gin: connection failed" || last["error"] != "connection failed" || last["operation"] != "gin_error" || last["outcome"] != "failure" {
 				t.Fatalf("error: %#v", last)
 			}
-			if test.level == "debug" && entries[2]["msg"] != "gin: loaded template Login.html" {
+			if test.level == "debug" && (entries[2]["msg"] != "gin: loaded template Login.html" || entries[2]["operation"] != "gin_debug") {
 				t.Fatalf("debug: %#v", entries[2])
 			}
 		})

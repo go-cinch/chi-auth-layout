@@ -151,7 +151,7 @@ func (m *Module) checkPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "check permission failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "check permission failed: "+err.Error(), "operation", "check_permission", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -184,7 +184,7 @@ func (m *Module) usernameAvailability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "check username availability failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "check username availability failed: "+err.Error(), "operation", "check_username_availability", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -223,7 +223,7 @@ func (m *Module) publicChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "create "+input.Purpose+" credential challenge failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "create "+input.Purpose+" credential challenge failed: "+err.Error(), "operation", "create_credential_challenge", "outcome", "failure", "error", err, "purpose", input.Purpose)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -254,7 +254,7 @@ func (m *Module) sliderChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "create slider captcha challenge failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "create slider captcha challenge failed: "+err.Error(), "operation", "create_slider_captcha_challenge", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -285,7 +285,7 @@ func (m *Module) verifySlider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "verify slider captcha failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "verify slider captcha failed: "+err.Error(), "operation", "verify_slider_captcha", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -315,7 +315,7 @@ func (m *Module) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "decrypt registration credential failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "decrypt registration credential failed: "+err.Error(), "operation", "decrypt_registration_credential", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -323,7 +323,7 @@ func (m *Module) register(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
 		return
 	} else if err != nil {
-		slog.ErrorContext(r.Context(), "consume registration slider proof failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "consume registration slider proof failed: "+err.Error(), "operation", "consume_registration_slider_proof", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -334,7 +334,7 @@ func (m *Module) register(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusConflict, ErrUsernameExists)
 		return
 	} else if err != nil {
-		slog.ErrorContext(r.Context(), "register user failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "register user failed: "+err.Error(), "operation", "register_user", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -388,7 +388,7 @@ func (m *Module) passwordChangeChallenge(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "create password change challenge failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "create password change challenge failed: "+err.Error(), "operation", "create_password_change_challenge", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -427,7 +427,7 @@ func (m *Module) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "decrypt password change credential failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "decrypt password change credential failed: "+err.Error(), "operation", "decrypt_password_change_credential", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -447,7 +447,7 @@ func (m *Module) changePassword(w http.ResponseWriter, r *http.Request) {
 	if requiresPasswordChangeCaptcha(changeErr) {
 		captcha, err := m.NewPasswordChangeCaptcha(r.Context())
 		if err != nil {
-			slog.ErrorContext(r.Context(), "create password change captcha failed: "+err.Error())
+			slog.ErrorContext(r.Context(), "create password change captcha failed: "+err.Error(), "operation", "create_password_change_captcha", "outcome", "failure", "error", err)
 			server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 			return
 		}
@@ -461,7 +461,7 @@ func (m *Module) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if changeErr != nil {
-		slog.ErrorContext(r.Context(), "change current password failed: "+changeErr.Error())
+		slog.ErrorContext(r.Context(), "change current password failed: "+changeErr.Error(), "operation", "change_current_password", "outcome", "failure", "error", changeErr)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -490,7 +490,7 @@ func (m *Module) loginVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "check login verification failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "check login verification failed: "+err.Error(), "operation", "check_login_verification", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -550,7 +550,7 @@ func (m *Module) verifyPasswordChangeCaptcha(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "verify password change captcha failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "verify password change captcha failed: "+err.Error(), "operation", "verify_password_change_captcha", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -581,7 +581,7 @@ func (m *Module) verifyLoginCaptcha(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "verify login captcha failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "verify login captcha failed: "+err.Error(), "operation", "verify_login_captcha", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -616,7 +616,7 @@ func (m *Module) refreshPasswordChangeCaptcha(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "refresh password change captcha failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "refresh password change captcha failed: "+err.Error(), "operation", "refresh_password_change_captcha", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -647,7 +647,7 @@ func (m *Module) refreshLoginCaptcha(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "refresh point captcha failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "refresh point captcha failed: "+err.Error(), "operation", "refresh_point_captcha", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -678,7 +678,7 @@ func (m *Module) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "refresh login failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "refresh login failed: "+err.Error(), "operation", "refresh_login", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -709,7 +709,7 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "decrypt login credential failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "decrypt login credential failed: "+err.Error(), "operation", "decrypt_login_credential", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -731,7 +731,7 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 		}
 		captcha, challengeErr := m.captcha.NewChallenge(r.Context(), input.Username)
 		if challengeErr != nil {
-			slog.ErrorContext(r.Context(), "create point captcha failed: "+challengeErr.Error())
+			slog.ErrorContext(r.Context(), "create point captcha failed: "+challengeErr.Error(), "operation", "create_point_captcha", "outcome", "failure", "error", challengeErr)
 			server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 			return
 		}
@@ -745,7 +745,7 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "login failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "login failed: "+err.Error(), "operation", "login", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -764,7 +764,7 @@ func (m *Module) info(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "get current user failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "get current user failed: "+err.Error(), "operation", "get_current_user", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -790,7 +790,7 @@ func (m *Module) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := m.Logout(r.Context(), input.RefreshToken); err != nil {
-		slog.ErrorContext(r.Context(), "logout failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "logout failed: "+err.Error(), "operation", "logout", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -822,7 +822,7 @@ func (m *Module) resetPassword(w http.ResponseWriter, r *http.Request) {
     case errors.Is(err, ErrInvalidPasswordCredential), errors.Is(err, ErrInvalidPasswordReset), errors.Is(err, ErrSamePassword):
         server.WriteError(w, r, http.StatusBadRequest, err)
     case err != nil:
-        slog.ErrorContext(r.Context(), "reset current password failed: "+err.Error())
+        slog.ErrorContext(r.Context(), "reset current password failed: "+err.Error(), "operation", "reset_current_password", "outcome", "failure", "error", err)
         server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
     default:
         server.WriteOK(w, result)

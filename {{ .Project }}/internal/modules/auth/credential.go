@@ -143,7 +143,7 @@ func NewCredentials(keyID, privateKeyFile string, ttl time.Duration, challenges 
 	if privateKeyFile == "" {
 		privateKey, err = rsa.GenerateKey(rand.Reader, 3072)
 		if err == nil {
-			slog.Warn("generated ephemeral challenge encryption key; configure auth.challengeEncryption.privateKeyFile for multi-instance deployments")
+			slog.Warn("generated ephemeral challenge encryption key; configure auth.challengeEncryption.privateKeyFile for multi-instance deployments", "operation", "generate_challenge_encryption_key", "outcome", "success", "ephemeral", true)
 		}
 	} else {
 		privateKey, err = readRSAPrivateKey(privateKeyFile)

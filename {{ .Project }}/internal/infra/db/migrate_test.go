@@ -1,8 +1,11 @@
 package db
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"path"
 	"regexp"
 	"testing"
@@ -48,6 +51,10 @@ func TestMigrateUpPreservesDatabaseError(t *testing.T) {
 }
 
 func TestMigrateUpDoesNotReplayAppliedMigrations(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	database, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +75,13 @@ func TestMigrateUpDoesNotReplayAppliedMigrations(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["msg"] != "database migrations applied: 0" || record["operation"] != "database_migrate" || record["outcome"] != "success" || record["driver"] != "postgres" || record["applied"] != float64(0) {
+		t.Fatalf("migration log = %#v", record)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+	"{{ .Computed.module_name_final }}/internal/common/redact"
 )
 
 // ClientConfig describes one downstream service. Timeout bounds unary calls and
@@ -66,7 +67,9 @@ func NewClient[T any](ctx context.Context, name string, cfg ClientConfig, factor
 			return zero, nil, fmt.Errorf("check %s grpc health: %w", name, err)
 		}
 	}
-	slog.InfoContext(ctx, "initialize "+name+" grpc client: "+cfg.Addr)
+	address := redact.DSN(cfg.Addr)
+	slog.InfoContext(ctx, "initialize "+name+" grpc client: "+address,
+		"operation", "initialize_grpc_client", "outcome", "success", "client", name, "addr", address)
 	return factory(conn), cleanup, nil
 }
 
@@ -80,7 +83,10 @@ func clientUnary(name string, timeout time.Duration) grpc.UnaryClientInterceptor
 {{- end }}
 		started := time.Now()
 		err = next(ctx, method, request, response, conn, options...)
-		slog.InfoContext(ctx, fmt.Sprintf("call %s %s %s %dms", name, method, status.Code(err), time.Since(started).Milliseconds()))
+		code := status.Code(err)
+		duration := time.Since(started).Milliseconds()
+		slog.InfoContext(ctx, fmt.Sprintf("call %s %s %s %dms", name, method, code, duration),
+			"client", name, "method", method, "grpc_code", int(code), "grpc_status", code.String(), "duration_ms", duration)
 		return err
 	}
 }

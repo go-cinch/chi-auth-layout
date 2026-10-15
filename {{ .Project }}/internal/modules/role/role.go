@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
@@ -28,13 +29,14 @@ var (
 const AdminRoleID int64 = 1
 
 type Role struct {
-	ID          int64        `json:"id"`
-	CreatedAt   int64        `json:"created_at"`
-	UpdatedAt   int64        `json:"updated_at"`
-	Name        string       `json:"name"`
-	Word        string       `json:"word"`
-	ActionCodes []string     `json:"action_codes"`
-	Actions     []ActionView `json:"actions"`
+	selectedFields report.Fields
+	ID             int64        `json:"id"`
+	CreatedAt      int64        `json:"created_at"`
+	UpdatedAt      int64        `json:"updated_at"`
+	Name           string       `json:"name"`
+	Word           string       `json:"word"`
+	ActionCodes    []string     `json:"action_codes"`
+	Actions        []ActionView `json:"actions"`
 }
 
 type ActionView struct {
@@ -63,6 +65,8 @@ type UpdateRoleInput struct {
 }
 
 type ListRolesInput struct {
+	Fields         report.Fields
+	Q              string
 	HasPermissions *bool
 	GroupExact     *string
 	GroupsAll      []string
@@ -332,6 +336,9 @@ func containsCode(codes []string, target string) bool {
 }
 
 func (m *Module) List(ctx context.Context, input ListRolesInput) (*ListRolesResult, error) {
+	if err := input.Fields.Validate(listFields...); err != nil {
+		return nil, err
+	}
 	page, size, inRange := m.limits.Normalize(input.Page, input.PageSize)
 	value := &ListRolesResult{Items: make([]Role, 0), Page: page, PageSize: size}
 	if !inRange {
@@ -344,6 +351,12 @@ func (m *Module) List(ctx context.Context, input ListRolesInput) (*ListRolesResu
 	offset := int64(page-1) * int64(size)
 	if offset >= value.Total {
 		return value, nil
+	}
+	if input.Fields != nil {
+		selectedArgs := append(args, size, offset)
+		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, listProjection, " FROM t_role"+where+" ORDER BY id DESC LIMIT $"+strconv.Itoa(len(selectedArgs)-1)+" OFFSET $"+strconv.Itoa(len(selectedArgs)), selectedArgs...)
+		value.Items = items
+		return value, err
 	}
 	args = append(args, size, offset)
 	query := "SELECT id, created_at, updated_at, name, word, action FROM t_role" + where + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args)-1) + " OFFSET $" + strconv.Itoa(len(args))
@@ -396,6 +409,10 @@ func filters(input ListRolesInput) (string, []any) {
 	}
 	parts := make([]string, 0, len(fields))
 	args := make([]any, 0, len(fields))
+	if strings.TrimSpace(input.Q) != "" {
+		args = append(args, like(input.Q))
+		parts = append(parts, "(LOWER(name) LIKE LOWER($1) ESCAPE '!' OR LOWER(word) LIKE LOWER($1) ESCAPE '!')")
+	}
 	for _, field := range fields {
 		if strings.TrimSpace(field.value) == "" {
 			continue

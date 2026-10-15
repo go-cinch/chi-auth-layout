@@ -1,7 +1,9 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 
 	"go.opentelemetry.io/otel"
@@ -12,6 +14,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"{{ .Computed.module_name_final }}/internal/common/config"
+	"{{ .Computed.module_name_final }}/internal/common/logging"
 	"{{ .Computed.module_name_final }}/internal/common/tracing"
 )
 
@@ -29,6 +33,12 @@ func (s *traceTransport) SendHeader(md metadata.MD) error { return s.SetHeader(m
 func (*traceTransport) SetTrailer(metadata.MD) error { return nil }
 
 func TestTrace(t *testing.T) {
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	if err := logging.Init(&output, "info"); err != nil {
+		t.Fatal(err)
+	}
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	oldProvider, oldPropagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
@@ -46,11 +56,23 @@ func TestTrace(t *testing.T) {
 	} {
 		transport := &traceTransport{}
 		incoming := grpc.NewContextWithServerTransportStream(metadata.NewIncomingContext(t.Context(), md), transport)
-		ctx, end := startTrace(incoming, "test", "/test.Service/Call")
-		if tracing.TraceIDFromContext(ctx) != id || transport.header.Get("x-trace-id")[0] != id {
-			t.Fatalf("trace context or response header lost: %v", transport.header)
+		_, err := Unary(&config.Config{})(incoming, nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Call"}, func(ctx context.Context, _ any) (any, error) {
+			if tracing.TraceIDFromContext(ctx) != id || transport.header.Get("x-trace-id")[0] != id {
+				t.Fatalf("trace context or response header lost: %v", transport.header)
+			}
+			return nil, status.Error(codes.NotFound, "missing")
+		})
+		if status.Code(err) != codes.NotFound {
+			t.Fatalf("server error: %v", err)
 		}
-		end(status.Error(codes.NotFound, "missing"))
+		entries := readRPCLogs(t, &output)
+		if len(entries) != 1 || entries[0]["trace_id"] != id {
+			t.Fatalf("server log trace: %#v", entries)
+		}
+		assertRPCLogFields(t, entries[0], "/test.Service/Call", codes.NotFound)
+		if spanID, ok := entries[0]["span_id"].(string); !ok || spanID == "" {
+			t.Fatalf("server log span: %#v", entries[0])
+		}
 	}
 	if len(recorder.Ended()) != 2 || recorder.Ended()[0].Name() != "test.Service/Call" {
 		t.Fatalf("spans: %#v", recorder.Ended())

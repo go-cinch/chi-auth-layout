@@ -146,6 +146,9 @@ COMMENT ON COLUMN t_user_user_group_relation.user_group_id IS 'related user grou
 CREATE INDEX idx_user_user_group_relation_user_group_id
     ON t_user_user_group_relation (user_group_id);
 
+CREATE INDEX idx_user_group_member
+    ON t_user_user_group_relation (user_group_id, user_id);
+
 CREATE TABLE t_whitelist (
     id BIGSERIAL PRIMARY KEY,
     created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),

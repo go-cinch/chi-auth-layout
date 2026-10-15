@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
@@ -113,7 +114,7 @@ func (m *Module) DictionaryValue(ctx context.Context, key string) (json.RawMessa
 	key = strings.TrimSpace(key)
 	value, hit, version, cacheErr := m.cache.Load(ctx, key)
 	if cacheErr != nil {
-		slog.WarnContext(ctx, "read dictionary cache failed: "+cacheErr.Error())
+		slog.WarnContext(ctx, "read dictionary cache failed: "+cacheErr.Error(), "operation", "read_dictionary_cache", "outcome", "failure", "error", cacheErr, "cache_kind", "value")
 	} else if hit && json.Valid([]byte(value)) {
 		return json.RawMessage(value), nil
 	}
@@ -128,7 +129,7 @@ func (m *Module) DictionaryValue(ctx context.Context, key string) (json.RawMessa
 	}
 	if cacheErr == nil {
 		if err := m.cache.Store(ctx, key, string(raw), version, m.ttl); err != nil {
-			slog.WarnContext(ctx, "write dictionary cache failed: "+err.Error())
+			slog.WarnContext(ctx, "write dictionary cache failed: "+err.Error(), "operation", "write_dictionary_cache", "outcome", "failure", "error", err, "cache_kind", "value")
 		}
 	}
 	return json.RawMessage(append([]byte(nil), raw...)), nil
@@ -165,21 +166,23 @@ func (m *Module) invalidate(ctx context.Context, operation string, ids ...int64)
 	if ctx.Err() != nil {
 		lastErr = ctx.Err()
 	}
-	slog.ErrorContext(ctx, "dictionary data saved but cache invalidation failed",
+	durationMS := time.Since(started).Milliseconds()
+	slog.ErrorContext(ctx, fmt.Sprintf("dictionary %s saved but cache invalidation failed after %d attempts in %dms: %s", operation, attempts, durationMS, lastErr),
 		"event", "dictionary_cache_invalidation_failed", "db_committed", true,
-		"operation", operation, "ids", ids, "attempts", attempts,
-		"elapsed_ms", time.Since(started).Milliseconds(), "error", lastErr)
+		"operation", "invalidate_dictionary_cache", "write_operation", operation, "outcome", "failure",
+		"dictionary_ids", ids, "attempts", attempts, "duration_ms", durationMS, "error", lastErr)
 }
 
 type Dictionary struct {
-	ID          int64           `json:"id"`
-	CreatedAt   int64           `json:"created_at"`
-	UpdatedAt   int64           `json:"updated_at"`
-	Key         string          `json:"key"`
-	Name        string          `json:"name"`
-	Value       json.RawMessage `json:"value"`
-	Description string          `json:"description"`
-	Enabled     bool            `json:"enabled"`
+	selectedFields report.Fields
+	ID             int64           `json:"id"`
+	CreatedAt      int64           `json:"created_at"`
+	UpdatedAt      int64           `json:"updated_at"`
+	Key            string          `json:"key"`
+	Name           string          `json:"name"`
+	Value          json.RawMessage `json:"value"`
+	Description    string          `json:"description"`
+	Enabled        bool            `json:"enabled"`
 }
 
 type CreateDictionaryInput struct {
@@ -199,6 +202,7 @@ type UpdateDictionaryInput struct {
 }
 
 type ListDictionariesInput struct {
+	Fields   report.Fields
 	Key      string
 	Name     string
 	Enabled  *bool
@@ -227,7 +231,7 @@ func (m *Module) getCached(ctx context.Context, id int64) (*Dictionary, bool, er
 	key := "record:" + strconv.FormatInt(id, 10)
 	raw, hit, version, cacheErr := m.cache.Load(ctx, key)
 	if cacheErr != nil {
-		slog.WarnContext(ctx, "read dictionary record cache failed: "+cacheErr.Error())
+		slog.WarnContext(ctx, "read dictionary record cache failed: "+cacheErr.Error(), "operation", "read_dictionary_cache", "outcome", "failure", "error", cacheErr, "cache_kind", "record", "dictionary_id", id)
 	} else if hit {
 		var value Dictionary
 		if err := json.Unmarshal([]byte(raw), &value); err == nil && value.ID == id && validKey(value.Key) && json.Valid(value.Value) {
@@ -244,7 +248,7 @@ func (m *Module) getCached(ctx context.Context, id int64) (*Dictionary, bool, er
 			err = m.cache.Store(ctx, key, string(encoded), version, m.ttl)
 		}
 		if err != nil {
-			slog.WarnContext(ctx, "write dictionary record cache failed: "+err.Error())
+			slog.WarnContext(ctx, "write dictionary record cache failed: "+err.Error(), "operation", "write_dictionary_cache", "outcome", "failure", "error", err, "cache_kind", "record", "dictionary_id", id)
 		}
 	}
 	return value, false, nil
@@ -412,6 +416,9 @@ func isPointCaptchaDictionary(id int64) bool {
 }
 
 func (m *Module) List(ctx context.Context, input ListDictionariesInput) (*ListDictionariesResult, error) {
+	if err := input.Fields.Validate(listFields...); err != nil {
+		return nil, err
+	}
 	page, size, inRange := m.limits.Normalize(input.Page, input.PageSize)
 	value := &ListDictionariesResult{Items: make([]Dictionary, 0), Page: page, PageSize: size}
 	if !inRange {
@@ -424,6 +431,12 @@ func (m *Module) List(ctx context.Context, input ListDictionariesInput) (*ListDi
 	offset := int64(page-1) * int64(size)
 	if offset >= value.Total {
 		return value, nil
+	}
+	if input.Fields != nil {
+		selectedArgs := append(args, size, offset)
+		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, listProjection, " FROM t_dictionary"+where+" ORDER BY id DESC LIMIT $"+strconv.Itoa(len(selectedArgs)-1)+" OFFSET $"+strconv.Itoa(len(selectedArgs)), selectedArgs...)
+		value.Items = items
+		return value, err
 	}
 	args = append(args, size, offset)
 	query := "SELECT id, created_at, updated_at, dictionary_key, name, value, description, enabled FROM t_dictionary" + where + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args)-1) + " OFFSET $" + strconv.Itoa(len(args))

@@ -2,6 +2,8 @@ package action
 
 import (
  "errors"
+ "encoding/json"
+ "regexp"
  "net/http"
  "net/http/httptest"
  "strings"
@@ -49,6 +51,7 @@ func TestManagementSummaryHTTP(t *testing.T) {
   return w.Body.String()
  }
  request("/summary?q=x",http.StatusBadRequest)
+ for _,q:=range []string{"f=","f=total&f=counts","f=unknown","f=total,total"}{request("/summary?"+q,http.StatusBadRequest)}
  request("/summary?q=%zz",http.StatusBadRequest)
  mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total", "resource", "menu", "button", "groups"}).AddRow(int64(0), int64(0), int64(0), int64(0), `[]`))
  body := request("/summary",http.StatusOK)
@@ -70,4 +73,14 @@ func TestActionExactGroupFilter(t *testing.T) {
  w:=httptest.NewRecorder();handler.ServeHTTP(w,httptest.NewRequest("GET","/?group_exact=one&group_exact=two",nil));if w.Code!=400{t.Fatal(w.Code)}
  mock.ExpectQuery("SELECT COUNT.*action_group =").WithArgs("User").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
  w=httptest.NewRecorder();handler.ServeHTTP(w,httptest.NewRequest("GET","/?group_exact=User",nil));if w.Code!=200{t.Fatal(w.Code,w.Body.String())}
+}
+
+func TestSelectedSummaryTotalOnly(t *testing.T) {
+ m,mock:=newSummaryTestModule(t)
+ mock.ExpectQuery("^"+regexp.QuoteMeta("SELECT COUNT(*) FROM t_action")+"$").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+ value,err:=m.Summary(t.Context(),"total")
+ if err!=nil{t.Fatal(err)}
+ data,err:=json.Marshal(value)
+ if err!=nil || string(data)!=`{"total":0}` {t.Fatal(string(data),err)}
+ if _,err:=m.Summary(t.Context(),"unknown");err==nil{t.Fatal("accepted unknown field")}
 }

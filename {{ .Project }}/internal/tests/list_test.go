@@ -276,3 +276,167 @@ func TestRoleAllPermissionGroupsPostgres(t *testing.T) {
 		})
 	}
 }
+
+func TestRoleKeywordPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	ctx := t.Context()
+	_, err := store.DB.ExecContext(ctx, `INSERT INTO t_role (id,name,word,action) VALUES
+		(101,'Needle name','keyword.first',''),
+		(102,'Other','keyword.needle',''),
+		(103,'Needle both','keyword.needle.both',''),
+		(104,'Literal 100%_!','keyword.literal',''),
+		(105,'Literal 100xyz','keyword.decoy',''),
+		(106,'Comma a,b','keyword.comma','')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits, _ := pagination.New(100, 100)
+	roles := role.New(store, limits, action.New(store, limits, false), false)
+	size, one, two, four := int32(100), int32(1), int32(2), int32(4)
+	cases := []struct {
+		name  string
+		input role.ListRolesInput
+		total int64
+		ids   []int64
+	}{
+		{"name or word and deduplicate", role.ListRolesInput{Q: "  nEeDlE  "}, 3, []int64{103, 102, 101}},
+		{"keyword AND name", role.ListRolesInput{Q: "needle", Name: "Other"}, 1, []int64{102}},
+		{"keyword AND word", role.ListRolesInput{Q: "needle", Word: "keyword.first"}, 1, []int64{101}},
+		{"literal wildcards", role.ListRolesInput{Q: "100%_!"}, 1, []int64{104}},
+		{"comma is literal", role.ListRolesInput{Q: "a,b"}, 1, []int64{106}},
+		{"blank", role.ListRolesInput{Q: " ", Word: "keyword."}, 6, []int64{106, 105, 104, 103, 102, 101}},
+		{"no match", role.ListRolesInput{Q: "unknown"}, 0, []int64{}},
+		{"shared pagination", role.ListRolesInput{Q: "needle", Page: &two, PageSize: &one}, 3, []int64{102}},
+		{"past last page", role.ListRolesInput{Q: "needle", Page: &four, PageSize: &one}, 3, []int64{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.input
+			if input.PageSize == nil {
+				input.PageSize = &size
+			}
+			result, err := roles.List(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]int64, 0, len(result.Items))
+			for _, item := range result.Items {
+				ids = append(ids, item.ID)
+			}
+			if result.Total != tc.total || !reflect.DeepEqual(ids, tc.ids) {
+				t.Fatalf("total %d ids %v, want %d %v", result.Total, ids, tc.total, tc.ids)
+			}
+		})
+	}
+}
+
+func TestActionKeywordPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	ctx := t.Context()
+	_, err := store.DB.ExecContext(ctx, `INSERT INTO t_action (id,name,word,code,action_group) VALUES
+		(101,'QMatch name','qtest.first','QKEY0001','Keyword'),
+		(102,'Other','qtest.qmatch','QKEY0002','Keyword'),
+		(103,'Code only','qtest.third','QMATCH03','Other'),
+		(104,'QMatch both','qtest.qmatch.both','QMATCH04','Keyword'),
+		(105,'Literal 100%_!','qtest.literal','QKEY0005','Keyword'),
+		(106,'Literal 100xyz','qtest.decoy','QKEY0006','Keyword')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits, _ := pagination.New(100, 100)
+	actions := action.New(store, limits, false)
+	size, one, two, five := int32(100), int32(1), int32(2), int32(5)
+	group := "Keyword"
+	cases := []struct {
+		name  string
+		input action.ListActionsInput
+		total int64
+		ids   []int64
+	}{
+		{"name OR word OR code", action.ListActionsInput{Q: "  qMaTcH  "}, 4, []int64{104, 103, 102, 101}},
+		{"AND group", action.ListActionsInput{Q: "qmatch", GroupExact: &group}, 3, []int64{104, 102, 101}},
+		{"AND name", action.ListActionsInput{Q: "qmatch", Name: "Other"}, 1, []int64{102}},
+		{"AND code", action.ListActionsInput{Q: "qmatch", Code: "QKEY0001"}, 1, []int64{101}},
+		{"literal wildcards", action.ListActionsInput{Q: "100%_!"}, 1, []int64{105}},
+		{"blank", action.ListActionsInput{Q: " "}, 6, []int64{106, 105, 104, 103, 102, 101}},
+		{"missing", action.ListActionsInput{Q: "missing"}, 0, []int64{}},
+		{"second page", action.ListActionsInput{Q: "qmatch", Page: &two, PageSize: &one}, 4, []int64{103}},
+		{"past last page", action.ListActionsInput{Q: "qmatch", Page: &five, PageSize: &one}, 4, []int64{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.input
+			input.Word = "qtest."
+			if input.PageSize == nil {
+				input.PageSize = &size
+			}
+			result, err := actions.List(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]int64, 0, len(result.Items))
+			for _, item := range result.Items {
+				ids = append(ids, item.ID)
+			}
+			if result.Total != tc.total || !reflect.DeepEqual(ids, tc.ids) {
+				t.Fatalf("total %d ids %v, want %d %v", result.Total, ids, tc.total, tc.ids)
+			}
+		})
+	}
+}
+
+func TestUserKeywordPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	ctx := t.Context()
+	_, err := store.DB.ExecContext(ctx, `INSERT INTO t_user (id,username,code,password,status) VALUES
+		(101,'qtest_qmatch','UKEY0001','hash',1),
+		(102,'qtest_other','QMATCH02','hash',0),
+		(103,'qtest_qmatch_both','QMATCH03','hash',1),
+		(104,'qtest_100%_!','UKEY0004','hash',1),
+		(105,'qtest_100xyz','UKEY0005','hash',1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits, _ := pagination.New(100, 100)
+	actions := action.New(store, limits, false)
+	users := user.New(store, limits, nil, nil, actions, role.New(store, limits, actions, false), auth.Switches{})
+	size, one, two, four := int32(100), int32(1), int32(2), int32(4)
+	cases := []struct {
+		name  string
+		input user.ListUsersInput
+		total int64
+		ids   []int64
+	}{
+		{"username OR code", user.ListUsersInput{Q: "  qMaTcH  "}, 3, []int64{103, 102, 101}},
+		{"AND status", user.ListUsersInput{Q: "qmatch", Statuses: []int16{user.StatusActive}}, 2, []int64{103, 101}},
+		{"AND username", user.ListUsersInput{Q: "qmatch", Username: "qtest_other"}, 1, []int64{102}},
+		{"AND code", user.ListUsersInput{Q: "qmatch", Code: "UKEY0001"}, 1, []int64{101}},
+		{"literal wildcards", user.ListUsersInput{Q: "100%_!"}, 1, []int64{104}},
+		{"blank", user.ListUsersInput{Q: " "}, 5, []int64{105, 104, 103, 102, 101}},
+		{"missing", user.ListUsersInput{Q: "missing"}, 0, []int64{}},
+		{"second page", user.ListUsersInput{Q: "qmatch", Page: &two, PageSize: &one}, 3, []int64{102}},
+		{"past last page", user.ListUsersInput{Q: "qmatch", Page: &four, PageSize: &one}, 3, []int64{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.input
+			if input.Username == "" {
+				input.Username = "qtest_"
+			}
+			if input.PageSize == nil {
+				input.PageSize = &size
+			}
+			result, err := users.List(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]int64, 0, len(result.Items))
+			for _, item := range result.Items {
+				ids = append(ids, item.ID)
+			}
+			if result.Total != tc.total || !reflect.DeepEqual(ids, tc.ids) {
+				t.Fatalf("total %d ids %v, want %d %v", result.Total, ids, tc.total, tc.ids)
+			}
+		})
+	}
+}

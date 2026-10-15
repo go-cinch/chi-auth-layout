@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 {{- end }}
 	"{{ .Computed.module_name_final }}/internal/common/server"
+ "{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/modules"
 )
 
@@ -65,7 +66,7 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrInvalid) { server.WriteError(w, r, http.StatusBadRequest, ErrInvalid); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
 	if err != nil {
-		slog.ErrorContext(r.Context(), r.Method+" "+r.URL.Path+" failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "get whitelist entry "+strconv.FormatInt(id, 10)+" failed: "+err.Error(), "operation", "get_whitelist_entry", "outcome", "failure", "error", err, "whitelist_id", id)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -86,7 +87,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 	value, err := m.Create(r.Context(), input)
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) { server.WriteError(w, r, http.StatusBadRequest, err); return }
 	if err != nil {
-		slog.ErrorContext(r.Context(), r.Method+" "+r.URL.Path+" failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "create whitelist entry failed: "+err.Error(), "operation", "create_whitelist_entry", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -114,7 +115,7 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) { server.WriteError(w, r, http.StatusBadRequest, err); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
 	if err != nil {
-		slog.ErrorContext(r.Context(), r.Method+" "+r.URL.Path+" failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "update whitelist entry "+strconv.FormatInt(id, 10)+" failed: "+err.Error(), "operation", "update_whitelist_entry", "outcome", "failure", "error", err, "whitelist_id", id)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -143,7 +144,7 @@ func (m *Module) delete(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrIDs) { server.WriteError(w, r, http.StatusBadRequest, ErrIDs); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
 	if err != nil {
-		slog.ErrorContext(r.Context(), r.Method+" "+r.URL.Path+" failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "delete "+strconv.Itoa(len(ids))+" whitelist entries failed: "+err.Error(), "operation", "delete_whitelist_entries", "outcome", "failure", "error", err, "count", len(ids))
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -158,7 +159,9 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
 	query := r.URL.Query()
-	input := ListWhitelistsInput{Resource: query.Get("resource")}
+	fields, fieldErr := report.ParseFields(query, listFields...)
+ if fieldErr != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ input := ListWhitelistsInput{Fields: fields, Resource: query.Get("resource")}
 	if values, provided := query["category"]; provided {
 		if len(values) != 1 { server.WriteError(w, r, http.StatusBadRequest, apperror.CategoryType); return }
 		parsed, err := strconv.ParseInt(values[0], 10, 16)
@@ -179,7 +182,7 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 	}
 	value, err := m.List(r.Context(), input)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list whitelist entries failed: "+err.Error())
+		slog.ErrorContext(r.Context(), "list whitelist entries failed: "+err.Error(), "operation", "list_whitelist_entries", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
@@ -193,10 +196,13 @@ func (m *Module) summary(c *gin.Context) {
 func (m *Module) summary(w http.ResponseWriter,r *http.Request) {
 {{ end }}
  query, err := url.ParseQuery(r.URL.RawQuery)
- if err != nil || len(query) != 0 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
- value, err := m.Summary(r.Context())
+ if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ for key := range query { if key != "f" { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return } }
+ fields, err := report.ParseFields(query, "total", "counts")
+ if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+ value, err := m.Summary(r.Context(), fields...)
  if err != nil {
-  slog.ErrorContext(r.Context(), "summarize whitelist failed: "+err.Error())
+  slog.ErrorContext(r.Context(), "summarize whitelist failed: "+err.Error(), "operation", "summarize_whitelist", "outcome", "failure", "error", err)
   server.WriteError(w,r,http.StatusInternalServerError,apperror.Internal)
   return
  }

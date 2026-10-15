@@ -50,7 +50,7 @@ func TestCreate(t *testing.T) {
 			expectStatusRefresh(mock) // Increment after successful delivery.
 			mock.ExpectQuery("SELECT .* FROM t_msg m WHERE").WillReturnRows(messageRows(scope))
 			if scope == "targeted" {
-				mock.ExpectQuery("SELECT user_id").WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(2))
+				mock.ExpectQuery("SELECT r.user_id").WillReturnRows(sqlmock.NewRows([]string{"user_id", "username", "code"}).AddRow(2, "guest", "ABCDEFGH"))
 			}
 			mock.ExpectCommit()
 			value, err := m.Create(t.Context(), 1, input)
@@ -217,4 +217,57 @@ func TestCreateRejectsExpiredAtDatabaseTime(t *testing.T) {
 	if _, err := m.Create(t.Context(), 1, CreateInput{Title: "expired", Content: "body", Type: "notice", Scope: "all", ExpiredAt: &expiry}); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
+}
+
+func TestGetSentRecipients(t *testing.T) {
+	m, mock := testModule(t)
+	mock.ExpectQuery("SELECT .* FROM t_msg m WHERE").WithArgs(int64(1)).WillReturnRows(messageRows("targeted"))
+	mock.ExpectQuery("SELECT r.user_id, COALESCE.*LEFT JOIN t_user.*ORDER BY r.user_id").WithArgs(int64(1)).WillReturnRows(sqlmock.NewRows([]string{"user_id", "username", "code"}).AddRow(2, "ren.zhi", "ABCDEFGH").AddRow(3, "", ""))
+	value, err := m.GetSent(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(value.Recipients) != 2 || value.Recipients[0].Username != "ren.zhi" || value.Recipients[0].Code != "ABCDEFGH" || value.Recipients[1].ID != 3 || len(value.RecipientIDs) != 2 {
+		t.Fatalf("recipients: %#v", value)
+	}
+	// Personal inbox details must not expose other recipients.
+	mock.ExpectQuery("SELECT .* FROM").WithArgs(int64(2), int64(1)).WillReturnRows(messageRows("targeted"))
+	personal, err := m.Get(t.Context(), 2, 1)
+	if err != nil || len(personal.Recipients) != 0 || len(personal.RecipientIDs) != 0 {
+		t.Fatalf("personal recipients: %#v %v", personal, err)
+	}
+}
+
+func TestGetSentRecipientFailures(t *testing.T) {
+	for _, failure := range []string{"query", "scan", "rows"} {
+		t.Run(failure, func(t *testing.T) {
+			m, mock := testModule(t)
+			mock.ExpectQuery("SELECT .* FROM t_msg m WHERE").WillReturnRows(messageRows("targeted"))
+			query := mock.ExpectQuery("SELECT r.user_id")
+			switch failure {
+			case "query":
+				query.WillReturnError(sqlmock.ErrCancelled)
+			case "scan":
+				query.WillReturnRows(sqlmock.NewRows([]string{"user_id", "username", "code"}).AddRow("invalid", "guest", "ABCDEFGH"))
+			case "rows":
+				query.WillReturnRows(sqlmock.NewRows([]string{"user_id", "username", "code"}).AddRow(2, "guest", "ABCDEFGH").RowError(0, sqlmock.ErrCancelled))
+			}
+			if _, err := m.GetSent(t.Context(), 1); err == nil {
+				t.Fatal("recipient failure hidden")
+			}
+		})
+	}
+
+}
+
+func TestInboxKeywordKeepsVisibilityAndPagination(t *testing.T) {
+ m, mock := testModule(t)
+ read := false
+ page, size := int32(1), int32(10)
+ // Literal wildcard escaping and the signed-in identity apply to both queries.
+ predicate := "delivery.user_id = .*JOIN t_user u ON u.id = .*r.deleted_at IS NULL.*m.title ILIKE.*OR m.content ILIKE.*r.read_at IS NULL.*m.type ="
+ mock.ExpectQuery("SELECT COUNT.*"+predicate).WithArgs(int64(2), "%100!%!_!!%", "notice").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+ mock.ExpectQuery("SELECT .*"+predicate+".*ORDER BY m.published_at DESC, m.id DESC").WithArgs(int64(2), "%100!%!_!!%", "notice", size, int64(0)).WillReturnRows(messageRows("targeted"))
+ result, err := m.List(t.Context(), 2, ListInput{Query: " 100%_! ", Type: "notice", Read: &read, Page: &page, PageSize: &size})
+ if err != nil || result.Total != 1 || len(result.Items) != 1 { t.Fatalf("inbox search: %#v %v", result, err) }
 }

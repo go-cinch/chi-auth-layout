@@ -13,6 +13,7 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
 
@@ -32,6 +33,7 @@ func New(store *db.Store, limits pagination.Limits) *Module {
 }
 
 type Event struct {
+	selectedFields report.Fields
 	Operation      string          `json:"operation"`
 	ResourceType   string          `json:"resource_type"`
 	ResourceID     string          `json:"resource_id"`
@@ -54,6 +56,7 @@ type Event struct {
 	OccurredAt int64  `json:"occurred_at"`
 }
 type Filter struct {
+	Fields   report.Fields
 	Username string
 	IP       string
 	Path     string
@@ -214,6 +217,9 @@ func scan(row interface{ Scan(...any) error }) (Event, error) {
 }
 
 func (m *Module) List(ctx context.Context, f Filter) (*Page, error) {
+	if err := f.Fields.Validate(listFields...); err != nil {
+		return nil, err
+	}
 	f, err := normalize(f)
 	if err != nil {
 		return nil, err
@@ -228,6 +234,11 @@ func (m *Module) List(ctx context.Context, f Filter) (*Page, error) {
 		return nil, err
 	}
 	args = append(args, s, int64(p-1)*int64(s))
+	if f.Fields != nil {
+		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), f.Fields, listProjection, " FROM t_audit_event"+clause+order(f)+fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
+		result.Items = items
+		return result, err
+	}
 	rows, err := m.store.SQL(ctx).QueryContext(ctx, "SELECT "+listColumns+" FROM t_audit_event"+clause+order(f)+fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, err

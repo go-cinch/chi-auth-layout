@@ -18,10 +18,14 @@ func Recoverer() gin.HandlerFunc {
 			if recovered := recover(); recovered != nil {
 				c.Abort()
 				if recovered == http.ErrAbortHandler {
-					logger.WarnContext(c.Request.Context(), "http request aborted")
-					return
+					logger.WarnContext(c.Request.Context(), "http request aborted",
+						"operation", "handle_http_request", "outcome", "aborted", "method", c.Request.Method)
+					// Let net/http abort the connection without writing a response.
+					panic(recovered)
 				}
-				logger.ErrorContext(c.Request.Context(), "panic recovered: "+fmt.Sprint(recovered), "stack", string(debug.Stack()))
+				panicMessage := fmt.Sprint(recovered)
+				logger.ErrorContext(c.Request.Context(), "panic recovered: "+panicMessage,
+					"operation", "recover_http_panic", "outcome", "failure", "method", c.Request.Method, "error", panicMessage, "stack", string(debug.Stack()))
 				if !c.Writer.Written() {
 					WriteError(c.Writer, c.Request, http.StatusInternalServerError, apperror.Internal)
 				}
@@ -49,10 +53,14 @@ func Recoverer() func(http.Handler) http.Handler {
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					if recovered == http.ErrAbortHandler {
-						logger.WarnContext(r.Context(), "http request aborted")
-						return
+						logger.WarnContext(r.Context(), "http request aborted",
+							"operation", "handle_http_request", "outcome", "aborted", "method", r.Method)
+						// Let net/http abort the connection without writing a response.
+						panic(recovered)
 					}
-					logger.ErrorContext(r.Context(), "panic recovered: "+fmt.Sprint(recovered), "stack", string(debug.Stack()))
+					panicMessage := fmt.Sprint(recovered)
+					logger.ErrorContext(r.Context(), "panic recovered: "+panicMessage,
+						"operation", "recover_http_panic", "outcome", "failure", "method", r.Method, "error", panicMessage, "stack", string(debug.Stack()))
 					if !responseWritten(writer) {
 						WriteError(writer, r, http.StatusInternalServerError, apperror.Internal)
 					}

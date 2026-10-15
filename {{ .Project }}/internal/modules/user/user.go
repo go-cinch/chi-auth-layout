@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/code"
@@ -38,6 +39,7 @@ const (
 )
 
 type User struct {
+	selectedFields report.Fields
 	LoginCount     int64          `json:"login_count"`
 	ID             int64          `json:"id"`
 	CreatedAt      int64          `json:"created_at"`
@@ -101,15 +103,18 @@ type UpdateUserInput struct {
 }
 
 type ListUsersInput struct {
-	LastLoggedInFrom *int64
-	LastLoggedInTo   *int64
-	CreatedFrom      *int64
-	CreatedTo        *int64
-	Username         string
-	Code             string
-	Statuses         []int16
-	Page             *int32
-	PageSize         *int32
+	Fields             report.Fields
+	ExcludeUserGroupID *int64
+	Q                  string
+	LastLoggedInFrom   *int64
+	LastLoggedInTo     *int64
+	CreatedFrom        *int64
+	CreatedTo          *int64
+	Username           string
+	Code               string
+	Statuses           []int16
+	Page               *int32
+	PageSize           *int32
 }
 
 type ListUsersResult struct {
@@ -423,7 +428,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 	}
 	if resetPasswordFailures && m.passwordFailures != nil {
 		if err := m.passwordFailures.Clear(ctx, id); err != nil {
-			slog.WarnContext(ctx, "clear updated user password failures failed: "+err.Error())
+			slog.WarnContext(ctx, "clear updated user password failures failed: "+err.Error(), "operation", "clear_updated_user_password_failures", "outcome", "failure", "error", err, "user_id", id)
 		}
 	}
 	return value, nil
@@ -464,6 +469,9 @@ func validTimeRange(from, to *int64) bool {
 }
 
 func (m *Module) List(ctx context.Context, input ListUsersInput) (*ListUsersResult, error) {
+	if err := input.Fields.Validate(listFields...); err != nil {
+		return nil, err
+	}
 	if !validTimeRange(input.CreatedFrom, input.CreatedTo) || !validTimeRange(input.LastLoggedInFrom, input.LastLoggedInTo) {
 		return nil, ErrInvalid
 	}
@@ -485,6 +493,12 @@ func (m *Module) List(ctx context.Context, input ListUsersInput) (*ListUsersResu
 	offset := int64(page-1) * int64(size)
 	if offset >= value.Total {
 		return value, nil
+	}
+	if input.Fields != nil {
+		selectedArgs := append(args, size, offset)
+		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, listProjection, " FROM t_user"+where+" ORDER BY id DESC LIMIT $"+strconv.Itoa(len(selectedArgs)-1)+" OFFSET $"+strconv.Itoa(len(selectedArgs)), selectedArgs...)
+		value.Items = items
+		return value, err
 	}
 	args = append(args, now)
 	expired := expiredLockSQL("$" + strconv.Itoa(len(args)))
@@ -646,6 +660,10 @@ func nullableRole(roleID *int64) any {
 func filters(input ListUsersInput, now int64) (string, []any) {
 	parts := make([]string, 0, 3)
 	args := make([]any, 0, 3)
+	if strings.TrimSpace(input.Q) != "" {
+		args = append(args, like(input.Q))
+		parts = append(parts, "(LOWER(username) LIKE LOWER($1) ESCAPE '!' OR LOWER(code) LIKE LOWER($1) ESCAPE '!')")
+	}
 	for _, field := range []struct {
 		column, value string
 		multiple      bool
@@ -693,6 +711,10 @@ func filters(input ListUsersInput, now int64) (string, []any) {
 	if input.LastLoggedInTo != nil {
 		args = append(args, *input.LastLoggedInTo)
 		parts = append(parts, "last_logged_in_at < $"+strconv.Itoa(len(args)))
+	}
+	if input.ExcludeUserGroupID != nil {
+		args = append(args, *input.ExcludeUserGroupID)
+		parts = append(parts, "NOT EXISTS (SELECT 1 FROM t_user_user_group_relation r WHERE r.user_id = t_user.id AND r.user_group_id = $"+strconv.Itoa(len(args))+")")
 	}
 	if len(parts) == 0 {
 		return "", args

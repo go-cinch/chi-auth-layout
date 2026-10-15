@@ -85,7 +85,7 @@ func (a *Application) Run(ctx context.Context) error {
 				err := a.msgModule.ExpireStatus(sweepCtx)
 				cancel()
 				if err != nil && workerCtx.Err() == nil {
-					slog.ErrorContext(workerCtx, "refresh expired message status: "+err.Error())
+					slog.ErrorContext(workerCtx, "refresh expired message status: "+err.Error(), slog.String("operation", "message_expire_status"), slog.String("outcome", "failure"), slog.Any("error", err))
 				}
 				select {
 				case <-workerCtx.Done():
@@ -99,7 +99,8 @@ func (a *Application) Run(ctx context.Context) error {
 	results := make(chan error, len(endpoints))
 	for index, item := range endpoints {
 		listener := listeners[index]
-		slog.InfoContext(ctx, item.name+" server running at "+listener.Addr().String())
+		address := listener.Addr().String()
+		slog.InfoContext(ctx, item.name+" server running at "+address, slog.String("operation", "server_start"), slog.String("outcome", "success"), slog.String("server", item.name), slog.String("address", address))
 		go func() {
 			err := item.serve(listener)
 			if err != nil && !errors.Is(err, http.ErrServerClosed){{ if .Computed.enable_grpc_final }} && !errors.Is(err, grpc.ErrServerStopped){{ end }} {
@@ -128,6 +129,10 @@ func (a *Application) Run(ctx context.Context) error {
 	for range endpoints {
 		serveErr = errors.Join(serveErr, <-stopped)
 	}
-	slog.InfoContext(ctx, "servers stopped")
+	if serveErr != nil {
+		slog.ErrorContext(ctx, "servers stopped with errors: "+serveErr.Error(), slog.String("operation", "server_stop"), slog.String("outcome", "failure"), slog.Any("error", serveErr))
+	} else {
+		slog.InfoContext(ctx, "servers stopped", slog.String("operation", "server_stop"), slog.String("outcome", "success"))
+	}
 	return serveErr
 }

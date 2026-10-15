@@ -2,6 +2,8 @@ package usergroup
 
 import (
  "errors"
+ "encoding/json"
+ "regexp"
  "net/http"
  "net/http/httptest"
  "strings"
@@ -49,6 +51,7 @@ func TestManagementSummaryHTTP(t *testing.T) {
   return w.Body.String()
  }
  request("/summary?q=x",http.StatusBadRequest)
+ for _,q:=range []string{"f=","f=total&f=counts","f=unknown","f=total,total"}{request("/summary?"+q,http.StatusBadRequest)}
  request("/summary?q=%zz",http.StatusBadRequest)
  mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total", "memberships", "unique_members", "empty_groups", "groups", "with_permissions", "without_permissions"}).AddRow(int64(0), int64(0), int64(0), int64(0), `[]`, int64(0), int64(0)))
  body := request("/summary",http.StatusOK)
@@ -73,4 +76,14 @@ func TestGroupRelationFilters(t *testing.T) {
  }
  mock.ExpectQuery("SELECT COUNT.*EXISTS.*t_action.*EXISTS.*t_user_user_group_relation").WithArgs(true,false).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
  w:=httptest.NewRecorder();handler.ServeHTTP(w,httptest.NewRequest("GET","/?has_permissions=true&has_members=false",nil));if w.Code!=200{t.Fatal(w.Code,w.Body.String())}
+}
+
+func TestSelectedSummaryTotalOnly(t *testing.T) {
+ m,mock:=newSummaryTestModule(t)
+ mock.ExpectQuery("^"+regexp.QuoteMeta("SELECT COUNT(*) FROM t_user_group")+"$").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+ value,err:=m.Summary(t.Context(),"total")
+ if err!=nil{t.Fatal(err)}
+ data,err:=json.Marshal(value)
+ if err!=nil || string(data)!=`{"total":0}` {t.Fatal(string(data),err)}
+ if _,err:=m.Summary(t.Context(),"unknown");err==nil{t.Fatal("accepted unknown field")}
 }

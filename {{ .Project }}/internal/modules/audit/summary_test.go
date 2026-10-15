@@ -1,7 +1,10 @@
 package audit
 
 import (
+	"encoding/json"
 	"github.com/DATA-DOG/go-sqlmock"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -48,5 +51,66 @@ func TestBreakdownRejectsIdentifiers(t *testing.T) {
 	m, _ := setup(t)
 	if _, err := m.breakdown(t.Context(), "", nil, "injected", 0); err == nil {
 		t.Fatal("accepted unsafe identifier")
+	}
+}
+
+func TestSummarySelectionSkipsUnrequestedQueries(t *testing.T) {
+	for _, fields := range [][]string{
+{"metrics", "trend", "modules"}, {"metrics"}, {"trend"}, {"heatmap"}, {"accounts"}, {"sources"}, {"repeated_failures"}, {"modules"}} {
+		t.Run(strings.Join(fields, ","), func(t *testing.T) {
+			m, mock := setup(t)
+			has := func(field string) bool { return slices.Contains(fields, field) }
+			if has("metrics") {
+				mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total", "success", "users", "ips", "avg", "p95"}).AddRow(0, 0, 0, 0, 0, 0))
+			}
+			if has("trend") {
+				mock.ExpectQuery("SELECT .*occurred_at /").WillReturnRows(sqlmock.NewRows([]string{"at", "success", "failure"}))
+			}
+			if has("heatmap") {
+				mock.ExpectQuery("SELECT width_bucket").WillReturnRows(sqlmock.NewRows([]string{"index", "count", "failed"}))
+			}
+			for _, item := range []struct{ field, column string }{
+{"modules", "module"}, {"repeated_failures", "username"}, {"accounts", "username"}, {"sources", "ip"}} {
+				if has(item.field) {
+					mock.ExpectQuery("SELECT " + item.column).WillReturnRows(sqlmock.NewRows([]string{"name", "total", "failed"}))
+				}
+			}
+			value, err := m.Summary(t.Context(), Filter{Kind: "operation", From: 1, To: 3600000}, fields...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := map[string]json.RawMessage{}
+			if err := json.Unmarshal(data, &body); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"total", "success", "failed", "unique_users", "unique_ips", "average_ms", "p95_ms", "success_rate", "trend", "bucket_ms", "heatmap", "heatmap_granularity", "accounts", "sources", "modules", "repeated_failures"} {
+				field := name
+				switch name {
+				case "total", "success", "failed", "unique_users", "unique_ips", "average_ms", "p95_ms", "success_rate":
+					field = "metrics"
+				case "bucket_ms":
+					field = "trend"
+				case "heatmap_granularity":
+					field = "heatmap"
+				}
+				if _, exists := body[name]; exists != has(field) {
+					t.Fatalf("%s: %s", name, data)
+				}
+			}
+			if has("metrics") && string(body["total"]) != "0" {
+				t.Fatal(string(data))
+			}
+			if has("modules") && string(body["modules"]) != "[]" {
+				t.Fatal(string(data))
+			}
+		})
+	}
+	m, _ := setup(t)
+	if _, err := m.Summary(t.Context(), Filter{Kind: "login"}, "unknown"); err == nil {
+		t.Fatal("accepted unknown field")
 	}
 }

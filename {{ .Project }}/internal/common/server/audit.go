@@ -47,7 +47,9 @@ func finishAudit(recorder modules.HTTPAuditRecorder, r *http.Request, s *auditct
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), time.Second)
 	defer cancel()
 	if err := recorder.RecordHTTP(ctx, e); err != nil {
-		slog.ErrorContext(ctx, fmt.Sprintf("persist %s audit event failed: %s %d %s: %v", target.Kind, r.Method, status, r.URL.Path, err))
+		slog.ErrorContext(ctx, fmt.Sprintf("persist %s audit event failed: %s %d %s: %v", target.Kind, r.Method, status, target.Operation, err),
+			"operation", "persist_http_audit", "outcome", "failure", "audit_kind", target.Kind,
+			"audit_operation", target.Operation, "module", target.Module, "method", r.Method, "status", status, "error", err)
 	}
 }
 

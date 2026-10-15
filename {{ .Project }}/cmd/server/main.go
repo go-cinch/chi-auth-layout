@@ -12,7 +12,8 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		slog.Error("run server failed: " + rootCause(err).Error())
+		cause := rootCause(err)
+		slog.Error("run server failed: "+cause.Error(), slog.String("operation", "server_run"), slog.String("outcome", "failure"), slog.Any("error", cause))
 		os.Exit(1)
 	}
 }

@@ -8,7 +8,7 @@ import (
 func TestSummaryStableEmptyShape(t *testing.T) {
 	value := New("enabled", "disabled")
 	encoded, err := json.Marshal(value)
-	if err != nil || string(encoded) != `{"total":0,"counts":{"disabled":0,"enabled":0},"groups":[],"trend":[]}` {
+	if err != nil || string(encoded) != `{"counts":{"disabled":0,"enabled":0},"groups":[],"total":0,"trend":[]}` {
 		t.Fatalf("%s: %v", encoded, err)
 	}
 }

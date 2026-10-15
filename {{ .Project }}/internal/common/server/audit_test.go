@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -145,4 +148,25 @@ func TestAuditFilesAndRecovery(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
+}
+
+func TestAuditFailureLogsStructuredContext(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	ctx, state := auditctx.WithState(context.Background())
+	request := httptest.NewRequest("POST", "/reset/never-log-secret?password=never-log-query", nil).WithContext(ctx)
+	recorder := &recordedAudit{fail: true}
+	target := auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_password"}
+	finishAudit(recorder, request, state, target, 500, time.Now(), http.Header{}, &auditBuffer{}, &auditBuffer{}, redact.New())
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil { t.Fatal(err) }
+	for key, want := range map[string]any{
+		"operation": "persist_http_audit", "outcome": "failure", "audit_kind": "operation",
+		"audit_operation": "reset_password", "module": "auth", "method": "POST", "status": float64(500), "error": "offline",
+	} {
+		if entry[key] != want { t.Errorf("%s = %v, want %v", key, entry[key], want) }
+	}
+	if strings.Contains(output.String(), "never-log-") { t.Fatalf("request secret leaked: %s", output.String()) }
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -132,5 +133,34 @@ func TestRoleAllGroupsHTTP(t *testing.T) {
 		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"items":[]`) || !strings.Contains(recorder.Body.String(), `"t":0`) {
 			t.Fatalf("all-groups query %q: %d %s", tc.query, recorder.Code, recorder.Body.String())
 		}
+	}
+}
+
+func TestRoleKeywordHTTP(t *testing.T) {
+	m, mock := newTestModule(t)
+{{ if eq .Computed.http_router_final "gin" -}}
+	router := gin.New(); m.HTTP(router.Group("")); handler := http.Handler(router)
+{{ else -}}
+	handler := m.HTTP()
+{{ end -}}
+	for _, query := range []string{"q=one&q=two", "q=%zz"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?"+query, nil))
+		if recorder.Code != http.StatusBadRequest { t.Fatalf("invalid keyword %q: %d", query, recorder.Code) }
+	}
+	for _, keyword := range []string{"  OpErAtOr  ", "100%_!", ""} {
+		where := ""
+		var args []driver.Value
+		if keyword != "" {
+			where = " WHERE (LOWER(name) LIKE LOWER($1) ESCAPE '!' OR LOWER(word) LIKE LOWER($1) ESCAPE '!')"
+			pattern := "%OpErAtOr%"
+			if keyword == "100%_!" { pattern = "%100!%!_!!%" }
+			args = append(args, pattern)
+		}
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM t_role"+where)).WithArgs(args...).
+			WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?q="+url.QueryEscape(keyword), nil))
+		if recorder.Code != http.StatusOK { t.Fatalf("keyword %q: %d %s", keyword, recorder.Code, recorder.Body.String()) }
 	}
 }

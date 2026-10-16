@@ -324,7 +324,7 @@ COMMENT ON COLUMN t_audit_event.method IS 'HTTP request method';
 
 COMMENT ON COLUMN t_audit_event.path IS 'Request path without query string';
 
-COMMENT ON COLUMN t_audit_event.ip IS 'Verified client IP from a configured trusted proxy, otherwise transport peer IP';
+COMMENT ON COLUMN t_audit_event.ip IS 'Client IP from X-Verified-Client-IP, otherwise transport peer IP; source trust is enforced by deployment';
 
 COMMENT ON COLUMN t_audit_event.user_agent IS 'Bounded client user-agent snapshot';
 

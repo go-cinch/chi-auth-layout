@@ -28,15 +28,11 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 		return nil, err
 	}
 	
-	clientIPMiddleware, err := ClientIP(cfg.HTTP.TrustedProxies)
-	if err != nil {
-		return nil, err
-	}
 	r := gin.New()
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 	r.HandleMethodNotAllowed = true
-	// Access logs use RemoteAddr, matching the chi implementation.
+	// ClientIP handles the verified header; disable Gin's X-Forwarded-For/X-Real-IP resolver.
 	if err := r.SetTrustedProxies(nil); err != nil {
 		return nil, err
 	}
@@ -44,7 +40,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(clientIPMiddleware, Locale(), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
+	r.Use(ClientIP(), Locale(), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
 	r.NoRoute(func(c *gin.Context) {
 		WriteError(c.Writer, c.Request, http.StatusNotFound, apperror.NotFound)
 	})
@@ -193,16 +189,12 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 		return nil, err
 	}
 	
-	clientIPMiddleware, err := ClientIP(cfg.HTTP.TrustedProxies)
-	if err != nil {
-		return nil, err
-	}
 	r := chi.NewRouter()
 	policy := redact.New(cfg.Redact.Keys...)
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(clientIPMiddleware, Locale(), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer())
+	r.Use(ClientIP(), Locale(), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer())
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, http.StatusNotFound, apperror.NotFound)

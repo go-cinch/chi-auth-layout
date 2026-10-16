@@ -30,7 +30,7 @@ full:
 # Set delete_old_sql to true below when this update must replace the demo SQL.
 local:
 	@set -eu; \
-	delete_old_sql=true; \
+	delete_old_sql=false; \
 	migrations_dir="$(CURDIR)/../demos/auth/internal/infra/db/migrations"; \
 	auth_config="$(CURDIR)/../demos/auth/conf/auth.yml"; \
 	test -d "$$migrations_dir"; \

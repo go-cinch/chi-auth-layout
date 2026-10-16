@@ -45,11 +45,11 @@ func auditHandler(recorder *recordedAudit, handler http.HandlerFunc) http.Handle
 
 {{ if eq .Computed.http_router_final "gin" }}
 	router := gin.New()
-	router.Use(Audit(recorder, policy), Recoverer())
+	router.Use(ClientIP(), Audit(recorder, policy), Recoverer())
 	router.POST("/test", func(c *gin.Context) { handler(c.Writer, c.Request) })
 	return router
 {{ else }}
-	return Audit(recorder, policy)(Recoverer()(handler))
+	return ClientIP()(Audit(recorder, policy)(Recoverer()(handler)))
 {{ end }}
 
 }
@@ -133,8 +133,8 @@ func TestAuditRequestHeaders(t *testing.T) {
 			if !ok || len(forwarded) != 2 || forwarded[0] != "192.0.2.99" || forwarded[1] != "203.0.113.5" {
 				t.Fatalf("repeated header values lost: %v", headers)
 			}
-			if strings.Contains(string(event.Header), "never-store") || event.IP != "127.0.0.1" {
-				t.Fatalf("secret captured or diagnostic headers trusted: %s, %s", event.Header, event.IP)
+			if strings.Contains(string(event.Header), "never-store") || event.IP != "203.0.113.5" {
+				t.Fatalf("secret captured or resolved IP changed after snapshot: %s, %s", event.Header, event.IP)
 			}
 			if kind == "login" && (event.RequestParams != nil || event.ResponseParams != nil) {
 				t.Fatal("login bodies must remain uncaptured")

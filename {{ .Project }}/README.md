@@ -16,27 +16,6 @@ make test
 make run
 ```
 
-## Client IPs
-
-Set `http.trustedProxies` (or `SERVICE_HTTP_TRUSTEDPROXIES`) to the IPs/CIDRs of
-gateways allowed to supply `X-Verified-Client-IP`. The default is empty and trusts
-no forwarded headers. Audit events accept exactly one valid IPv4/IPv6 address in
-this header from a trusted connection; otherwise they record the transport peer.
-`X-Real-IP` and `X-Forwarded-For` are ignored when resolving the client IP. Access
-logs retain `RemoteAddr`. Login and operation audit details expose a separate
-`header` snapshot of all received request headers, with sensitive values fully
-redacted using `redact.keys` and the built-in policy. See [audit storage](internal/modules/audit/README.md).
-
-The public gateway must overwrite `X-Verified-Client-IP` with its observed source
-address on every request, including permission subrequests. For APISIX, use
-`proxy-rewrite.headers.set` with `X-Verified-Client-IP: $remote_addr`. For a direct
-Kubernetes LoadBalancer/NodePort entry, verify source IP preservation against the
-actual CNI/LB path. `externalTrafficPolicy: Local` can preserve it when needed, but
-only serves ready endpoints on the receiving node; do not change it blindly.
-If another proxy precedes the gateway, configure
-source IP recovery only for that trusted proxy; never trust arbitrary incoming
-forwarding headers. Restrict backend access and keep trusted proxy ranges narrow.
-
 ## Nginx configuration
 
 Add these locations inside your Nginx `server` block. Replace `order-service`

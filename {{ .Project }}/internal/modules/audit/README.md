@@ -23,9 +23,10 @@ Both login and operation events include a dedicated `header` JSON field containi
 request headers as seen by the service before handlers execute, including `Host`
 (which Go stores separately). Single values are strings; repeated values are arrays.
 The three IP headers (`X-Verified-Client-IP`, `X-Real-IP`, `X-Forwarded-For`) are retained
-for investigation. Their presence in this snapshot does not establish trust: only
-`X-Verified-Client-IP` from `http.trustedProxies` influences the resolved `ip` field;
-otherwise the connection peer is recorded.
+for investigation. The resolved `ip` field accepts one valid `X-Verified-Client-IP`
+from any connection, falling back to the transport peer for missing, invalid or
+repeated values. Kubernetes/network configuration enforces the trusted sources;
+auth has no proxy allowlist and does not use the other IP headers for resolution.
 
 Sensitive header names use the shared redaction policy plus `redact.keys` overrides.
 Authorization, proxy authorization, cookies, API keys, tokens, sessions, signatures,

@@ -30,6 +30,7 @@ var (
 )
 
 type UserGroup struct {
+	ActionSummaries *[]actionmodule.Summary `json:"action_summaries,omitempty"`
 	selectedFields  report.Fields
 	selectedActions string
 	ID              int64          `json:"id"`
@@ -106,6 +107,7 @@ type Module struct {
 }
 
 type Actions interface {
+	LookupSummaries(context.Context, db.SQLExecutor, []string) (map[string]actionmodule.Summary, error)
 	SplitCodes(string) []string
 	Lookup(context.Context, db.SQLExecutor, []string) ([]actionmodule.Action, error)
 	ValidateCodes(context.Context, db.SQLExecutor, []string) ([]string, error)
@@ -394,13 +396,18 @@ func (m *Module) List(ctx context.Context, input ListUserGroupsInput) (*ListUser
 		if err != nil {
 			return nil, err
 		}
-		if input.Fields.Has("actions") {
+		if input.Fields.Has("actions") || input.Fields.Has("action_codes") || input.Fields.Has("action_summaries") {
 			for i := range items {
 				items[i].ActionCodes = m.actions.SplitCodes(items[i].selectedActions)
 			}
 		}
 		if err := m.enrich(ctx, m.store.SQL(ctx), items, input.Fields); err != nil {
 			return nil, err
+		}
+		if input.Fields.Has("action_summaries") {
+			if err := m.enrichSummaries(ctx, items, input.Fields.Has("actions")); err != nil {
+				return nil, err
+			}
 		}
 		value.Items = items
 		return value, nil

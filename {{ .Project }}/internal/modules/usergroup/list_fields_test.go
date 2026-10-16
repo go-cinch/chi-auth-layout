@@ -80,3 +80,39 @@ func TestGroupScalarAndEmptyActions(t *testing.T) {
  if err!=nil || string(encoded)!=`{"actions":[],"name":"group"}` {t.Fatalf("%s %v",encoded,err)}
  if err:=mock.ExpectationsWereMet();err!=nil{t.Fatal(err)}
 }
+
+func TestGroupSelectedCodesSkipAssociations(t *testing.T) {
+	m, mock := newTestModule(t)
+	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(1))
+	mock.ExpectQuery("SELECT action FROM t_user_group").WillReturnRows(sqlmock.NewRows([]string{"action"}).AddRow("READ,WRITE"))
+	value, err := m.List(t.Context(), ListUserGroupsInput{Fields: report.Fields{"action_codes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(value.Items[0])
+	if err != nil || string(encoded) != `{"action_codes":["READ","WRITE"]}` {
+		t.Fatalf("%s %v", encoded, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSelectedActionSummariesSkipRules(t *testing.T) {
+	m, mock := newTestModule(t)
+	size := int32(2)
+	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(2))
+	mock.ExpectQuery("SELECT name, action FROM t_user_group").WillReturnRows(sqlmock.NewRows([]string{"name", "action"}).AddRow("assigned", "WRITE,READ,MISSING").AddRow("empty", ""))
+	mock.ExpectQuery("SELECT code, name, action_group FROM t_action WHERE code = ANY").WillReturnRows(sqlmock.NewRows([]string{"code", "name", "action_group"}).AddRow("READ", "Read", "Demo").AddRow("WRITE", "Write", "Demo"))
+	value, err := m.List(t.Context(), ListUserGroupsInput{PageSize: &size, Fields: report.Fields{"name", "action_summaries"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(value.Items)
+	if err != nil || string(encoded) != `[{"action_summaries":[{"code":"WRITE","name":"Write","group":"Demo"},{"code":"READ","name":"Read","group":"Demo"}],"name":"assigned"},{"action_summaries":[],"name":"empty"}]` {
+		t.Fatalf("%s %v", encoded, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

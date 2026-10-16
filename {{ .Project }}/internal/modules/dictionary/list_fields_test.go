@@ -56,3 +56,22 @@ func TestListFieldProjection(t *testing.T) {
  if err != nil || string(encoded) != `{"items":[],"t":0,"p":1,"s":1}` { t.Fatalf("empty page: %s %v",encoded,err) }
  if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
 }
+
+func TestDictionarySelectedValuePreservesJSON(t *testing.T) {
+	m, _, mock := newTestModule(t)
+	for _, raw := range []string{`null`, `{"nested":[false,0,""]}`} {
+		mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(1))
+		mock.ExpectQuery("SELECT value FROM t_dictionary").WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(raw)))
+		value, err := m.List(t.Context(), ListDictionariesInput{Fields: report.Fields{"value"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(value.Items[0])
+		if err != nil || string(encoded) != `{"value":`+raw+`}` {
+			t.Fatalf("%s %v", encoded, err)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

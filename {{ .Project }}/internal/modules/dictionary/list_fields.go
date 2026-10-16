@@ -2,7 +2,7 @@ package dictionary
 
 import "{{ .Computed.module_name_final }}/internal/common/report"
 
-var listFields = []string{"id", "created_at", "updated_at", "key", "name", "description", "enabled"}
+var listFields = []string{"id", "created_at", "updated_at", "key", "name", "description", "enabled", "value"}
 
 func listProjection(value *Dictionary, fields report.Fields) report.Projection {
 	value.selectedFields = fields
@@ -14,6 +14,7 @@ func listProjection(value *Dictionary, fields report.Fields) report.Projection {
 	p.Add("name", "name", &value.Name)
 	p.Add("description", "description", &value.Description)
 	p.Add("enabled", "enabled", &value.Enabled)
+	p.Add("value", "value", &value.Value)
 	return p
 }
 

@@ -29,14 +29,16 @@ var (
 const AdminRoleID int64 = 1
 
 type Role struct {
-	selectedFields report.Fields
-	ID             int64        `json:"id"`
-	CreatedAt      int64        `json:"created_at"`
-	UpdatedAt      int64        `json:"updated_at"`
-	Name           string       `json:"name"`
-	Word           string       `json:"word"`
-	ActionCodes    []string     `json:"action_codes"`
-	Actions        []ActionView `json:"actions"`
+	ActionSummaries *[]actionmodule.Summary `json:"action_summaries,omitempty"`
+	selectedFields  report.Fields
+	selectedActions string
+	ID              int64        `json:"id"`
+	CreatedAt       int64        `json:"created_at"`
+	UpdatedAt       int64        `json:"updated_at"`
+	Name            string       `json:"name"`
+	Word            string       `json:"word"`
+	ActionCodes     []string     `json:"action_codes"`
+	Actions         []ActionView `json:"actions"`
 }
 
 type ActionView struct {
@@ -92,6 +94,7 @@ type Module struct {
 }
 
 type Actions interface {
+	LookupSummaries(context.Context, db.SQLExecutor, []string) (map[string]actionmodule.Summary, error)
 	SplitCodes(string) []string
 	LookupByID(context.Context, db.SQLExecutor, int64) (*actionmodule.Action, error)
 	Lookup(context.Context, db.SQLExecutor, []string) ([]actionmodule.Action, error)
@@ -355,8 +358,26 @@ func (m *Module) List(ctx context.Context, input ListRolesInput) (*ListRolesResu
 	if input.Fields != nil {
 		selectedArgs := append(args, size, offset)
 		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, listProjection, " FROM t_role"+where+" ORDER BY id DESC LIMIT $"+strconv.Itoa(len(selectedArgs)-1)+" OFFSET $"+strconv.Itoa(len(selectedArgs)), selectedArgs...)
+		if err != nil {
+			return nil, err
+		}
+		for i := range items {
+			if input.Fields.Has("actions") || input.Fields.Has("action_codes") || input.Fields.Has("action_summaries") {
+				items[i].ActionCodes = m.actions.SplitCodes(items[i].selectedActions)
+			}
+		}
+		if input.Fields.Has("actions") {
+			if err := m.enrichList(ctx, items); err != nil {
+				return nil, err
+			}
+		}
+		if input.Fields.Has("action_summaries") {
+			if err := m.enrichSummaries(ctx, items, input.Fields.Has("actions")); err != nil {
+				return nil, err
+			}
+		}
 		value.Items = items
-		return value, err
+		return value, nil
 	}
 	args = append(args, size, offset)
 	query := "SELECT id, created_at, updated_at, name, word, action FROM t_role" + where + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args)-1) + " OFFSET $" + strconv.Itoa(len(args))
@@ -378,21 +399,8 @@ func (m *Module) List(ctx context.Context, input ListRolesInput) (*ListRolesResu
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	codes := make([]string, 0)
-	for _, item := range value.Items {
-		codes = append(codes, item.ActionCodes...)
-	}
-	actions, err := m.actions.Lookup(ctx, m.store.SQL(ctx), codes)
-	if err != nil {
+	if err := m.enrichList(ctx, value.Items); err != nil {
 		return nil, err
-	}
-	byCode := make(map[string]ActionView, len(actions))
-	for _, item := range actions {
-		byCode[item.Code] = actionView(item)
-	}
-	for i := range value.Items {
-		item := &value.Items[i]
-		item.Actions = orderedActions(item.ActionCodes, byCode)
 	}
 	return value, nil
 }

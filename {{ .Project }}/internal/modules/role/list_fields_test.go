@@ -56,3 +56,54 @@ func TestListFieldProjection(t *testing.T) {
  if err != nil || string(encoded) != `{"items":[],"t":0,"p":1,"s":1}` { t.Fatalf("empty page: %s %v",encoded,err) }
  if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
 }
+
+func TestRoleListSelectedCodesAndEmptyAssociations(t *testing.T) {
+	for _, fields := range []report.Fields{
+		{"action_codes"}, {"actions"}, {"action_codes", "actions"}} {
+		m, mock := newTestModule(t)
+		mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(1))
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT action FROM t_role")).WillReturnRows(sqlmock.NewRows([]string{"action"}).AddRow(""))
+		value, err := m.List(t.Context(), ListRolesInput{Fields: fields})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(value.Items[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result map[string][]string
+		if err := json.Unmarshal(encoded, &result); err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != len(fields) {
+			t.Fatal(string(encoded))
+		}
+		for _, field := range fields {
+			if values, ok := result[field]; !ok || values == nil || len(values) != 0 {
+				t.Fatal(string(encoded))
+			}
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSelectedActionSummariesSkipRules(t *testing.T) {
+	m, mock := newTestModule(t)
+	size := int32(2)
+	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(2))
+	mock.ExpectQuery("SELECT name, action FROM t_role").WillReturnRows(sqlmock.NewRows([]string{"name", "action"}).AddRow("assigned", "WRITE,READ,MISSING").AddRow("empty", ""))
+	mock.ExpectQuery("SELECT code, name, action_group FROM t_action WHERE code = ANY").WillReturnRows(sqlmock.NewRows([]string{"code", "name", "action_group"}).AddRow("READ", "Read", "Demo").AddRow("WRITE", "Write", "Demo"))
+	value, err := m.List(t.Context(), ListRolesInput{PageSize: &size, Fields: report.Fields{"name", "action_summaries"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(value.Items)
+	if err != nil || string(encoded) != `[{"action_summaries":[{"code":"WRITE","name":"Write","group":"Demo"},{"code":"READ","name":"Read","group":"Demo"}],"name":"assigned"},{"action_summaries":[],"name":"empty"}]` {
+		t.Fatalf("%s %v", encoded, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

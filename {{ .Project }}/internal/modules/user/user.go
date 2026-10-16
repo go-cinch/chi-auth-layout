@@ -39,21 +39,24 @@ const (
 )
 
 type User struct {
-	selectedFields report.Fields
-	LoginCount     int64          `json:"login_count"`
-	ID             int64          `json:"id"`
-	CreatedAt      int64          `json:"created_at"`
-	UpdatedAt      int64          `json:"updated_at"`
-	Username       string         `json:"username"`
-	Code           string         `json:"code"`
-	Status         int16          `json:"status"`
-	Metadata       map[string]any `json:"metadata"`
-	Wrong          int64          `json:"wrong"`
-	LastLoggedInAt *int64         `json:"last_logged_in_at,omitempty"`
-	RoleID         *int64         `json:"role_id,omitempty"`
-	Role           *RoleView      `json:"role,omitempty"`
-	ActionCodes    []string       `json:"action_codes"`
-	Actions        []ActionView   `json:"actions"`
+	selectedFields   report.Fields
+	selectedActions  string
+	selectedMetadata []byte
+	LoginCount       int64               `json:"login_count"`
+	ID               int64               `json:"id"`
+	CreatedAt        int64               `json:"created_at"`
+	UpdatedAt        int64               `json:"updated_at"`
+	Username         string              `json:"username"`
+	Code             string              `json:"code"`
+	Status           int16               `json:"status"`
+	Metadata         map[string]any      `json:"metadata"`
+	Wrong            int64               `json:"wrong"`
+	LastLoggedInAt   *int64              `json:"last_logged_in_at,omitempty"`
+	RoleID           *int64              `json:"role_id,omitempty"`
+	RoleSummary      *rolemodule.Summary `json:"role_summary,omitempty"`
+	Role             *RoleView           `json:"role,omitempty"`
+	ActionCodes      []string            `json:"action_codes"`
+	Actions          []ActionView        `json:"actions"`
 }
 
 type ActionView struct {
@@ -149,6 +152,7 @@ type Actions interface {
 }
 
 type Roles interface {
+	LookupSummaries(context.Context, db.SQLExecutor, []int64) (map[int64]rolemodule.Summary, error)
 	LookupRecords(context.Context, db.SQLExecutor, []int64) (map[int64]rolemodule.Role, error)
 	Lookup(context.Context, db.SQLExecutor, int64) (*rolemodule.Role, error)
 	Exists(context.Context, db.SQLExecutor, int64) (bool, error)
@@ -495,8 +499,7 @@ func (m *Module) List(ctx context.Context, input ListUsersInput) (*ListUsersResu
 		return value, nil
 	}
 	if input.Fields != nil {
-		selectedArgs := append(args, size, offset)
-		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), input.Fields, listProjection, " FROM t_user"+where+" ORDER BY id DESC LIMIT $"+strconv.Itoa(len(selectedArgs)-1)+" OFFSET $"+strconv.Itoa(len(selectedArgs)), selectedArgs...)
+		items, err := m.listSelected(ctx, input.Fields, where, args, now, size, offset)
 		value.Items = items
 		return value, err
 	}
@@ -523,43 +526,8 @@ func (m *Module) List(ctx context.Context, input ListUsersInput) (*ListUsersResu
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	roleIDs := make([]int64, 0, len(value.Items))
-	codes := make([]string, 0)
-	for _, item := range value.Items {
-		if item.RoleID != nil {
-			roleIDs = append(roleIDs, *item.RoleID)
-		}
-		codes = append(codes, item.ActionCodes...)
-	}
-	roles, err := m.roles.LookupRecords(ctx, m.store.SQL(ctx), roleIDs)
-	if err != nil {
+	if err := m.enrichList(ctx, value.Items, nil); err != nil {
 		return nil, err
-	}
-	// Follow page order so the batch input is deterministic even with shared roles.
-	seenRoles := make(map[int64]struct{}, len(roles))
-	for _, id := range roleIDs {
-		if _, seen := seenRoles[id]; seen {
-			continue
-		}
-		seenRoles[id] = struct{}{}
-		codes = append(codes, roles[id].ActionCodes...)
-	}
-	actions, err := m.actions.Lookup(ctx, m.store.SQL(ctx), codes)
-	if err != nil {
-		return nil, err
-	}
-	byCode := make(map[string]ActionView, len(actions))
-	for _, item := range actionViews(actions) {
-		byCode[item.Code] = item
-	}
-	for i := range value.Items {
-		item := &value.Items[i]
-		item.Actions = orderedActions(item.ActionCodes, byCode)
-		if item.RoleID != nil {
-			record := roles[*item.RoleID]
-			item.Role = roleView(&record)
-			item.Role.Actions = orderedActions(record.ActionCodes, byCode)
-		}
 	}
 	return value, nil
 }

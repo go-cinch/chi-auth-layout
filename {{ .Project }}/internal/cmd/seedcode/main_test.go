@@ -61,11 +61,19 @@ func TestRewriteSeedCodesErrors(t *testing.T) {
 
 	t.Run("no codes", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "empty.sql")
-		if err := os.WriteFile(path, []byte("SELECT 1;\n"), 0o600); err != nil {
+		original := "TRUNCATE TABLE t_action RESTART IDENTITY;\n"
+		if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := rewriteSeedCodes(path, func() (string, error) { return "AAAAAAAA", nil }); err == nil {
+		if _, err := rewriteSeedCodes(path, func() (string, error) {
+			t.Fatal("generator called for SQL keywords")
+			return "", nil
+		}); err == nil {
 			t.Fatal("expected no-code error")
+		}
+		content, err := os.ReadFile(path)
+		if err != nil || string(content) != original {
+			t.Fatalf("no-code migration changed: %q, %v", content, err)
 		}
 	})
 
@@ -89,6 +97,46 @@ func TestRewriteSeedCodesErrors(t *testing.T) {
 			t.Fatal("expected invalid-code error")
 		}
 	})
+}
+
+func TestRewriteSeedCodesPreservesSQLAndOtherValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "default-data.sql")
+	original := `-- +migrate Up
+INSERT INTO t_action (code) VALUES ('TRUNCATE'), ('IDENTITY');
+INSERT INTO t_role (action) VALUES ('TRUNCATE,IDENTITY');
+INSERT INTO t_dictionary (description) VALUES ('Keep TRUNCATE and IDENTITY'), ('Keep ''TRUNCATE''');
+-- +migrate Down
+TRUNCATE TABLE t_action RESTART IDENTITY;
+`
+	want := `-- +migrate Up
+INSERT INTO t_action (code) VALUES ('AAAAAAAA'), ('BBBBBBBB');
+INSERT INTO t_role (action) VALUES ('AAAAAAAA,BBBBBBBB');
+INSERT INTO t_dictionary (description) VALUES ('Keep TRUNCATE and IDENTITY'), ('Keep ''TRUNCATE''');
+-- +migrate Down
+TRUNCATE TABLE t_action RESTART IDENTITY;
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values := []string{"AAAAAAAA", "BBBBBBBB"}
+	count, err := rewriteSeedCodes(path, func() (string, error) {
+		if len(values) == 0 {
+			t.Fatal("generator called for a non-code value")
+		}
+		value := values[0]
+		values = values[1:]
+		return value, nil
+	})
+	if err != nil || count != 2 {
+		t.Fatalf("rewritten codes = %d, error = %v; want 2 codes", count, err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != want {
+		t.Fatalf("rewritten migration:\n%s\nwant:\n%s", content, want)
+	}
 }
 
 func TestNextUniqueCodeExhaustion(t *testing.T) {

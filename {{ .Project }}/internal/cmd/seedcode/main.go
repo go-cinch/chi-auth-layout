@@ -16,7 +16,8 @@ const (
 )
 
 var (
-	seedCodePattern      = regexp.MustCompile(`\b[A-Z0-9]{8}\b`)
+	sqlStringPattern     = regexp.MustCompile(`'(?:[^']|'')*'`)
+	seedCodePattern      = regexp.MustCompile(`^[A-Z0-9]{8}(?:,[A-Z0-9]{8})*$`)
 	generatedCodePattern = regexp.MustCompile(`^[23456789ABCDEFGHJKLMNPQRSTVWXY]{8}$`)
 )
 
@@ -38,7 +39,16 @@ func rewriteSeedCodes(path string, generate func() (string, error)) (int, error)
 		return 0, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	placeholders := uniqueCodes(seedCodePattern.FindAllString(string(content), -1))
+	// Codes occur as complete SQL string values, either alone or in a list.
+	// Matching bare words would also randomize TRUNCATE and IDENTITY in Down.
+	var placeholders []string
+	for _, literal := range sqlStringPattern.FindAllString(string(content), -1) {
+		value := literal[1 : len(literal)-1]
+		if seedCodePattern.MatchString(value) {
+			placeholders = append(placeholders, strings.Split(value, ",")...)
+		}
+	}
+	placeholders = uniqueCodes(placeholders)
 	if len(placeholders) == 0 {
 		return 0, fmt.Errorf("no eight-character seed codes found in %s", path)
 	}
@@ -58,7 +68,13 @@ func rewriteSeedCodes(path string, generate func() (string, error)) (int, error)
 		replacements = append(replacements, placeholder, generated)
 	}
 
-	rewritten := strings.NewReplacer(replacements...).Replace(string(content))
+	replacer := strings.NewReplacer(replacements...)
+	rewritten := sqlStringPattern.ReplaceAllStringFunc(string(content), func(literal string) string {
+		if !seedCodePattern.MatchString(literal[1 : len(literal)-1]) {
+			return literal
+		}
+		return replacer.Replace(literal)
+	})
 	info, err := os.Stat(path)
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)

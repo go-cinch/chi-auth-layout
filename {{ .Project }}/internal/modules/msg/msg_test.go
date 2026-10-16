@@ -261,13 +261,33 @@ func TestGetSentRecipientFailures(t *testing.T) {
 }
 
 func TestInboxKeywordKeepsVisibilityAndPagination(t *testing.T) {
- m, mock := testModule(t)
- read := false
- page, size := int32(1), int32(10)
- // Literal wildcard escaping and the signed-in identity apply to both queries.
- predicate := "delivery.user_id = .*JOIN t_user u ON u.id = .*r.deleted_at IS NULL.*m.title ILIKE.*OR m.content ILIKE.*r.read_at IS NULL.*m.type ="
- mock.ExpectQuery("SELECT COUNT.*"+predicate).WithArgs(int64(2), "%100!%!_!!%", "notice").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
- mock.ExpectQuery("SELECT .*"+predicate+".*ORDER BY m.published_at DESC, m.id DESC").WithArgs(int64(2), "%100!%!_!!%", "notice", size, int64(0)).WillReturnRows(messageRows("targeted"))
- result, err := m.List(t.Context(), 2, ListInput{Query: " 100%_! ", Type: "notice", Read: &read, Page: &page, PageSize: &size})
- if err != nil || result.Total != 1 || len(result.Items) != 1 { t.Fatalf("inbox search: %#v %v", result, err) }
+	m, mock := testModule(t)
+	read := false
+	page, size := int32(1), int32(10)
+	// Literal wildcard escaping and the signed-in identity apply to both queries.
+	predicate := "delivery.user_id = .*JOIN t_user u ON u.id = .*r.deleted_at IS NULL.*m.title ILIKE.*OR m.content ILIKE.*r.read_at IS NULL.*m.type ="
+	mock.ExpectQuery("SELECT COUNT.*"+predicate).WithArgs(int64(2), "%100!%!_!!%", "notice").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT .*"+predicate+".*ORDER BY m.published_at DESC, m.id DESC").WithArgs(int64(2), "%100!%!_!!%", "notice", size, int64(0)).WillReturnRows(messageRows("targeted"))
+	result, err := m.List(t.Context(), 2, ListInput{Query: " 100%_! ", Type: "notice", Read: &read, Page: &page, PageSize: &size})
+	if err != nil || result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("inbox search: %#v %v", result, err)
+	}
+}
+
+func TestInboxIDFilterKeepsVisibilityAndPagination(t *testing.T) {
+	m, mock := testModule(t)
+	id := int64(1)
+	page, size := int32(1), int32(10)
+	predicate := "delivery.user_id = .*JOIN t_user u ON u.id = .*r.deleted_at IS NULL.*m.id = \\$2.*m.title ILIKE"
+	mock.ExpectQuery("SELECT COUNT.*"+predicate).WithArgs(int64(2), id, "%hello%").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT .*"+predicate+".*ORDER BY").WithArgs(int64(2), id, "%hello%", size, int64(0)).WillReturnRows(messageRows("targeted"))
+	value, err := m.List(t.Context(), 2, ListInput{ID: &id, Query: "hello", Page: &page, PageSize: &size})
+	if err != nil || value.Total != 1 || len(value.Items) != 1 || value.Items[0].ID != id {
+		t.Fatalf("%+v %v", value, err)
+	}
+	for _, invalid := range []int64{0, -1} {
+		if _, err := m.List(t.Context(), 2, ListInput{ID: &invalid}); !errors.Is(err, ErrInvalid) {
+			t.Fatal(err)
+		}
+	}
 }

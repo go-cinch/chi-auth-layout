@@ -310,6 +310,12 @@ func (m *Module) listInbox(w http.ResponseWriter,r *http.Request) {
  fields, fieldErr := report.ParseFields(query, listFields...)
  if fieldErr != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
  input := ListInput{Fields: fields, Type:query.Get("type"),Scope:query.Get("scope"),Query:query.Get("q")}
+ if values,provided := query["id"]; provided {
+  if len(values)!=1 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  parsed,err := strconv.ParseInt(values[0],10,64)
+  if err!=nil || parsed<=0 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  input.ID=&parsed
+ }
  if values,provided := query["q"]; provided && len(values)!=1 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
  for _,key := range []string{"type","scope"} { if values,provided := query[key]; provided && (len(values)!=1 || values[0]=="") { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return } }
  if values,provided := query["p"]; provided {
@@ -354,6 +360,12 @@ func (m *Module) listSent(w http.ResponseWriter,r *http.Request) {
  fields, fieldErr := report.ParseFields(query, listFields...)
  if fieldErr != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
  input := ListInput{Fields: fields, Type:query.Get("type"),Scope:query.Get("scope"),Query:query.Get("q")}
+ if values,provided := query["id"]; provided {
+  if len(values)!=1 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  parsed,err := strconv.ParseInt(values[0],10,64)
+  if err!=nil || parsed<=0 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+  input.ID=&parsed
+ }
  if len(query["q"]) > 1 { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
  for _,key := range []string{"type","scope"} { if values,provided := query[key]; provided && (len(values)!=1 || values[0]=="") { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return } }
  if values,provided := query["p"]; provided {

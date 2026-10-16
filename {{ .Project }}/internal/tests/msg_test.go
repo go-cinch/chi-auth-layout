@@ -535,3 +535,41 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 		}
 	}
 }
+
+func TestInboxIDFilterIsolation(t *testing.T) {
+	store := permissionDatabase(t)
+	ctx := t.Context()
+	limits, _ := pagination.New(100, 100)
+	m := msg.New(store, limits)
+	message, err := m.Create(ctx, 1, msg.CreateInput{Title: "same title", Content: "target", Type: "notice", Scope: "targeted", RecipientIDs: []int64{2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Create(ctx, 1, msg.CreateInput{Title: "same title", Content: "other", Type: "notice", Scope: "targeted", RecipientIDs: []int64{2}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, userID := range []int64{2, 3} {
+		value, err := m.List(ctx, userID, msg.ListInput{ID: &message.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if userID == 2 {
+			if value.Total != 1 || len(value.Items) != 1 || value.Items[0].ID != message.ID {
+				t.Fatalf("%+v", value)
+			}
+		} else if value.Total != 0 || len(value.Items) != 0 {
+			t.Fatal("ID filter exposed another inbox")
+		}
+	}
+	value, err := m.List(ctx, 2, msg.ListInput{ID: &message.ID, Query: "missing"})
+	if err != nil || value.Total != 0 {
+		t.Fatalf("combined filter: %+v %v", value, err)
+	}
+	if err := m.Delete(ctx, 2, message.ID); err != nil {
+		t.Fatal(err)
+	}
+	value, err = m.List(ctx, 2, msg.ListInput{ID: &message.ID})
+	if err != nil || value.Total != 0 {
+		t.Fatalf("deleted message returned: %+v %v", value, err)
+	}
+}

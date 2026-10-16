@@ -46,6 +46,7 @@ func (g *generator) describeListFields(r *route) {
 		response.description += " The associations actions,users,member_count,member_preview may also be selected. Selections containing only legacy associations (actions,users,member_count,member_preview) preserve existing base metadata; selections containing any listed field, including action_summaries, return exactly the selected fields."
 	}
 	if strings.HasPrefix(r.path, "/msg/") {
+		response.description += " Optional id filters one positive message ID before counting and pagination, combined with other filters; inbox visibility and personal deletion/expiry rules still apply."
 		response.description += " summary is the first 160 Unicode characters of content; it is not included by default. Detail endpoints still return full content."
 	}
 	// List item schemas must allow sparse records without relaxing detail/write schemas.

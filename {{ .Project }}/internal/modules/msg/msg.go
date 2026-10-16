@@ -49,6 +49,7 @@ type CreateInput struct {
 }
 
 type ListInput struct {
+	ID       *int64
 	Fields   report.Fields
 	Query    string
 	Page     *int32
@@ -264,6 +265,9 @@ func (m *Module) listMessages(ctx context.Context, userID int64, input ListInput
 	if err := input.Fields.Validate(listFields...); err != nil {
 		return nil, err
 	}
+	if input.ID != nil && *input.ID <= 0 {
+		return nil, ErrInvalid
+	}
 	if (input.Type != "" && !validType(input.Type)) || (input.Scope != "" && !validScope(input.Scope)) || (sent && input.Read != nil) {
 		return nil, ErrInvalid
 	}
@@ -276,6 +280,10 @@ func (m *Module) listMessages(ctx context.Context, userID int64, input ListInput
 	args := []any{userID}
 	if sent {
 		from, selected, args = ` FROM t_msg m WHERE TRUE`, columns+`, NULL::bigint`, []any{}
+	}
+	if input.ID != nil {
+		args = append(args, *input.ID)
+		from += fmt.Sprintf(" AND m.id = $%d", len(args))
 	}
 	if strings.TrimSpace(input.Query) != "" {
 		escaped := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(strings.TrimSpace(input.Query)) + "%"

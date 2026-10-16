@@ -14,6 +14,70 @@ import (
 
 const auditPayloadLimit = 64 << 10
 
+// auditHeaders snapshots request headers before handlers run. Host is stored
+// separately by net/http and must be included explicitly.
+func auditHeaders(r *http.Request, policy redact.Policy) json.RawMessage {
+	values := make(url.Values, len(r.Header)+1)
+	size := 0
+	for name, items := range r.Header {
+		name = http.CanonicalHeaderKey(name)
+		size += len(name)
+		for _, value := range items {
+			size += len(value)
+			if size > auditPayloadLimit {
+				return json.RawMessage(`{"_omitted":"size limit"}`)
+			}
+			if policy.IsSensitive(name) {
+				value = "[redacted]"
+			} else {
+				value = auditHeaderURL(name, value, policy)
+			}
+			values[name] = append(values[name], value)
+		}
+	}
+	if r.Host != "" {
+		values["Host"] = []string{r.Host}
+	}
+	result, _ := json.Marshal(auditQuery(values, policy))
+	if len(result) > auditPayloadLimit {
+		return json.RawMessage(`{"_omitted":"size limit"}`)
+	}
+	return result
+}
+
+func auditHeaderURL(name, value string, policy redact.Policy) string {
+	switch strings.ToLower(name) {
+	case "referer", "location", "content-location", "x-original-uri", "x-original-url", "x-rewrite-url", "x-forwarded-uri", "x-permission-uri":
+	default:
+		return value
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return "[redacted]"
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return "[redacted]"
+	}
+	changed := false
+	for key := range query {
+		if policy.IsSensitive(key) {
+			query[key] = []string{"[redacted]"}
+			changed = true
+		}
+	}
+	if changed {
+		u.RawQuery = query.Encode()
+	}
+	if u.User != nil {
+		u.User = url.User("[redacted]")
+	}
+	if u.Fragment != "" {
+		u.Fragment = "[redacted]"
+	}
+	return u.String()
+}
+
 type auditBuffer struct {
 	data     []byte
 	overflow bool

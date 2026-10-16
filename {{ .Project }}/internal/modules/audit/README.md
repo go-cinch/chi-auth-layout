@@ -16,9 +16,32 @@ matching records and rejects larger results rather than silently truncating.
 Untrusted spreadsheet cell prefixes are neutralized.
 
 `t_audit_event` stores request start (Unix milliseconds), verified actor ID when available,
-account (attempted account on failed login), HTTP outcome, method/path, peer IP,
-user agent, trace ID, safe error code and duration. Operation events include bounded, recursively sanitized request query/body and response parameters. Sensitive keys use the shared redaction policy and are replaced completely with `[redacted]`; challenge, credential, proof, JWK, password, token and configured custom keys are hidden. Headers are never captured. Files are represented by `file`; unstructured, invalid or oversized bodies are explicitly omitted. Each captured side is limited to 64 KiB. Login events remain metadata-only. Forwarded IP headers
-are not trusted; when proxied the recorded IP is the proxy peer.
+account (attempted account on failed login), HTTP outcome, method/path, resolved client IP,
+user agent, trace ID, safe error code and duration.
+
+Both login and operation events include a dedicated `header` JSON field containing
+request headers as seen by the service before handlers execute, including `Host`
+(which Go stores separately). Single values are strings; repeated values are arrays.
+The three IP headers (`X-Verified-Client-IP`, `X-Real-IP`, `X-Forwarded-For`) are retained
+for investigation. Their presence in this snapshot does not establish trust: only
+`X-Verified-Client-IP` from `http.trustedProxies` influences the resolved `ip` field;
+otherwise the connection peer is recorded.
+
+Sensitive header names use the shared redaction policy plus `redact.keys` overrides.
+Authorization, proxy authorization, cookies, API keys, tokens, sessions, signatures,
+CSRF/XSRF, JWT and baggage values are replaced completely with `[redacted]`.
+URL-valued headers such as Referer and X-Original-URI also hide credentials, sensitive
+query parameters and fragments. Embedded JSON values use recursive redaction.
+Other custom sensitive header names must be added to `redact.keys`.
+Snapshots are bounded to 64 KiB; oversized snapshots contain an explicit `_omitted`
+marker. Records without a snapshot have `header: null`. The initial auth schema
+includes the header column and its object-or-null constraint.
+
+Operation events also include bounded, recursively sanitized request query/body and
+response parameters. Challenge, credential, proof, JWK, password, token and configured
+custom keys are hidden. Files are represented by `file`; unstructured, invalid or
+oversized bodies are explicitly omitted. Each captured side is limited to 64 KiB.
+Login request and response bodies are never captured.
 
 Success means HTTP 200–399. Login records include restricted first-login sessions
 and failed credentials/challenges submitted to the final login endpoint. Setup
@@ -69,4 +92,4 @@ Business timestamps use BIGINT Unix milliseconds in SQL and int64 in Go/HTTP. Ca
 
 Operation events include `operation`, `resource_type`, and `resource_id` when known. Request/response parameters describe the HTTP exchange; they are not a database before/after snapshot. Audit records retain actor/account snapshots after account deletion.
 
-Request and response payloads are returned by the detail endpoint only. List and CSV queries load metadata without payloads, keeping large-page memory usage bounded by metadata rather than captured bodies.
+Headers and request/response payloads are returned by the detail endpoint only. List and CSV queries load metadata without headers or payloads, keeping large-page memory usage bounded by metadata rather than captured request data.

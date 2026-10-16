@@ -92,6 +92,57 @@ func TestAuditCapture(t *testing.T) {
 	}
 }
 
+func TestAuditRequestHeaders(t *testing.T) {
+	for _, kind := range []string{"login", "operation"} {
+		t.Run(kind, func(t *testing.T) {
+			recorder := &recordedAudit{target: auditctx.Target{Kind: kind, Module: "test"}}
+			handler := auditHandler(recorder, func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer never-store" {
+					t.Fatal("audit changed the live request")
+				}
+				r.Header.Set("X-Verified-Client-IP", "changed-by-handler")
+				w.WriteHeader(http.StatusUnauthorized)
+			})
+			req := httptest.NewRequest(http.MethodPost, "/test?token=never-store", strings.NewReader(`{"password":"never-store"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer never-store")
+			req.Header.Set("Cookie", "session=never-store")
+			req.Header.Set("X-Api-Key", "never-store")
+			req.Header.Set("X-Tenant-Secret", "never-store")
+			req.Header.Set("X-Verified-Client-IP", "203.0.113.5")
+			req.Header.Set("X-Real-IP", "203.0.113.6")
+			req.Header.Add("X-Forwarded-For", "192.0.2.99")
+			req.Header.Add("X-Forwarded-For", "203.0.113.5")
+			req.Header.Set("X-Debug-Context", "keep-for-audit")
+			req.RemoteAddr = "127.0.0.1:1234"
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+			event := recorder.events[0]
+			var headers map[string]any
+			if err := json.Unmarshal(event.Header, &headers); err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range map[string]string{
+				"Authorization": "[redacted]", "Cookie": "[redacted]", "X-Api-Key": "[redacted]", "X-Tenant-Secret": "[redacted]",
+				"X-Verified-Client-Ip": "203.0.113.5", "X-Real-Ip": "203.0.113.6", "X-Debug-Context": "keep-for-audit", "Host": "example.com",
+			} {
+				if headers[key] != want {
+					t.Errorf("%s = %v, want %q", key, headers[key], want)
+				}
+			}
+			forwarded, ok := headers["X-Forwarded-For"].([]any)
+			if !ok || len(forwarded) != 2 || forwarded[0] != "192.0.2.99" || forwarded[1] != "203.0.113.5" {
+				t.Fatalf("repeated header values lost: %v", headers)
+			}
+			if strings.Contains(string(event.Header), "never-store") || event.IP != "127.0.0.1" {
+				t.Fatalf("secret captured or diagnostic headers trusted: %s, %s", event.Header, event.IP)
+			}
+			if kind == "login" && (event.RequestParams != nil || event.ResponseParams != nil) {
+				t.Fatal("login bodies must remain uncaptured")
+			}
+		})
+	}
+}
+
 func TestAuditLoginAndIgnoredTarget(t *testing.T) {
 	recorder := &recordedAudit{target: auditctx.Target{Kind: "login", Module: "test"}}
 	handler := auditHandler(recorder, func(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +167,7 @@ func TestAuditLoginAndIgnoredTarget(t *testing.T) {
 	recorder.fail = true
 	request := httptest.NewRequest("POST", "/test", nil).WithContext(ctx)
 	request.RemoteAddr = "local"
-	finishAudit(recorder, request, state, auditctx.Target{Kind: "operation"}, 0, time.Now(), http.Header{}, &auditBuffer{}, &auditBuffer{}, redact.New())
+	finishAudit(recorder, request, state, auditctx.Target{Kind: "operation"}, 0, time.Now(), http.Header{}, &auditBuffer{}, &auditBuffer{}, redact.New(), nil)
 	if recorder.events[1].Status != 200 || recorder.events[1].IP != "local" {
 		t.Fatal(recorder.events)
 	}
@@ -159,7 +210,7 @@ func TestAuditFailureLogsStructuredContext(t *testing.T) {
 	request := httptest.NewRequest("POST", "/reset/never-log-secret?password=never-log-query", nil).WithContext(ctx)
 	recorder := &recordedAudit{fail: true}
 	target := auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_password"}
-	finishAudit(recorder, request, state, target, 500, time.Now(), http.Header{}, &auditBuffer{}, &auditBuffer{}, redact.New())
+	finishAudit(recorder, request, state, target, 500, time.Now(), http.Header{}, &auditBuffer{}, &auditBuffer{}, redact.New(), nil)
 	var entry map[string]any
 	if err := json.Unmarshal(output.Bytes(), &entry); err != nil { t.Fatal(err) }
 	for key, want := range map[string]any{

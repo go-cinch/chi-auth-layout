@@ -49,6 +49,23 @@ func TestIndexedEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+func TestTrustedProxyEnvironmentOverride(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "http.yml"), []byte("http:\n  trustedProxies: \"\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"localhost,10.62.32.0/24", ""} {
+		t.Setenv("SERVICE_HTTP_TRUSTEDPROXIES", value)
+		cfg, overrides, err := LoadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.HTTP.TrustedProxies != value || len(overrides) != 1 || overrides[0].Key != "http.trustedProxies" {
+			t.Fatalf("trusted proxy override: %q, %+v", cfg.HTTP.TrustedProxies, overrides)
+		}
+	}
+}
+
 func TestNestedListsAndSensitiveOverrides(t *testing.T) {
 	dir := t.TempDir()
 	data := `custom:

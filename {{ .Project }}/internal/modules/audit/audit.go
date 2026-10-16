@@ -34,6 +34,7 @@ func New(store *db.Store, limits pagination.Limits) *Module {
 
 type Event struct {
 	selectedFields report.Fields
+	Header         json.RawMessage `json:"header"`
 	Operation      string          `json:"operation"`
 	ResourceType   string          `json:"resource_type"`
 	ResourceID     string          `json:"resource_id"`
@@ -115,9 +116,9 @@ func (m *Module) RecordHTTP(ctx context.Context, event auditctx.Event) error {
 		}
 	}
 	_, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_audit_event
- (occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params)
- VALUES ($1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-		event.OccurredAt, event.Kind, event.UserID, clean(event.Username, 256), clean(event.Module, 64), clean(event.Method, 16), clean(event.Path, 1024), clean(event.IP, 128), clean(event.UserAgent, 512), clean(event.TraceID, 128), clean(event.ErrorCode, 128), event.Status, max(int64(0), event.DurationMS), clean(event.Operation, 32), clean(event.ResourceType, 64), clean(event.ResourceID, 1024), jsonValue(event.RequestParams), jsonValue(event.ResponseParams))
+ (occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header)
+ VALUES ($1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+		event.OccurredAt, event.Kind, event.UserID, clean(event.Username, 256), clean(event.Module, 64), clean(event.Method, 16), clean(event.Path, 1024), clean(event.IP, 128), clean(event.UserAgent, 512), clean(event.TraceID, 128), clean(event.ErrorCode, 128), event.Status, max(int64(0), event.DurationMS), clean(event.Operation, 32), clean(event.ResourceType, 64), clean(event.ResourceID, 1024), jsonValue(event.RequestParams), jsonValue(event.ResponseParams), jsonValue(event.Header))
 	return err
 }
 
@@ -203,15 +204,15 @@ func order(f Filter) string {
 	}
 }
 
-const columns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params"
+const columns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header"
 
 // List and export carry metadata only; bounded payloads are loaded by detail.
-const listColumns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,'null'::jsonb,'null'::jsonb"
+const listColumns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,'null'::jsonb,'null'::jsonb,'null'::jsonb"
 
 func scan(row interface{ Scan(...any) error }) (Event, error) {
 	var e Event
 	var at int64
-	err := row.Scan(&e.ID, &at, &e.Kind, &e.UserID, &e.Username, &e.Module, &e.Method, &e.Path, &e.IP, &e.UserAgent, &e.TraceID, &e.ErrorCode, &e.Status, &e.DurationMS, &e.Operation, &e.ResourceType, &e.ResourceID, &e.RequestParams, &e.ResponseParams)
+	err := row.Scan(&e.ID, &at, &e.Kind, &e.UserID, &e.Username, &e.Module, &e.Method, &e.Path, &e.IP, &e.UserAgent, &e.TraceID, &e.ErrorCode, &e.Status, &e.DurationMS, &e.Operation, &e.ResourceType, &e.ResourceID, &e.RequestParams, &e.ResponseParams, &e.Header)
 	e.OccurredAt = at
 	return e, err
 }

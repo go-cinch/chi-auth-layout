@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,39 @@ import (
 
 	"{{ .Computed.module_name_final }}/internal/common/redact"
 )
+
+func TestAuditHeaderRedactionAndLimits(t *testing.T) {
+	policy := redact.New("X-Custom-Value")
+	r := httptest.NewRequest(http.MethodPost, "https://auth.example/login", nil)
+	for _, name := range []string{"authorization", "PROXY-AUTHORIZATION", "Cookie", "Set-Cookie", "X-Api-Key", "X-Access-Token", "X-JWT", "X-CSRF", "X-XSRF", "X-Signature", "Baggage", "X-Custom-Value"} {
+		r.Header.Set(name, "never-store")
+	}
+	r.Header.Set("Referer", "https://user:never-store@example.com/login?token=never-store&view=logs#never-store")
+	r.Header.Set("X-Original-URI", "/login?password=never-store&q=safe")
+	r.Header.Set("X-Debug", `{"password":"never-store","value":"safe"}`)
+	encoded := auditHeaders(r, policy)
+	if strings.Contains(string(encoded), "never-store") || !strings.Contains(string(encoded), "safe") {
+		t.Fatalf("unsafe header snapshot: %s", encoded)
+	}
+	if r.Header.Get("Authorization") != "never-store" {
+		t.Fatal("request headers mutated")
+	}
+	for _, value := range []string{"%ZZ", "/login?token=%ZZ"} {
+		if got := auditHeaderURL("Referer", value, policy); got != "[redacted]" {
+			t.Fatalf("invalid URL captured: %q", got)
+		}
+	}
+	if got := auditHeaderURL("Referer", "https://example.com/?q=safe", policy); got != "https://example.com/?q=safe" {
+		t.Fatalf("safe URL changed: %s", got)
+	}
+	for _, value := range []string{strings.Repeat("x", auditPayloadLimit+1), strings.Repeat("\x01", auditPayloadLimit/2)} {
+		r.Header.Set("X-Large", value)
+		encoded = auditHeaders(r, policy)
+		if len(encoded) > auditPayloadLimit || !json.Valid(encoded) || !strings.Contains(string(encoded), "size limit") {
+			t.Fatalf("unbounded header snapshot: %d bytes", len(encoded))
+		}
+	}
+}
 
 func TestAuditPayloadBoundaries(t *testing.T) {
 	policy := redact.New()

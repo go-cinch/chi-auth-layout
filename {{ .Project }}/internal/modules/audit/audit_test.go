@@ -33,7 +33,7 @@ func eventRows() *sqlmock.Rows {
 }
 
 func row() *sqlmock.Rows {
-	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/auth/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"))
+	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/auth/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"), []byte("null"))
 }
 
 func TestRecordAndRead(t *testing.T) {

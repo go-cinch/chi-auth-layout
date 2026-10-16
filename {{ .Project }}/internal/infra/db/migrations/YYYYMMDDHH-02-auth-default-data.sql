@@ -110,68 +110,17 @@ SELECT setval(pg_get_serial_sequence('t_whitelist', 'id'), (SELECT MAX(id) FROM 
 SELECT setval(pg_get_serial_sequence('t_dictionary', 'id'), (SELECT MAX(id) FROM t_dictionary), true);
 
 -- +migrate Down
-DELETE FROM t_user_msg_status WHERE user_id IN (1, 2, 3, 4, 5);
-
-DELETE FROM t_dictionary WHERE id IN (1, 2);
-
-DELETE FROM t_user_user_group_relation
-WHERE (user_id, user_group_id) IN (
-    (3, 1),
-    (4, 2),
-    (5, 3)
-);
-
-DELETE FROM t_user WHERE id IN (
-    1,
-    2,
-    3,
-    4,
-    5
-);
-
-DELETE FROM t_user_group WHERE id IN (
-    1,
-    2,
-    3
-);
-
-DELETE FROM t_role WHERE id IN (1, 2);
-
-DELETE FROM t_action WHERE id IN (
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
-    11,
-    12,
-    13,
-    14,
-    15,
-    16,
-    17,
-    18,
-    19,
-    20,
-    21,
-    22,
-    23,
-    24,
-    25,
-    26,
-    27,
-    28,
-    29,
-    30,
-    31,
-    32,
-    33,
-    34
-);
-
-DELETE FROM t_whitelist WHERE id IN (1, 2);
+-- Clear all auth tables, including runtime data, and reset their sequences.
+TRUNCATE TABLE
+    t_audit_event,
+    t_user_msg_status,
+    t_msg_recipient,
+    t_msg,
+    t_dictionary,
+    t_whitelist,
+    t_user_user_group_relation,
+    t_user,
+    t_user_group,
+    t_role,
+    t_action
+RESTART IDENTITY;

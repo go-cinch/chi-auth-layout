@@ -17,6 +17,7 @@ type Target struct {
 }
 
 type Event struct {
+	Header         json.RawMessage `json:"header"`
 	Operation      string          `json:"operation"`
 	ResourceType   string          `json:"resource_type"`
 	ResourceID     string          `json:"resource_id"`

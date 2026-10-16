@@ -275,3 +275,43 @@ func TestAuditPayloadPersistenceAndHistory(t *testing.T) {
 		t.Fatal("audit history must survive actor deletion", detail, err)
 	}
 }
+
+func TestAuditHeaderPersistenceAndHistory(t *testing.T) {
+	store := permissionDatabase(t)
+	limits, _ := pagination.New(100, 100)
+	m := audit.New(store, limits)
+	at := time.Now().UnixMilli()
+	header := json.RawMessage(`{"Authorization":"[redacted]","X-Verified-Client-Ip":"203.0.113.5","X-Real-Ip":"203.0.113.6","X-Forwarded-For":["192.0.2.99","203.0.113.5"]}`)
+	for _, kind := range []string{"login", "operation"} {
+		if err := m.RecordHTTP(t.Context(), auditctx.Event{Kind: kind, Module: "auth", Method: "POST", Path: "/auth/pub/login", Status: 401, OccurredAt: at, Header: header}); err != nil {
+			t.Fatal(err)
+		}
+		page, err := m.List(t.Context(), audit.Filter{Kind: kind, From: at, To: at + 1000})
+		if err != nil || page.Total != 1 || string(page.Items[0].Header) != "null" {
+			t.Fatalf("list must not load headers: %+v, %v", page, err)
+		}
+		detail, err := m.Get(t.Context(), kind, page.Items[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(detail.Header, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["Authorization"] != "[redacted]" || got["X-Verified-Client-Ip"] != "203.0.113.5" || len(got["X-Forwarded-For"].([]any)) != 2 {
+			t.Fatalf("header snapshot lost: %s", detail.Header)
+		}
+		encoded, err := json.Marshal(detail)
+		if err != nil || !strings.Contains(string(encoded), `"header":{`) {
+			t.Fatalf("detail header contract: %s, %v", encoded, err)
+		}
+	}
+	var legacyID int64
+	if err := store.DB.QueryRowContext(t.Context(), `INSERT INTO t_audit_event(occurred_at,kind,module,method,path,status,duration_ms) VALUES ($1,'login','auth','POST','/auth/pub/login',200,0) RETURNING id`, at).Scan(&legacyID); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := m.Get(t.Context(), "login", legacyID)
+	if err != nil || string(legacy.Header) != "null" {
+		t.Fatalf("legacy header default: %+v, %v", legacy, err)
+	}
+}

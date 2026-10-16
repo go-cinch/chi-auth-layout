@@ -3,6 +3,10 @@ http:
   timeout: {{ or .Scaffold.http_timeout "30s" }}
   readHeaderTimeout: 5s
   idleTimeout: 2m
+  # Comma-separated proxy IPs/CIDRs; localhost trusts IPv4/IPv6 loopback proxies.
+  # Only these peers may supply X-Verified-Client-IP; the gateway must overwrite it.
+  # X-Real-IP and X-Forwarded-For are ignored. Empty trusts no forwarded IP headers.
+  trustedProxies: ""
   docs:
     enabled: false
     servers:

@@ -294,10 +294,12 @@ CREATE TABLE t_audit_event (
     resource_id VARCHAR(1024) NOT NULL DEFAULT '',
     request_params JSONB NOT NULL DEFAULT 'null'::jsonb,
     response_params JSONB NOT NULL DEFAULT 'null'::jsonb,
+    header JSONB NOT NULL DEFAULT 'null'::jsonb,
     CONSTRAINT ck_audit_event_kind CHECK (kind IN ('login', 'operation')),
     CONSTRAINT ck_audit_event_user CHECK (user_id IS NULL OR user_id > 0),
     CONSTRAINT ck_audit_event_status CHECK (status BETWEEN 100 AND 599),
-    CONSTRAINT ck_audit_event_duration CHECK (duration_ms >= 0)
+    CONSTRAINT ck_audit_event_duration CHECK (duration_ms >= 0),
+    CONSTRAINT ck_audit_event_header CHECK (jsonb_typeof(header) IN ('object', 'null'))
 );
 
 COMMENT ON TABLE t_audit_event IS 'Append-only login attempts and business HTTP mutations; only sanitized parameters, never raw secrets or file contents';
@@ -322,7 +324,7 @@ COMMENT ON COLUMN t_audit_event.method IS 'HTTP request method';
 
 COMMENT ON COLUMN t_audit_event.path IS 'Request path without query string';
 
-COMMENT ON COLUMN t_audit_event.ip IS 'Transport peer IP; untrusted forwarded headers are ignored';
+COMMENT ON COLUMN t_audit_event.ip IS 'Verified client IP from a configured trusted proxy, otherwise transport peer IP';
 
 COMMENT ON COLUMN t_audit_event.user_agent IS 'Bounded client user-agent snapshot';
 
@@ -343,6 +345,8 @@ COMMENT ON COLUMN t_audit_event.resource_id IS 'Target object identifier or comm
 COMMENT ON COLUMN t_audit_event.request_params IS 'Sanitized query and body; secrets hidden, files represented by file, unsafe or oversized bodies omitted';
 
 COMMENT ON COLUMN t_audit_event.response_params IS 'Sanitized response body; secrets hidden, files represented by file, unsafe or oversized bodies omitted';
+
+COMMENT ON COLUMN t_audit_event.header IS 'Request headers for login and operation audit; sensitive values fully redacted; historical rows have no snapshot';
 
 CREATE INDEX idx_audit_event_kind_time ON t_audit_event (kind, occurred_at DESC, id DESC);
 

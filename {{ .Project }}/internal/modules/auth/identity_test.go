@@ -2,23 +2,26 @@ package auth
 
 import (
 	"database/sql"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/server"
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestIdentityValidator(t *testing.T) {
+	localizer := localization.New()
 	for _, enabled := range []bool{false, true} {
 		for _, scenario := range []string{"valid", "reset required", "stale", "pending", "locked", "missing", "database failure", "renamed", "changed code", "wrong session user", "wrong session version", "revoked"} {
 			t.Run(scenario+map[bool]string{false: "/authorization-off", true: "/authorization-on"}[enabled], func(t *testing.T) {
 				m, _, mock := newAuthTestModule(t)
+				localizer = m.catalogSource.(*localization.Module)
 				identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
 				issued, err := m.sessions.Issue(t.Context(), identity, false)
 				if err != nil {
@@ -74,7 +77,7 @@ func TestIdentityValidator(t *testing.T) {
 				}
 				// A protected business route authenticates even when permission checks are disabled.
 				if scenario == "valid" && enabled {
-					mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3)).WillReturnRows(sqlmock.NewRows([]string{"resource", "menu", "btn"}).AddRow("PATCH|/auth/change/pwd", "", ""))
+					mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(permissionRows().AddRow("admin:update:account:profile", permissionConfig(localizer, "PATCH", "/auth/change/pwd")))
 				}
 				token, _, err := manager.Issue(identity)
 				if err != nil {

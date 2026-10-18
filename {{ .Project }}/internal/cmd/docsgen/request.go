@@ -28,7 +28,19 @@ func (g *generator) requestSchema(pkg *sourcePackage, handler *ast.FuncDecl) *sc
 			return false
 		}
 		call, ok := node.(*ast.CallExpr)
-		if !ok || len(call.Args) != 1 {
+		if !ok {
+			return true
+		}
+		// Dictionary writes share a bounded, strict JSON decoder.
+		if function, ok := call.Fun.(*ast.Ident); ok && function.Name == "decodeDictionaryInput" && len(call.Args) == 3 {
+			expression := call.Args[2]
+			if address, ok := expression.(*ast.UnaryExpr); ok && address.Op == token.AND {
+				expression = address.X
+			}
+			result = g.expressionSchema(pkg, handler, expression)
+			return false
+		}
+		if len(call.Args) != 1 {
 			return true
 		}
 		selector, ok := call.Fun.(*ast.SelectorExpr)

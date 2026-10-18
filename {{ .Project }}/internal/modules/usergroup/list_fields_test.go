@@ -103,7 +103,7 @@ func TestSelectedActionSummariesSkipRules(t *testing.T) {
 	size := int32(2)
 	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(2))
 	mock.ExpectQuery("SELECT name, action FROM t_user_group").WillReturnRows(sqlmock.NewRows([]string{"name", "action"}).AddRow("assigned", "WRITE,READ,MISSING").AddRow("empty", ""))
-	mock.ExpectQuery("SELECT code, name, action_group FROM t_action WHERE code = ANY").WillReturnRows(sqlmock.NewRows([]string{"code", "name", "action_group"}).AddRow("READ", "Read", "Demo").AddRow("WRITE", "Write", "Demo"))
+	mock.ExpectQuery("SELECT code, word, action_group, config - 'ui' - 'endpoints' FROM t_action WHERE code = ANY").WillReturnRows(sqlmock.NewRows([]string{"code", "word", "action_group", "config"}).AddRow("READ", "Read", "Demo", `{}`).AddRow("WRITE", "Write", "Demo", `{}`))
 	value, err := m.List(t.Context(), ListUserGroupsInput{PageSize: &size, Fields: report.Fields{"name", "action_summaries"}})
 	if err != nil {
 		t.Fatal(err)

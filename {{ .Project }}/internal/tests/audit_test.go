@@ -3,10 +3,6 @@ package tests
 import (
 	"encoding/json"
 	"errors"
-	"net/http/httptest"
-	"strings"
-	"testing"
-	"time"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/config"
@@ -14,10 +10,16 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/server"
 	"{{ .Computed.module_name_final }}/internal/modules/audit"
 	"{{ .Computed.module_name_final }}/internal/modules/auth"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
 )
 
 func TestAuditAggregationsAndIsolation(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := audit.New(store, limits)
 	ctx := t.Context()
@@ -64,6 +66,8 @@ func TestAuditAggregationsAndIsolation(t *testing.T) {
 
 func TestAuditSelectedCellAndSort(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := audit.New(store, limits)
 	ctx := t.Context()
@@ -123,8 +127,14 @@ func TestAuditSelectedCellAndSort(t *testing.T) {
 
 func TestAuditReadExportPermissions(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
+	if _, err := store.DB.ExecContext(t.Context(), `UPDATE t_action SET config=JSONB_SET(config,'{bindings,0,feature_keys}',(config #> '{bindings,0,feature_keys}') - 'admin:audit:login:export-report') WHERE word='admin:read:audit:login'`); err != nil {
+		t.Fatal(err)
+	}
+
 	limits, _ := pagination.New(100, 100)
-	_, err := store.DB.ExecContext(t.Context(), `UPDATE t_user SET role_id=NULL, action=(SELECT code FROM t_action WHERE word='audit.login.read'),login_count=1 WHERE id=2`)
+	_, err := store.DB.ExecContext(t.Context(), `UPDATE t_user SET role_id=NULL, action=(SELECT code FROM t_action WHERE word='admin:read:audit:login'),login_count=1 WHERE id=2`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +158,7 @@ func TestAuditReadExportPermissions(t *testing.T) {
 	}
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
-	handler, err := server.NewRouter(cfg, manager, nil, auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{}), audit.New(store, limits))
+	handler, err := server.NewRouter(cfg, manager, nil, auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{}, localizer), audit.New(store, limits))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +185,8 @@ func TestAuditReadExportPermissions(t *testing.T) {
 
 func TestAuditHeatmapCalendarBuckets(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := audit.New(store, limits)
 	location, _ := time.LoadLocation("Asia/Shanghai")
@@ -216,6 +228,8 @@ func TestAuditHeatmapCalendarBuckets(t *testing.T) {
 
 func TestAuditEpochStorageAndActorConstraint(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	conn, err := store.DB.Conn(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -247,6 +261,8 @@ func TestAuditEpochStorageAndActorConstraint(t *testing.T) {
 
 func TestAuditPayloadPersistenceAndHistory(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := audit.New(store, limits)
 	at := time.Now().UnixMilli()
@@ -278,6 +294,8 @@ func TestAuditPayloadPersistenceAndHistory(t *testing.T) {
 
 func TestAuditHeaderPersistenceAndHistory(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := audit.New(store, limits)
 	at := time.Now().UnixMilli()

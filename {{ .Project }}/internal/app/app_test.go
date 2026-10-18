@@ -1,6 +1,7 @@
 package app
 
 import (
+ "{{ .Computed.module_name_final }}/internal/modules/localization"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,8 +28,8 @@ func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
 	defer database.Close()
 	limits, err := pagination.New(10000, 10000)
 	if err != nil { t.Fatal(err) }
-	a := &Application{db: &db.Store{DB: database}, pagination: limits, authenticator: testAuthenticator(t)}
-	a.dictionaryModule, err = dictionarymodule.New(a.db, dictionarymodule.NewMemoryValueCache(), dictionarymodule.CacheTTL, limits, false)
+	a := &Application{localization: localization.New(), db: &db.Store{DB: database}, pagination: limits, authenticator: testAuthenticator(t)}
+	a.dictionaryModule, err = dictionarymodule.New(a.db, dictionarymodule.NewMemoryValueCache(), dictionarymodule.CacheTTL, limits, false, a.localization)
 	if err != nil { t.Fatal(err) }
 	a.wireBusinessModules()
 	want := map[string]modules.HTTPModule{
@@ -40,7 +41,6 @@ func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
 		"/role": a.roleModule,
 		"/user": a.userModule,
 		"/user-group": a.groupModule,
-		"/whitelist": a.whitelistModule,
 	}
 	// Rebuilding the transport registry must never rebuild a business module.
 	for range 2 {
@@ -94,7 +94,7 @@ func TestBusinessModuleWiring(t *testing.T) {
 	database, mock, err := sqlmock.New()
 	if err != nil { t.Fatal(err) }
 	defer database.Close()
-	a := &Application{db: &db.Store{DB:database}, authenticator:testAuthenticator(t), idempotencyKeys:idempotency.NewMemoryStore()}
+	a := &Application{localization: localization.New(), db: &db.Store{DB:database}, authenticator:testAuthenticator(t), idempotencyKeys:idempotency.NewMemoryStore()}
 	a.wireBusinessModules()
 	cfg := &config.Config{}
 	cfg.Idempotency.TTL = time.Minute
@@ -125,6 +125,8 @@ func TestSignalContextCanBeCanceled(t *testing.T) {
 
 func TestBusinessHTTPAlwaysRequiresAuthentication(t *testing.T) {
 	a := &Application{
+ localization: localization.New(),
+
 		db: &db.Store{},
 		authenticator: testAuthenticator(t),
 		idempotencyKeys: idempotency.NewMemoryStore(),

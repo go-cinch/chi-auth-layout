@@ -12,9 +12,8 @@ func (g *generator) describeListFields(r *route) {
 	fields := map[string]string{
 		"/user":            "id,created_at,updated_at,username,code,role_id,last_logged_in_at,login_count,status,metadata,wrong,action_codes,actions,role,role_summary",
 		"/role":            "id,created_at,updated_at,name,word,action_codes,actions,action_summaries",
-		"/action":          "id,created_at,updated_at,code,name,group,word,resource,menu,button",
+		"/action":          "id,created_at,updated_at,code,name,group,word,scope,config,resource,menu,button",
 		"/dictionary":      "id,created_at,updated_at,key,name,description,enabled,value",
-		"/whitelist":       "id,created_at,updated_at,category,resource",
 		"/user-group":      "id,created_at,updated_at,name,word,action_codes,action_summaries",
 		"/msg/inbox":       "id,created_at,updated_at,title,content,summary,type,scope,sender_id,published_at,expired_at,read_at",
 		"/msg/sent":        "id,created_at,updated_at,title,content,summary,type,scope,sender_id,published_at,expired_at,read_at",

@@ -758,7 +758,13 @@ func (m *Module) info(c *gin.Context) {
 {{ else -}}
 func (m *Module) info(w http.ResponseWriter, r *http.Request) {
 {{ end }}
-	info, err := m.Info(r.Context())
+ if _,err:=url.ParseQuery(r.URL.RawQuery);err!=nil {
+  server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery)
+  return
+ }
+ info,err:=m.Info(r.Context(),authn.PermissionScope(r.Context()))
+ if errors.Is(err,ErrInfoScopeInvalid){server.WriteError(w,r,http.StatusBadRequest,err);return}
+
 	if errors.Is(err, ErrUnauthorized) {
 		server.WriteError(w, r, http.StatusUnauthorized, ErrUnauthorized)
 		return

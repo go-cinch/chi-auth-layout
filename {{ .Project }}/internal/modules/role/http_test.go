@@ -64,7 +64,7 @@ func TestRoleHTTP(t *testing.T) {
 	mock.ExpectExec("DELETE FROM t_role").WillReturnResult(sqlmock.NewResult(0, 0))
 	request(http.MethodDelete, "/99", "", http.StatusNotFound)
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}))
+	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}))
 	mock.ExpectRollback()
 	request(http.MethodPost, "/", `{"name":"Missing","word":"missing","action_codes":["MISSING1"]}`, http.StatusNotFound)
 	mock.ExpectQuery("SELECT COUNT.*FROM t_role").WillReturnError(sqlmock.ErrCancelled)

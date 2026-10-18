@@ -164,8 +164,8 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 		cfg.Auth.Authorization.Enabled = enabled
 		expectPermission := func() {
 			if enabled {
-				mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3)).WillReturnRows(
-					sqlmock.NewRows([]string{"resource", "menu", "btn"}).AddRow("POST|/auth/challenge\nPATCH|/auth/reset/pwd", "", ""),
+				mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(
+					permissionRows().AddRow("admin:update:account:profile",`{"bindings":[{"resource_key":"admin:account:profile","operation":"update","feature_keys":["admin:account:profile:modify"]}],"ui":[],"endpoints":[]}`),
 				)
 			}
 		}

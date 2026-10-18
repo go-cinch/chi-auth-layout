@@ -6,7 +6,7 @@ template_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/chi-layout-test.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
-template_seed_codes=$(rg -o '\b[23456789ABCDEFGHJKLMNPQRSTVWXY]{8}\b' "$template_dir/{{ .Project }}/internal/infra/db/migrations/YYYYMMDDHH-02-auth-default-data.sql" | sort -u)
+template_seed_codes=$(rg --no-filename -o '\b[23456789ABCDEFGHJKLMNPQRSTVWXY]{8}\b' "$template_dir/{{ .Project }}/internal/infra/db/migrations/YYYYMMDDHH-02-auth-default-data.sql" "$template_dir/{{ .Project }}/internal/infra/db/migrations/YYYYMMDDHH-03-action-default-data.sql" | sort -u)
 test "$(printf '%s\n' "$template_seed_codes" | wc -l | tr -d ' ')" = 39
 
 validate_project() (
@@ -35,14 +35,16 @@ validate_project() (
   rg -q '^  migrate: true$' conf/database.yml
   test -f internal/infra/db/migrations_embed.go
   test -f internal/infra/db/migrate.go
-  for module in auth user role action usergroup whitelist dictionary msg; do
+  for module in auth user role action usergroup dictionary msg; do
     test -f "internal/modules/$module/http.go"
   done
   test -f internal/common/authn/authn.go
   test -f internal/common/idempotency/store.go
-  for suffix in 01-auth-schema 02-auth-default-data; do
+  for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data; do
     test "$(find internal/infra/db/migrations -maxdepth 1 -name "*-$suffix.sql" | wc -l | tr -d ' ')" = 1
   done
+  test "$(find internal/infra/db/migrations -maxdepth 1 -name '*.sql' | wc -l | tr -d ' ')" = 4
+  test "$(find internal/infra/db/migrations -maxdepth 1 -name '*-03-audit-header.sql' | wc -l | tr -d ' ')" = 0
   rg -q '/auth/pub/login' internal/docs/openapi.yaml
   rg -q '/auth/pub/register' internal/docs/openapi.yaml
   rg -q '/auth/pub/challenge' internal/docs/openapi.yaml
@@ -90,7 +92,7 @@ validate_project() (
     test ! -e api
     test ! -e third_party
     test ! -e .tools
-    if rg -ni 'grpc|protobuf|protogen' internal/app internal/modules internal/cmd AGENTS.md Makefile Dockerfile README.md; then
+    if rg -ni 'google\.golang\.org/(grpc|protobuf)|protogen|modules\.GRPCModule|grpc\.ServiceRegistrar' internal/app internal/modules internal/cmd AGENTS.md Makefile Dockerfile README.md; then
       echo "gRPC references remain in an HTTP-only project" >&2
       exit 1
     fi
@@ -159,8 +161,8 @@ for router in chi gin; do
   test -f "$output_dir/$project/internal/app/modules.gen.go"
   test -x "$output_dir/$project/bin/$project"
   test ! -e "$output_dir/$project/internal/cmd/seedcode"
-  seed_files=$(find "$output_dir/$project/internal/infra/db/migrations" -maxdepth 1 -name '*-02-auth-default-data.sql')
-  seed_codes=$(rg -o '\b[23456789ABCDEFGHJKLMNPQRSTVWXY]{8}\b' $seed_files | sed 's/^.*://' | sort -u)
+  seed_files=$(find "$output_dir/$project/internal/infra/db/migrations" -maxdepth 1 -type f \( -name '*-02-auth-default-data.sql' -o -name '*-03-action-default-data.sql' \))
+  seed_codes=$(rg --no-filename -o '\b[23456789ABCDEFGHJKLMNPQRSTVWXY]{8}\b' $seed_files | sort -u)
   test "$(printf '%s\n' "$seed_codes" | wc -l | tr -d ' ')" = 39
   if [ -n "$(printf '%s\n' "$template_seed_codes" "$seed_codes" | sort | uniq -d)" ]; then
     echo "default seed codes were not randomized" >&2

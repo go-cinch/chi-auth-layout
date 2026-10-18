@@ -4,17 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
 	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
 	usermodule "{{ .Computed.module_name_final }}/internal/modules/user"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 )
 
 var userGroupTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
@@ -36,7 +38,7 @@ func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 		t.Fatal(err)
 	}
 	store := &db.Store{DB: database}
-	actions := actionmodule.New(store, limits, false)
+	actions := actionmodule.New(store, limits, false, localization.New())
 	roles := rolemodule.New(store, limits, actions, false)
 	users := usermodule.New(store, limits, nil, nil, actions, roles, authmodule.Switches{PasswordResetRequired: true})
 	return New(store, limits, actions, users), mock
@@ -160,8 +162,8 @@ func TestUserGroupAssociations(t *testing.T) {
 	codes := []string{"ABCDEFGH"}
 	users := []int64{3}
 	actionRows := func() *sqlmock.Rows {
-		return sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
-			AddRow(1, userGroupTestTime, userGroupTestTime, "ABCDEFGH", "Demo", "Demo", "demo.read", "", "", "")
+		return sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}).
+			AddRow(1, userGroupTestTime, userGroupTestTime, "ABCDEFGH", "Demo", "demo.read", "admin", `{"ui":[],"endpoints":[]}`)
 	}
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(actionRows())
@@ -208,9 +210,9 @@ func TestUserGroupListBatchesRelations(t *testing.T) {
 			AddRow(2, userGroupTestTime, userGroupTestTime, "Readers", "readers", "READ").
 			AddRow(1, userGroupTestTime, userGroupTestTime, "Empty", "empty", "")).RowsWillBeClosed()
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code = ANY").WithArgs(pq.Array([]string{"WRITE", "READ", "MISSING"})).WillReturnRows(
-		sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
-			AddRow(1, userGroupTestTime, userGroupTestTime, "READ", "Read", "Demo", "read", "", "", "").
-			AddRow(2, userGroupTestTime, userGroupTestTime, "WRITE", "Write", "Demo", "write", "", "", ""))
+		sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}).
+			AddRow(1, userGroupTestTime, userGroupTestTime, "READ", "Demo", "read", "admin", `{"ui":[],"endpoints":[]}`).
+			AddRow(2, userGroupTestTime, userGroupTestTime, "WRITE", "Demo", "write", "admin", `{"ui":[],"endpoints":[]}`))
 	mock.ExpectQuery("SELECT relation.user_group_id, u.id.*ORDER BY relation.user_group_id, u.id").WithArgs(pq.Array([]int64{3, 2, 1})).WillReturnRows(
 		sqlmock.NewRows([]string{"user_group_id", "id", "username", "code"}).AddRow(2, 4, "reader", "USER0004").AddRow(3, 4, "reader", "USER0004").AddRow(3, 8, "editor", "USER0008"))
 	result, err := m.List(t.Context(), ListUserGroupsInput{PageSize: &size})
@@ -239,5 +241,63 @@ func TestUserGroupListRejectsMemberFailure(t *testing.T) {
 	mock.ExpectQuery("SELECT relation.user_group_id, u.id").WillReturnError(sql.ErrConnDone)
 	if result, err := m.List(t.Context(), ListUserGroupsInput{}); result != nil || !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("partial group: %#v %v", result, err)
+	}
+}
+
+type groupPermissionPolicy struct{ grant bool }
+
+func (p groupPermissionPolicy) RequirePermissionGrant(context.Context) error {
+	if !p.grant {
+		return authn.ErrPermissionGrantRequired
+	}
+	return nil
+}
+
+func (groupPermissionPolicy) LockPermissionMutation(context.Context) error { return nil }
+func TestGroupGrantPolicyIncludesMembership(t *testing.T) {
+	m, mock := newTestModule(t)
+	m.SetPermissionAdministration(groupPermissionPolicy{})
+	ids := []int64{2}
+	codes := []string{"ALL00001"}
+	operations := []func() error{
+		func() error {
+			_, err := m.Create(t.Context(), CreateUserGroupInput{Name: "Group", Word: "group", UserIDs: ids})
+			return err
+		},
+		func() error {
+			_, err := m.Update(t.Context(), 2, UpdateUserGroupInput{ActionCodes: &codes})
+			return err
+		},
+		func() error { _, err := m.Update(t.Context(), 2, UpdateUserGroupInput{UserIDs: &ids}); return err },
+		func() error { _, err := m.Update(t.Context(), 2, UpdateUserGroupInput{AddUserIDs: &ids}); return err },
+		func() error {
+			_, err := m.Update(t.Context(), 2, UpdateUserGroupInput{RemoveUserIDs: &ids})
+			return err
+		},
+	}
+	for _, operation := range operations {
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+		if err := operation(); !errors.Is(err, authn.ErrPermissionGrantRequired) {
+			t.Fatal(err)
+		}
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT EXISTS.*FROM t_user_group").WillReturnRows(sqlmock.NewRows([]string{"assigned"}).AddRow(true))
+	mock.ExpectRollback()
+	if err := m.Delete(t.Context(), 2); !errors.Is(err, authn.ErrPermissionGrantRequired) {
+		t.Fatal(err)
+	}
+	for _, assigned := range []bool{false, true} {
+		if assigned {
+			m.SetPermissionAdministration(groupPermissionPolicy{grant: true})
+		}
+		mock.ExpectBegin()
+		mock.ExpectQuery("SELECT EXISTS.*FROM t_user_group").WillReturnRows(sqlmock.NewRows([]string{"assigned"}).AddRow(assigned))
+		mock.ExpectExec("DELETE FROM t_user_group").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+		if err := m.Delete(t.Context(), 2); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

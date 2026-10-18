@@ -261,7 +261,7 @@ func (*Module) AuditTarget(method, path string) auditctx.Target {
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	switch parts[0] {
-	case "user", "role", "action", "user-group", "dictionary", "whitelist", "msg":
+	case "user", "role", "action", "user-group", "dictionary", "msg":
 		target = auditctx.Target{Kind: "operation", Module: parts[0], ResourceType: parts[0]}
 	case "auth":
 		switch path {

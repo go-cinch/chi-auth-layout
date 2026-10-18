@@ -4,21 +4,24 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
-	"golang.org/x/crypto/bcrypt"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const authTestKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) {
+	localizer := localization.New()
+	installAuthCatalog(t, localizer)
 	t.Helper()
 	database, mock, err := sqlmock.New()
 	if err != nil {
@@ -51,7 +54,7 @@ func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) 
 	if sliderErr != nil {
 		t.Fatal(sliderErr)
 	}
-	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, slider, passwordGuard, Switches{PasswordResetRequired: true}), authenticator, mock
+	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, slider, passwordGuard, Switches{PasswordResetRequired: true}, localizer), authenticator, mock
 }
 
 func passwordHash(t *testing.T, password string) string {
@@ -437,28 +440,24 @@ func TestChangePasswordLocksAfterSixFailures(t *testing.T) {
 
 func TestCurrentUser(t *testing.T) {
 	m, authenticator, mock := newAuthTestModule(t)
-	if _, err := m.Info(context.Background()); !errors.Is(err, ErrUnauthorized) {
+	if _, err := m.Info(context.Background(), "admin"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal(err)
 	}
 	ctx := authenticatedContext(t, authenticator, m.sessions)
 	mock.ExpectQuery("SELECT u.id, u.username, u.code").WithArgs(int64(3), "EXP78RGH").WillReturnError(sql.ErrNoRows)
-	if _, err := m.Info(ctx); !errors.Is(err, ErrUnauthorized) {
+	if _, err := m.Info(ctx, "admin"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal(err)
 	}
 	mock.ExpectQuery("SELECT u.id, u.username, u.code").WithArgs(int64(3), "EXP78RGH").WillReturnError(sqlmock.ErrCancelled)
-	if _, err := m.Info(ctx); err == nil || errors.Is(err, ErrUnauthorized) {
+	if _, err := m.Info(ctx, "admin"); err == nil || errors.Is(err, ErrUnauthorized) {
 		t.Fatal(err)
 	}
 	mock.ExpectQuery("SELECT u.id, u.username, u.code").WithArgs(int64(3), "EXP78RGH").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "code", "role_id", "role_name", "role_word"}).
 			AddRow(3, "readonly", "EXP78RGH", 2, "Reader", "reader"))
-	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3)).WillReturnRows(
-		sqlmock.NewRows([]string{"resource", "menu", "btn"}).
-			AddRow("GET|/auth/info|/auth.v1.Auth/Info", "/dashboard/overview", "").
-			AddRow("GET|/user|/auth.v1.User/ListUsers", "/system/user", "system.user.read"),
-	)
-	value, err := m.Info(ctx)
-	if err != nil || value.Username != "readonly" || value.Role == nil || value.Role.Name != "Reader" || value.Role.Word != "reader" || len(value.Permission.Buttons) != 1 || value.Permission.Buttons[0] != "system.user.read" {
+	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(permissionRows().AddRow("admin:read:system:user", userReadPermissionConfig))
+	value, err := m.Info(ctx, "admin")
+	if err != nil || value.Username != "readonly" || value.Role == nil || value.Role.Name != "Reader" || value.Role.Word != "reader" || len(value.Permission.Buttons) != 1 || value.Permission.Buttons[0] != "admin:btn:system:user:query" {
 		t.Fatalf("info: %#v %v", value, err)
 	}
 	session, err := m.sessions.Issue(ctx, authn.Identity{CredentialVersion: 1, UserID: 3, Username: "readonly", Code: "EXP78RGH"}, false)
@@ -479,6 +478,59 @@ func TestCurrentUser(t *testing.T) {
 	}
 	if err := m.Logout(context.Background(), ""); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type changingInfoCatalog struct {
+	before       localization.Catalog
+	after        localization.Catalog
+	selectCalls  int
+	currentCalls int
+	fields       []string
+}
+
+func (c *changingInfoCatalog) Select(fields []string) localization.Catalog {
+	c.selectCalls++
+	c.fields = append([]string{}, fields...)
+	if c.selectCalls == 1 {
+		return c.before
+	}
+	return c.after
+}
+
+func (c *changingInfoCatalog) Current() localization.Catalog {
+	c.currentCalls++
+	return c.after
+}
+
+func TestInfoUsesOnePermissionCatalogSnapshot(t *testing.T) {
+	m, manager, mock := newAuthTestModule(t)
+	ctx := authenticatedContext(t, manager, m.sessions)
+	catalog := &changingInfoCatalog{before: m.catalogSource.Current(), after: m.catalogSource.Current()}
+	resource := catalog.after.ResourceCatalog.Resources["admin:system:user"]
+	entry := resource.Entries["admin:menu:system:user"]
+	entry.Path = "/system/user-new"
+	resource.Entries["admin:menu:system:user"] = entry
+	catalog.after.ResourceCatalog.Resources["admin:system:user"] = resource
+	m.catalogSource = catalog
+	mock.ExpectQuery("SELECT u.id, u.username, u.code").WithArgs(int64(3), "EXP78RGH").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "code", "role_id", "role_name", "role_word"}).
+			AddRow(3, "readonly", "EXP78RGH", nil, nil, nil))
+	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").
+		WillReturnRows(permissionRows().AddRow("admin:read:system:user", userReadPermissionConfig))
+
+	info, err := m.Info(ctx, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Permission.Menus) != 1 || info.Permission.Menus[0].MenuPath != "/system/user" {
+		t.Fatalf("unexpected menus: %+v", info.Permission.Menus)
+	}
+	if len(info.Permission.Navigation) != 1 || info.Permission.Navigation[0].MenuPath != info.Permission.Menus[0].MenuPath {
+		t.Fatalf("navigation used a different catalog snapshot: menus=%+v navigation=%+v", info.Permission.Menus, info.Permission.Navigation)
+	}
+	if catalog.selectCalls != 1 || catalog.currentCalls != 0 || len(catalog.fields) != 1 || catalog.fields[0] != "resource_catalog" {
+		t.Fatalf("unnecessary catalog data loaded: Select=%d Current=%d fields=%v", catalog.selectCalls, catalog.currentCalls, catalog.fields)
 	}
 }
 

@@ -2,16 +2,16 @@ package tests
 
 import (
 	"encoding/json"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/common/config"
+	"{{ .Computed.module_name_final }}/internal/common/idempotency"
+	"{{ .Computed.module_name_final }}/internal/common/server"
 	"fmt"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-	"{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/common/config"
-	"{{ .Computed.module_name_final }}/internal/common/idempotency"
-	"{{ .Computed.module_name_final }}/internal/common/server"
 
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/common/report"
@@ -24,6 +24,8 @@ import (
 
 func TestThousandMemberGroup(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	for _, query := range []string{
 		`INSERT INTO t_user_group (id,name,word) VALUES (101,'Thousand','thousand'),(102,'Empty','empty')`,
@@ -35,7 +37,7 @@ func TestThousandMemberGroup(t *testing.T) {
 		}
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
 	groups := usergroup.New(store, limits, actions, users)
@@ -118,7 +120,9 @@ func TestThousandMemberGroup(t *testing.T) {
 
 func TestGroupMemberPermissions(t *testing.T) {
 	store := permissionDatabase(t)
-	if _, err := store.DB.ExecContext(t.Context(), `UPDATE t_user SET role_id=NULL,action=(SELECT code FROM t_action WHERE word='user.group.read'),login_count=1 WHERE id=2`); err != nil {
+	localizer := testLocalization(t, store)
+	_ = localizer
+	if _, err := store.DB.ExecContext(t.Context(), `UPDATE t_user SET role_id=NULL,action=(SELECT code FROM t_action WHERE word='admin:read:system:user-group'),login_count=1 WHERE id=2`); err != nil {
 		t.Fatal(err)
 	}
 	var identity authn.Identity
@@ -143,11 +147,11 @@ func TestGroupMemberPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
 	groups := usergroup.New(store, limits, actions, users)
-	authModule := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{})
+	authModule := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{}, localizer)
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute

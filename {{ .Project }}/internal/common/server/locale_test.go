@@ -1,13 +1,16 @@
 package server
 
 import (
+{{ if eq .Computed.http_router_final "gin" }}
+ "github.com/gin-gonic/gin"
+{{ end }}
 	"encoding/json"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/config"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
-	"{{ .Computed.module_name_final }}/internal/common/config"
 )
 
 func TestLocalizedRouterErrors(t *testing.T) {
@@ -63,4 +66,30 @@ func TestLocalizedErrorWriter(t *testing.T) {
 	if recorder.Code != 500 || body.Msg != "服务器内部错误，请稍后重试" {
 		t.Fatal(recorder.Body.String())
 	}
+}
+
+type applicationTranslator struct { locale, message string }
+
+func (t applicationTranslator) Match(string) string { return t.locale }
+
+func (t applicationTranslator) Translate(locale, code, fallback string) string {
+ if locale==t.locale && code=="HTTP_NOT_FOUND" {return t.message};return fallback
+}
+
+func TestApplicationTranslatorIsScopedToRouter(t *testing.T) {
+{{ if eq .Computed.http_router_final "gin" }}
+ newHandler:=func(translator applicationTranslator) http.Handler {
+  router:=gin.New();router.Use(Locale(translator));router.GET("/",func(c *gin.Context){WriteError(c.Writer,c.Request,404,apperror.NotFound)});return router
+ }
+{{ else }}
+ newHandler:=func(translator applicationTranslator) http.Handler {
+  return Locale(translator)(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){WriteError(w,r,404,apperror.NotFound)}))
+ }
+{{ end }}
+ for _,translator:=range []applicationTranslator{ {locale:"fr-FR",message:"Introuvable"},{locale:"de-DE",message:"Nicht gefunden"}} {
+  response:=httptest.NewRecorder();newHandler(translator).ServeHTTP(response,httptest.NewRequest("GET","/",nil))
+  var body ErrorResponse
+  if err:=json.Unmarshal(response.Body.Bytes(),&body);err!=nil {t.Fatal(err)}
+  if response.Header().Get("Content-Language")!=translator.locale || body.Msg!=translator.message {t.Fatalf("router translation escaped: %s",response.Body.String())}
+ }
 }

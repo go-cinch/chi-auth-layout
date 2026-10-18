@@ -52,6 +52,66 @@ INSERT INTO t_user (code) VALUES ('USERCODE');
 	}
 }
 
+func TestRewriteSeedFilesPreservesCrossFileReferences(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{filepath.Join(dir, "accounts.sql"), filepath.Join(dir, "actions.sql")}
+	inputs := []string{
+		"INSERT INTO t_role (action) VALUES ('OLDCODEB,OLDCODEA');\nINSERT INTO t_user (code) VALUES ('USERCODE');\n",
+		"INSERT INTO t_action (code) VALUES ('OLDCODEA'), ('OLDCODEB');\n",
+	}
+	want := []string{
+		"INSERT INTO t_role (action) VALUES ('AAAAAAAA,BBBBBBBB');\nINSERT INTO t_user (code) VALUES ('23456789');\n",
+		"INSERT INTO t_action (code) VALUES ('BBBBBBBB'), ('AAAAAAAA');\n",
+	}
+	for i, path := range paths {
+		if err := os.WriteFile(path, []byte(inputs[i]), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	values := []string{"AAAAAAAA", "BBBBBBBB", "23456789"}
+	count, err := rewriteSeedFiles(paths, func() (string, error) {
+		if len(values) == 0 {
+			t.Fatal("shared placeholders were randomized more than once")
+		}
+		value := values[0]
+		values = values[1:]
+		return value, nil
+	})
+	if err != nil || count != 3 {
+		t.Fatalf("rewritten codes = %d, error = %v; want 3 codes", count, err)
+	}
+	for i, path := range paths {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want[i] {
+			t.Fatalf("migration %s = %q, error = %v; want %q", path, got, err, want[i])
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o640 {
+			t.Fatalf("migration mode changed: %s, %v", path, err)
+		}
+	}
+}
+
+func TestRewriteSeedFilesDoesNotWriteWhenAnotherFileIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "accounts.sql")
+	original := "INSERT INTO t_role (action) VALUES ('OLDCODEA');\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := rewriteSeedFiles([]string{path, filepath.Join(dir, "missing.sql")}, func() (string, error) {
+		t.Fatal("generator ran before all seed files were read")
+		return "AAAAAAAA", nil
+	})
+	if err == nil {
+		t.Fatal("expected missing-file error")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != original {
+		t.Fatalf("read failure changed an earlier file: %q, %v", got, err)
+	}
+}
+
 func TestRewriteSeedCodesErrors(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		if _, err := rewriteSeedCodes(filepath.Join(t.TempDir(), "missing.sql"), func() (string, error) { return "AAAAAAAA", nil }); err == nil {

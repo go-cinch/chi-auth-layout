@@ -40,6 +40,7 @@ func TestDictionaryCommittedWritesAndCacheTTL(t *testing.T) {
     dsn := os.Getenv("CHI_AUTH_TEST_REDIS_DSN")
     if dsn == "" { t.Skip("set CHI_AUTH_TEST_REDIS_DSN to run dictionary cache integration") }
     store := permissionDatabase(t)
+ localizer := testLocalization(t,store); _ = localizer
     ctx := t.Context()
     prefix := fmt.Sprintf("test:dictionary-%d:", time.Now().UnixNano())
     backend, cleanup, err := rds.NewRedisNamespaceCache(dsn, prefix, "dictionary:cache")
@@ -53,7 +54,7 @@ func TestDictionaryCommittedWritesAndCacheTTL(t *testing.T) {
     cache := &failingDictionaryInvalidation{ValueCache: backend}
     limits, err := pagination.New(100, 100)
     if err != nil { t.Fatal(err) }
-    m, err := dictionary.New(store, cache, dictionary.CacheTTL, limits, false)
+    m, err := dictionary.New(store, cache, dictionary.CacheTTL, limits, false, localizer)
     if err != nil { t.Fatal(err) }
 {{ if eq .Computed.http_router_final "gin" -}}
     router := gin.New(); m.HTTP(router.Group("")); handler := http.Handler(router)

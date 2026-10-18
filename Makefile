@@ -30,7 +30,7 @@ full:
 # Set delete_old_sql to true below when this update must replace the demo SQL.
 local:
 	@set -eu; \
-	delete_old_sql=false; \
+	delete_old_sql=true; \
 	migrations_dir="$(CURDIR)/../demos/auth/internal/infra/db/migrations"; \
 	auth_config="$(CURDIR)/../demos/auth/conf/auth.yml"; \
 	test -d "$$migrations_dir"; \
@@ -61,6 +61,15 @@ local:
 			if [ "$$status" -eq 0 ]; then \
 				for migration in "$$migrations_dir"/*.sql; do \
 					suffix=$$(basename "$$migration" | cut -c12-); \
+					case "$$suffix" in \
+						03-action-default-data.sql|04-dictionary-default-data.sql) \
+							previous=$$(find "$$backup_dir/sql" -name "*-$$suffix" -print -quit); \
+							if [ -n "$$previous" ]; then \
+								if [ "$$suffix" = 03-action-default-data.sql ]; then \
+									python3 "$(CURDIR)/scripts/refresh-action-seed.py" "$$previous" "$$migration"; \
+								else cp -p "$$migration" "$$previous"; fi; \
+							fi ;; \
+					esac; \
 					if ! find "$$backup_dir/sql" -name "*-$$suffix" | grep -q .; then cp -p "$$migration" "$$backup_dir/sql/"; fi; \
 				done; \
 			fi; \
@@ -88,6 +97,6 @@ local:
 	if [ "$$delete_old_sql" = true ]; then \
 		find "$$migrations_dir" -maxdepth 1 -type f -name '*.sql' -exec rm -f {} +; \
 	else \
-		find "$$migrations_dir" -maxdepth 1 -type f \( -name '*-01-auth-schema.sql' -o -name '*-02-auth-default-data.sql' \) -exec rm -f {} +; \
+		find "$$migrations_dir" -maxdepth 1 -type f \( -name '*-01-auth-schema.sql' -o -name '*-02-auth-default-data.sql' -o -name '*-03-action-default-data.sql' -o -name '*-04-dictionary-default-data.sql' \) -exec rm -f {} +; \
 	fi; \
 	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full --overwrite --force "Project=auth" "http_port=8081" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)"

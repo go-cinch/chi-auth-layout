@@ -47,7 +47,7 @@ Login request and response bodies are never captured.
 Success means HTTP 200–399. Login records include restricted first-login sessions
 and failed credentials/challenges submitted to the final login endpoint. Setup
 challenges, captcha refresh, token refresh and audit reads are excluded.
-Operations include HTTP writes in user/role/action/user-group/dictionary/whitelist/
+Operations include HTTP writes in user/role/action/user-group/dictionary/
 msg and registration/password changes/authenticated logout. RPC calls are not
 captured by this HTTP observer. There is no user-facing edit/delete endpoint.
 
@@ -89,7 +89,7 @@ filters, so its metrics do not silently change when a table filter is applied.
 
 Summary breakdowns return at most ten ranked entries, including account and source-IP rankings.
 
-Business timestamps use BIGINT Unix milliseconds in SQL and int64 in Go/HTTP. Calendar grouping alone uses the requested IANA timezone; `Local` is rejected. The schema lives in `01-auth-schema`, while audit permission actions live in `02-auth-default-data`.
+Business timestamps use BIGINT Unix milliseconds in SQL and int64 in Go/HTTP. Calendar grouping alone uses the requested IANA timezone; `Local` is rejected. The complete schema, including audit headers, lives in `01-auth-schema`, while audit permission actions live in `03-action-default-data`. Shared localization messages live in `04-dictionary-default-data`.
 
 Operation events include `operation`, `resource_type`, and `resource_id` when known. Request/response parameters describe the HTTP exchange; they are not a database before/after snapshot. Audit records retain actor/account snapshots after account deletion.
 

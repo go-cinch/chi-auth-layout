@@ -4,17 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 )
 
 var roleTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
@@ -36,7 +38,7 @@ func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 		t.Fatal(err)
 	}
 	store := &db.Store{DB: database}
-	return New(store, limits, actionmodule.New(store, limits, false), false), mock
+	return New(store, limits, actionmodule.New(store, limits, false, localization.New()), false), mock
 }
 
 func TestRoleExists(t *testing.T) {
@@ -104,7 +106,7 @@ func TestRoleCRUD(t *testing.T) {
 
 	codes := []string{"MISSING1"}
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}))
+	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}))
 	mock.ExpectRollback()
 	if _, err := m.Update(ctx, 1, UpdateRoleInput{ActionCodes: &codes}); !errors.Is(err, ErrActionNotFound) {
 		t.Fatal(err)
@@ -160,8 +162,8 @@ func TestRoleActionCodesAndFailures(t *testing.T) {
 	ctx := context.Background()
 	codes := []string{"ABCDEFGH"}
 	actionRows := func() *sqlmock.Rows {
-		return sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
-			AddRow(1, roleTestTime, roleTestTime, "ABCDEFGH", "Demo", "Demo", "demo.read", "", "", "")
+		return sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}).
+			AddRow(1, roleTestTime, roleTestTime, "ABCDEFGH", "Demo", "demo.read", "admin", `{"ui":[],"endpoints":[]}`)
 	}
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(actionRows())
@@ -190,13 +192,13 @@ func TestRoleActionCodesAndFailures(t *testing.T) {
 func TestAdminRoleProtection(t *testing.T) {
 	m, mock := newTestModule(t)
 	m.protectSuper = true
-	if err := m.Delete(t.Context(), AdminRoleID, 2); !errors.Is(err, apperror.FeatureDisabled) {
+	if err := m.Delete(t.Context(), SuperRoleID, 2); !errors.Is(err, apperror.FeatureDisabled) {
 		t.Fatalf("delete Admin role: %v", err)
 	}
 	actionRows := func(codes ...string) *sqlmock.Rows {
-		rows := sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"})
+		rows := sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"})
 		for index, code := range codes {
-			rows.AddRow(index+1, roleTestTime, roleTestTime, code, code, "Demo", "demo."+code, "*", "*", "*")
+			rows.AddRow(index+1, roleTestTime, roleTestTime, code, "Demo", "demo."+code, "admin", `{"ui":[],"endpoints":[]}`)
 		}
 		return rows
 	}
@@ -206,7 +208,7 @@ func TestAdminRoleProtection(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(withoutAll)).WillReturnRows(actionRows(withoutAll...))
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE id").WithArgs(actionmodule.AllPermissionsActionID).WillReturnRows(actionRows("ALLPERM"))
 	mock.ExpectRollback()
-	if _, err := m.Update(t.Context(), AdminRoleID, UpdateRoleInput{ActionCodes: &withoutAll}); !errors.Is(err, apperror.FeatureDisabled) {
+	if _, err := m.Update(t.Context(), SuperRoleID, UpdateRoleInput{ActionCodes: &withoutAll}); !errors.Is(err, apperror.FeatureDisabled) {
 		t.Fatalf("remove All Permissions from Admin: %v", err)
 	}
 
@@ -214,11 +216,11 @@ func TestAdminRoleProtection(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(actionRows(codes...))
 		mock.ExpectQuery("SELECT .* FROM t_action WHERE id").WithArgs(actionmodule.AllPermissionsActionID).WillReturnRows(actionRows("ALLPERM"))
-		mock.ExpectExec("UPDATE t_role SET action").WithArgs(strings.Join(codes, ","), sqlmock.AnyArg(), AdminRoleID).WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectQuery("SELECT .* FROM t_role WHERE id").WithArgs(AdminRoleID).WillReturnRows(roleRows(AdminRoleID, "Admin", "admin", strings.Join(codes, ",")))
+		mock.ExpectExec("UPDATE t_role SET action").WithArgs(strings.Join(codes, ","), sqlmock.AnyArg(), SuperRoleID).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery("SELECT .* FROM t_role WHERE id").WithArgs(SuperRoleID).WillReturnRows(roleRows(SuperRoleID, "Admin", "admin", strings.Join(codes, ",")))
 		mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(actionRows(codes...))
 		mock.ExpectCommit()
-		value, err := m.Update(t.Context(), AdminRoleID, UpdateRoleInput{ActionCodes: &codes})
+		value, err := m.Update(t.Context(), SuperRoleID, UpdateRoleInput{ActionCodes: &codes})
 		if err != nil || !containsCode(value.ActionCodes, "ALLPERM") || len(value.ActionCodes) != len(codes) {
 			t.Fatalf("allowed Admin action update %v: %#v %v", codes, value, err)
 		}
@@ -232,9 +234,9 @@ func TestRoleListBatchesActions(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM t_role ORDER BY id DESC LIMIT").WithArgs(size, int64(0)).WillReturnRows(
 		roleRows(3, "Editor", "editor", "WRITE,READ,MISSING").AddRow(2, roleTestTime, roleTestTime, "Reader", "reader", "READ").AddRow(1, roleTestTime, roleTestTime, "Empty", "empty", "")).RowsWillBeClosed()
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code = ANY").WithArgs(pq.Array([]string{"WRITE", "READ", "MISSING"})).WillReturnRows(
-		sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
-			AddRow(1, roleTestTime, roleTestTime, "READ", "Read", "Demo", "read", "", "", "").
-			AddRow(2, roleTestTime, roleTestTime, "WRITE", "Write", "Demo", "write", "", "", ""))
+		sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}).
+			AddRow(1, roleTestTime, roleTestTime, "READ", "Demo", "read", "admin", `{"ui":[],"endpoints":[]}`).
+			AddRow(2, roleTestTime, roleTestTime, "WRITE", "Demo", "write", "admin", `{"ui":[],"endpoints":[]}`))
 	result, err := m.List(t.Context(), ListRolesInput{PageSize: &size})
 	if err != nil {
 		t.Fatal(err)
@@ -286,9 +288,9 @@ func TestRoleListExactGroupPreservesPageAssociations(t *testing.T) {
 		WillReturnRows(roleRows(1, "Reader", "reader", "READ,WRITE,READ")).RowsWillBeClosed()
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code = ANY").
 		WithArgs(pq.Array([]string{"READ", "WRITE"})).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
-			AddRow(1, roleTestTime, roleTestTime, "READ", "Read", group, "read", "", "", "").
-			AddRow(2, roleTestTime, roleTestTime, "WRITE", "Write", "Other", "write", "", "", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}).
+			AddRow(1, roleTestTime, roleTestTime, "READ", group, "read", "admin", `{"ui":[],"endpoints":[]}`).
+			AddRow(2, roleTestTime, roleTestTime, "WRITE", "Other", "write", "admin", `{"ui":[],"endpoints":[]}`))
 	result, err := m.List(t.Context(), ListRolesInput{Name: "Reader", HasPermissions: &assigned, GroupExact: &group, Page: &page, PageSize: &size})
 	if err != nil || result.Total != 2 || len(result.Items) != 1 || result.Page != page {
 		t.Fatalf("group page: %#v %v", result, err)
@@ -309,16 +311,63 @@ func TestRoleListAllGroupsPreservesPageAssociations(t *testing.T) {
 		WillReturnRows(roleRows(1, "Reader", "reader", "READ,OPS,AUDIT,EXTRA,READ")).RowsWillBeClosed()
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code = ANY").
 		WithArgs(pq.Array([]string{"READ", "OPS", "AUDIT", "EXTRA"})).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
-			AddRow(1, roleTestTime, roleTestTime, "READ", "Read", group, "read", "", "", "").
-			AddRow(2, roleTestTime, roleTestTime, "OPS", "Operations", "Operations", "ops", "", "", "").
-			AddRow(3, roleTestTime, roleTestTime, "AUDIT", "Audit", "Audit", "audit", "", "", "").
-			AddRow(4, roleTestTime, roleTestTime, "EXTRA", "Extra", "Other", "extra", "", "", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}).
+			AddRow(1, roleTestTime, roleTestTime, "READ", group, "read", "admin", `{"ui":[],"endpoints":[]}`).
+			AddRow(2, roleTestTime, roleTestTime, "OPS", "Operations", "ops", "admin", `{"ui":[],"endpoints":[]}`).
+			AddRow(3, roleTestTime, roleTestTime, "AUDIT", "Audit", "audit", "admin", `{"ui":[],"endpoints":[]}`).
+			AddRow(4, roleTestTime, roleTestTime, "EXTRA", "Other", "extra", "admin", `{"ui":[],"endpoints":[]}`))
 	result, err := m.List(t.Context(), ListRolesInput{GroupExact: &group, GroupsAll: []string{group, "Operations", "Audit", "Operations"}, Page: &page, PageSize: &size})
 	if err != nil || result.Total != 2 || len(result.Items) != 1 || result.Page != page {
 		t.Fatalf("all-groups page: %#v %v", result, err)
 	}
 	if got := result.Items[0].Actions; len(got) != 4 || got[0].Code != "READ" || got[1].Code != "OPS" || got[2].Code != "AUDIT" || got[3].Code != "EXTRA" {
 		t.Fatalf("complete ordered associations: %#v", got)
+	}
+}
+
+type rolePermissionPolicy struct{ grant bool }
+
+func (p rolePermissionPolicy) RequirePermissionGrant(context.Context) error {
+	if !p.grant {
+		return authn.ErrPermissionGrantRequired
+	}
+	return nil
+}
+
+func (rolePermissionPolicy) LockPermissionMutation(context.Context) error { return nil }
+func TestRoleGrantPolicyAndEmptyDeletion(t *testing.T) {
+	m, mock := newTestModule(t)
+	m.SetPermissionAdministration(rolePermissionPolicy{})
+	codes := []string{"ALL00001"}
+	for _, operation := range []func() error{
+		func() error {
+			_, err := m.Create(t.Context(), CreateRoleInput{Name: "Role", Word: "role", ActionCodes: codes})
+			return err
+		},
+		func() error { _, err := m.Update(t.Context(), 2, UpdateRoleInput{ActionCodes: &codes}); return err },
+	} {
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+		if err := operation(); !errors.Is(err, authn.ErrPermissionGrantRequired) {
+			t.Fatal(err)
+		}
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT EXISTS.*FROM t_role").WillReturnRows(sqlmock.NewRows([]string{"assigned"}).AddRow(true))
+	mock.ExpectRollback()
+	if err := m.Delete(t.Context(), 2); !errors.Is(err, authn.ErrPermissionGrantRequired) {
+		t.Fatal(err)
+	}
+	for _, assigned := range []bool{false, true} {
+		if assigned {
+			m.SetPermissionAdministration(rolePermissionPolicy{grant: true})
+		}
+		mock.ExpectBegin()
+		mock.ExpectQuery("SELECT EXISTS.*FROM t_role").WillReturnRows(sqlmock.NewRows([]string{"assigned"}).AddRow(assigned))
+		mock.ExpectExec("DELETE FROM t_role").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+		if err := m.Delete(t.Context(), 2); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

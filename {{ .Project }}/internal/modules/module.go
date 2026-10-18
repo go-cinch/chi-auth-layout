@@ -1,6 +1,7 @@
 package modules
 
 import (
+ "{{ .Computed.module_name_final }}/internal/common/i18n"
 	"context"
  "{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"net/http"
@@ -48,6 +49,11 @@ type HTTPPermissionAuthorizer interface {
 	PermissionEndpoint() string
 }
 
+// HTTPPermissionRouteCatalog receives registered routes before serving requests.
+// Authorizers use this to distinguish static routes from sibling parameters.
+type HTTPPermissionRoute struct { Method string; Path string }
+type HTTPPermissionRouteCatalog interface { SetHTTPPermissionRoutes([]HTTPPermissionRoute) }
+
 // AnonymousHTTPModule handles explicit exceptions at its HTTP boundary.
 type AnonymousHTTPModule interface {
 	HTTPModule
@@ -66,3 +72,6 @@ type HTTPAuditRecorder interface {
  AuditTarget(method, path string) auditctx.Target
  RecordHTTP(context.Context, auditctx.Event) error
 }
+
+// HTTPLocalizer supplies runtime translations without coupling HTTP to a business package.
+type HTTPLocalizer interface { HTTPModule; Translator() i18n.Translator }

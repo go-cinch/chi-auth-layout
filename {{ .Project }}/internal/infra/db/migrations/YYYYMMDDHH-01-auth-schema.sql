@@ -1,36 +1,116 @@
 -- +migrate Up
+-- Catalog consumers resolve labels through I18N_CATALOG and transport rules through config.
+-- +migrate StatementBegin
+CREATE FUNCTION action_resource_bindings_valid(bindings JSONB, required_scope TEXT)
+RETURNS BOOLEAN
+LANGUAGE SQL IMMUTABLE
+AS $$
+    SELECT COALESCE(JSONB_TYPEOF(bindings) = 'array', FALSE)
+        AND NOT EXISTS (
+            SELECT 1
+            FROM JSONB_ARRAY_ELEMENTS(
+                CASE WHEN JSONB_TYPEOF(bindings) = 'array' THEN bindings ELSE '[]'::JSONB END
+            ) AS item(binding)
+            WHERE (
+                JSONB_TYPEOF(binding) = 'object'
+                AND JSONB_TYPEOF(binding -> 'resource_key') = 'string'
+                AND binding ->> 'resource_key' ~ '^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*){2,}$'
+                AND SPLIT_PART(binding ->> 'resource_key', ':', 1) = required_scope
+                AND JSONB_TYPEOF(binding -> 'operation') = 'string'
+                AND binding ->> 'operation' IN ('read', 'create', 'update', 'delete')
+                AND (
+                    NOT (binding ? 'feature_keys')
+                    OR JSONB_TYPEOF(binding -> 'feature_keys') IN ('array', 'null')
+                )
+            ) IS NOT TRUE
+        )
+        AND (
+            SELECT COUNT(*) = COUNT(DISTINCT (binding ->> 'resource_key', binding ->> 'operation'))
+            FROM JSONB_ARRAY_ELEMENTS(
+                CASE WHEN JSONB_TYPEOF(bindings) = 'array' THEN bindings ELSE '[]'::JSONB END
+            ) AS item(binding)
+        );
+$$;
+-- +migrate StatementEnd
+
 CREATE TABLE t_action (
     id BIGSERIAL PRIMARY KEY,
     created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
     updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
-    name VARCHAR(50) NOT NULL,
-    action_group VARCHAR(50) NOT NULL,
+    action_group VARCHAR(128) NOT NULL,
     code CHAR(8) NOT NULL,
-    word VARCHAR(50) NOT NULL,
-    resource TEXT NOT NULL DEFAULT '',
-    menu TEXT NOT NULL DEFAULT '',
-    btn TEXT NOT NULL DEFAULT '',
+    word VARCHAR(128) NOT NULL,
+    scope TEXT GENERATED ALWAYS AS (SPLIT_PART(word, ':', 1)) STORED NOT NULL,
+    config JSONB NOT NULL,
     CONSTRAINT uk_action_code UNIQUE (code),
     CONSTRAINT uk_action_word UNIQUE (word),
-    CONSTRAINT ck_action_name CHECK (CHAR_LENGTH(TRIM(name)) > 0),
-    CONSTRAINT ck_action_group CHECK (CHAR_LENGTH(TRIM(action_group)) > 0),
+    CONSTRAINT ck_action_group CHECK (
+        action_group ~ '^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*){2,}$'
+        AND SPLIT_PART(action_group, ':', 1) = SPLIT_PART(word, ':', 1)
+    ),
     CONSTRAINT ck_action_code CHECK (CHAR_LENGTH(TRIM(code)) = 8),
-    CONSTRAINT ck_action_word CHECK (CHAR_LENGTH(TRIM(word)) > 0)
+    CONSTRAINT ck_action_word_format CHECK (
+        word ~ '^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*){3,}$'
+    ),
+    CONSTRAINT ck_action_config_shape CHECK (
+        JSONB_TYPEOF(config) = 'object'
+        AND config ?& ARRAY['ui', 'endpoints']
+        AND JSONB_TYPEOF(config -> 'ui') = 'array'
+        AND JSONB_TYPEOF(config -> 'endpoints') = 'array'
+    ),
+    CONSTRAINT ck_action_grpc_method CHECK (
+        NOT JSONB_PATH_EXISTS(
+            config,
+            '$.endpoints[*] ? (@.protocol == "grpc" && (!exists(@.method) || @.method.type() != "string" || @.method != "GRPC"))'
+        )
+    ),
+    CONSTRAINT ck_action_builtin CHECK (
+        CASE WHEN config ? 'builtin' THEN
+            JSONB_TYPEOF(config -> 'builtin') = 'string'
+            AND config ->> 'builtin' IN ('all', 'default')
+            AND config ->> 'builtin' = SPLIT_PART(word, ':', 2)
+        ELSE
+            SPLIT_PART(word, ':', 2) NOT IN ('all', 'default')
+        END
+    ),
+    CONSTRAINT ck_action_all_config CHECK (
+        config ->> 'builtin' IS DISTINCT FROM 'all'
+        OR (config -> 'ui' = '[]'::jsonb AND config -> 'endpoints' = '[]'::jsonb)
+    ),
+    CONSTRAINT ck_action_resource_binding CHECK ((
+        NOT (config ? 'resource_key') AND NOT (config ? 'operation')
+        AND CASE
+            WHEN config ->> 'builtin' IN ('all', 'default')
+                OR word = scope || ':grant:system:permission-admin'
+            THEN NOT (config ? 'bindings')
+            ELSE action_resource_bindings_valid(config -> 'bindings', scope)
+        END
+    ) IS TRUE)
 );
 
-COMMENT ON TABLE t_action IS 'permission actions';
+COMMENT ON TABLE t_action IS 'Scoped permission catalog with UI and transport mappings; labels reside in I18N_CATALOG';
 
-COMMENT ON COLUMN t_action.action_group IS 'display and search group for related actions';
+COMMENT ON COLUMN t_action.created_at IS 'Row creation time in Unix milliseconds';
 
-COMMENT ON COLUMN t_action.code IS 'stable eight-character action code';
+COMMENT ON COLUMN t_action.updated_at IS 'Last permission update time in Unix milliseconds';
 
-COMMENT ON COLUMN t_action.word IS 'unique action keyword used by clients';
+COMMENT ON COLUMN t_action.action_group IS 'Stable scope:module:resource group identifier; label lookup uses frontend.groups[action_group]';
 
-COMMENT ON COLUMN t_action.resource IS 'newline-separated resource permission rules';
+COMMENT ON COLUMN t_action.code IS 'Stable eight-character assignment code used by users, roles and user groups';
 
-COMMENT ON COLUMN t_action.menu IS 'newline-separated permitted menu paths';
+COMMENT ON COLUMN t_action.word IS 'Stable scope:operation:module:resource permission identifier; label lookup uses frontend.actions[word]';
 
-COMMENT ON COLUMN t_action.btn IS 'newline-separated permitted button codes';
+COMMENT ON COLUMN t_action.scope IS 'Stored scope derived from word; label lookup uses frontend.scopes[scope]';
+
+COMMENT ON COLUMN t_action.config IS 'Explicit resource/operation bindings select logical feature keys; ui and endpoints are derived projections. builtin=all grants the scope; builtin=default selects explicit resources and features';
+
+CREATE INDEX idx_action_scope_group ON t_action (scope, action_group);
+
+CREATE INDEX idx_action_config ON t_action USING GIN (config jsonb_path_ops);
+
+-- Built-in kinds are reserved catalog definitions, with at most one of each per scope.
+CREATE UNIQUE INDEX uk_action_scope_builtin ON t_action (scope, (config ->> 'builtin'))
+    WHERE config ? 'builtin';
 
 CREATE TABLE t_role (
     id BIGSERIAL PRIMARY KEY,
@@ -45,6 +125,10 @@ CREATE TABLE t_role (
 );
 
 COMMENT ON TABLE t_role IS 'user roles';
+
+COMMENT ON COLUMN t_role.created_at IS 'Row creation time in Unix milliseconds';
+
+COMMENT ON COLUMN t_role.updated_at IS 'Last role update time in Unix milliseconds';
 
 COMMENT ON COLUMN t_role.word IS 'unique role keyword used by clients';
 
@@ -63,6 +147,10 @@ CREATE TABLE t_user_group (
 );
 
 COMMENT ON TABLE t_user_group IS 'user permission groups';
+
+COMMENT ON COLUMN t_user_group.created_at IS 'Row creation time in Unix milliseconds';
+
+COMMENT ON COLUMN t_user_group.updated_at IS 'Last user group update time in Unix milliseconds';
 
 COMMENT ON COLUMN t_user_group.word IS 'unique group keyword used by clients';
 
@@ -102,6 +190,10 @@ CREATE TABLE t_user (
 
 COMMENT ON TABLE t_user IS 'authentication users';
 
+COMMENT ON COLUMN t_user.created_at IS 'Account creation time in Unix milliseconds';
+
+COMMENT ON COLUMN t_user.updated_at IS 'Last account update time in Unix milliseconds';
+
 COMMENT ON COLUMN t_user.role_id IS 'optional role id';
 
 COMMENT ON COLUMN t_user.action IS 'comma-separated user-specific action codes';
@@ -112,7 +204,7 @@ COMMENT ON COLUMN t_user.code IS 'stable eight-character user code';
 
 COMMENT ON COLUMN t_user.password IS 'adaptive password hash';
 
-COMMENT ON COLUMN t_user.last_logged_in_at IS 'last successful login time';
+COMMENT ON COLUMN t_user.last_logged_in_at IS 'Last successful login time in Unix milliseconds; null before the first successful login';
 
 COMMENT ON COLUMN t_user.status IS 'account state: 0 pending approval, 1 active, 2 locked';
 
@@ -139,6 +231,10 @@ CREATE TABLE t_user_user_group_relation (
 
 COMMENT ON TABLE t_user_user_group_relation IS 'many-to-many relation between users and user groups';
 
+COMMENT ON COLUMN t_user_user_group_relation.created_at IS 'Membership creation time in Unix milliseconds';
+
+COMMENT ON COLUMN t_user_user_group_relation.updated_at IS 'Last membership update time in Unix milliseconds';
+
 COMMENT ON COLUMN t_user_user_group_relation.user_id IS 'related user id';
 
 COMMENT ON COLUMN t_user_user_group_relation.user_group_id IS 'related user group id';
@@ -148,25 +244,6 @@ CREATE INDEX idx_user_user_group_relation_user_group_id
 
 CREATE INDEX idx_user_group_member
     ON t_user_user_group_relation (user_group_id, user_id);
-
-CREATE TABLE t_whitelist (
-    id BIGSERIAL PRIMARY KEY,
-    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
-    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
-    category SMALLINT NOT NULL,
-    resource TEXT NOT NULL,
-    CONSTRAINT uk_whitelist_category_resource UNIQUE (category, resource),
-    CONSTRAINT ck_whitelist_category CHECK (category IN (0, 1)),
-    CONSTRAINT ck_whitelist_resource CHECK (CHAR_LENGTH(TRIM(resource)) > 0)
-);
-
-COMMENT ON TABLE t_whitelist IS 'permission and JWT bypass rules';
-
-COMMENT ON COLUMN t_whitelist.category IS 'rule category: 0 permission, 1 JWT';
-
-COMMENT ON COLUMN t_whitelist.resource IS 'newline-separated resource rules';
-
-CREATE INDEX idx_whitelist_category ON t_whitelist (category);
 
 CREATE TABLE t_dictionary (
     id BIGSERIAL PRIMARY KEY,
@@ -183,6 +260,10 @@ CREATE TABLE t_dictionary (
 );
 
 COMMENT ON TABLE t_dictionary IS 'dynamic system constants and data dictionaries';
+
+COMMENT ON COLUMN t_dictionary.created_at IS 'Row creation time in Unix milliseconds';
+
+COMMENT ON COLUMN t_dictionary.updated_at IS 'Last dictionary update time in Unix milliseconds';
 
 COMMENT ON COLUMN t_dictionary.dictionary_key IS 'stable uppercase key with underscore-separated segments';
 
@@ -211,6 +292,14 @@ CREATE TABLE t_msg (
     CONSTRAINT ck_msg_expired_at CHECK (expired_at IS NULL OR expired_at > published_at)
 );
 
+COMMENT ON COLUMN t_msg.created_at IS 'Message creation time in Unix milliseconds';
+
+COMMENT ON COLUMN t_msg.updated_at IS 'Last message update time in Unix milliseconds';
+
+COMMENT ON COLUMN t_msg.published_at IS 'Publication time in Unix milliseconds; a future value schedules visibility';
+
+COMMENT ON COLUMN t_msg.expired_at IS 'Exclusive expiry time in Unix milliseconds; null means the message does not expire';
+
 COMMENT ON COLUMN t_msg.scope IS 'all: shared broadcast visible to users registered by publication; targeted: recipients inserted at send time';
 
 COMMENT ON COLUMN t_msg.sender_id IS 'verified sender; null after sender account deletion';
@@ -234,7 +323,13 @@ CREATE TABLE t_msg_recipient (
 
 COMMENT ON TABLE t_msg_recipient IS 'targeted delivery records and sparse per-user broadcast states; a missing broadcast state means unread';
 
-COMMENT ON COLUMN t_msg_recipient.deleted_at IS 'personal tombstone retained to prevent a deleted broadcast from reappearing';
+COMMENT ON COLUMN t_msg_recipient.created_at IS 'Delivery or personal state creation time in Unix milliseconds';
+
+COMMENT ON COLUMN t_msg_recipient.updated_at IS 'Last personal message state update time in Unix milliseconds';
+
+COMMENT ON COLUMN t_msg_recipient.read_at IS 'Read time in Unix milliseconds; null means unread';
+
+COMMENT ON COLUMN t_msg_recipient.deleted_at IS 'Personal deletion time in Unix milliseconds; null means not deleted; the tombstone prevents a deleted broadcast from reappearing';
 
 CREATE INDEX idx_msg_recipient_user ON t_msg_recipient (user_id, msg_id);
 
@@ -363,8 +458,6 @@ DROP TABLE t_msg;
 
 DROP TABLE t_dictionary;
 
-DROP TABLE t_whitelist;
-
 DROP TABLE t_user_user_group_relation;
 
 DROP TABLE t_user;
@@ -374,3 +467,5 @@ DROP TABLE t_user_group;
 DROP TABLE t_role;
 
 DROP TABLE t_action;
+
+DROP FUNCTION action_resource_bindings_valid(JSONB, TEXT);

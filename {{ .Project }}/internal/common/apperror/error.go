@@ -51,7 +51,6 @@ var (
 	RoleID             = New("HTTP_INVALID_ROLE_ID", "invalid role id")
 	UserID             = New("HTTP_INVALID_USER_ID", "invalid user id")
 	UserGroupID        = New("HTTP_INVALID_USER_GROUP_ID", "invalid user group id")
-	WhitelistID        = New("HTTP_INVALID_WHITELIST_ID", "invalid whitelist id")
 	DictionaryID       = New("HTTP_INVALID_DICTIONARY_ID", "invalid dictionary id")
 	DictionaryEnabled  = New("HTTP_INVALID_DICTIONARY_ENABLED", "enabled must be one boolean value")
 )

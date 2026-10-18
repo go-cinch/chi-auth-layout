@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/modules/action"
@@ -17,10 +16,13 @@ import (
 	"{{ .Computed.module_name_final }}/internal/modules/dictionary"
 	"{{ .Computed.module_name_final }}/internal/modules/role"
 	"{{ .Computed.module_name_final }}/internal/modules/user"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestCredentialVersionTransactions(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	exec := func(query string, args ...any) {
 		t.Helper()
@@ -34,7 +36,7 @@ func TestCredentialVersionTransactions(t *testing.T) {
 	}
 	exec(`INSERT INTO t_user (id,username,code,password,status,login_count) VALUES (101,'tester','TEST0001',$1,1,1)`, string(hash))
 	limits, _ := pagination.New(100, 100)
-	dictionaryModule, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false)
+	dictionaryModule, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +60,8 @@ func TestCredentialVersionTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, auth.Switches{PasswordResetRequired: true})
-	actions := action.New(store, limits, false)
+	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, auth.Switches{PasswordResetRequired: true}, localizer)
+	actions := action.New(store, limits, false, localizer)
 	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions, false), auth.Switches{PasswordResetRequired: true})
 	login := func(password string) *auth.LoginResult {
 		t.Helper()

@@ -6,17 +6,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 )
 
 var dictionaryTestTime = time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC).UnixMilli()
@@ -32,6 +33,7 @@ func (c *trackingValueCache) Invalidate(ctx context.Context) error {
 }
 
 func newTestModule(t *testing.T) (*Module, *trackingValueCache, sqlmock.Sqlmock) {
+	localizer := localization.New()
 	t.Helper()
 	database, mock, err := sqlmock.New()
 	if err != nil {
@@ -48,7 +50,7 @@ func newTestModule(t *testing.T) (*Module, *trackingValueCache, sqlmock.Sqlmock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(&db.Store{DB: database}, cache, CacheTTL, limits, false)
+	m, err := New(&db.Store{DB: database}, cache, CacheTTL, limits, false, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,6 +65,66 @@ func dictionaryRows(id int64, key, name, value, description string, enabled bool
 func expectDictionaryGet(mock sqlmock.Sqlmock, id int64, key, name, value string, enabled bool) {
 	mock.ExpectQuery("SELECT .* FROM t_dictionary WHERE id").WithArgs(id).
 		WillReturnRows(dictionaryRows(id, key, name, value, "description", enabled))
+}
+
+func TestDictionaryUpdateExpectedValue(t *testing.T) {
+	for _, outcome := range []string{"match", "changed", "missing", "database", "commit"} {
+		t.Run(outcome, func(t *testing.T) {
+			m, cache, mock := newTestModule(t)
+			expected := json.RawMessage("{\"a\":1}")
+			next := json.RawMessage("{\"a\":2}")
+			mock.ExpectBegin()
+			mock.ExpectQuery("SELECT dictionary_key, value FROM t_dictionary").WithArgs(int64(3)).WillReturnRows(sqlmock.NewRows([]string{"dictionary_key", "value"}).AddRow("TEST_VALUES", []byte(expected)))
+			query := mock.ExpectQuery("SELECT value = .* FOR UPDATE").WithArgs(int64(3), string(expected))
+			switch outcome {
+			case "missing":
+				query.WillReturnError(sql.ErrNoRows)
+			case "database":
+				query.WillReturnError(errors.New("database unavailable"))
+			default:
+				query.WillReturnRows(sqlmock.NewRows([]string{"matches"}).AddRow(outcome != "changed"))
+			}
+			if outcome == "match" || outcome == "commit" {
+				mock.ExpectExec("UPDATE t_dictionary").WithArgs(string(next), sqlmock.AnyArg(), int64(3)).WillReturnResult(sqlmock.NewResult(0, 1))
+				expectDictionaryGet(mock, 3, "TEST_VALUES", "Test", string(next), true)
+				if outcome == "commit" {
+					mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
+				} else {
+					mock.ExpectCommit()
+				}
+			} else {
+				mock.ExpectRollback()
+			}
+			value, err := m.Update(t.Context(), 3, UpdateDictionaryInput{Value: &next, ExpectedValue: &expected})
+			switch outcome {
+			case "match":
+				if err != nil || value == nil || cache.invalidations != 1 {
+					t.Fatalf("matched update: value=%v err=%v invalidations=%d", value, err, cache.invalidations)
+				}
+			case "changed":
+				if !errors.Is(err, ErrVersionConflict) {
+					t.Fatalf("expected version conflict, got %v", err)
+				}
+			case "missing":
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("expected missing dictionary, got %v", err)
+				}
+			default:
+				if err == nil {
+					t.Fatal("expected database/commit error")
+				}
+			}
+			if outcome != "match" && cache.invalidations != 0 {
+				t.Fatal("failed update invalidated cache")
+			}
+		})
+	}
+	m, _, _ := newTestModule(t)
+	invalid := json.RawMessage("bad json")
+	valid := json.RawMessage("{}")
+	if _, err := m.Update(t.Context(), 3, UpdateDictionaryInput{Value: &valid, ExpectedValue: &invalid}); !errors.Is(err, ErrInvalid) {
+		t.Fatal(err)
+	}
 }
 
 func TestDictionaryValueUsesCache(t *testing.T) {
@@ -195,6 +257,7 @@ func TestDictionaryListAndFailures(t *testing.T) {
 }
 
 func TestMemoryValueCacheAndValidation(t *testing.T) {
+	localizer := localization.New()
 	cache := NewMemoryValueCache()
 	_, hit, version, err := cache.Load(t.Context(), "KEY")
 	if err != nil || hit || version != "0" {
@@ -216,15 +279,15 @@ func TestMemoryValueCacheAndValidation(t *testing.T) {
 	if err := cache.Store(t.Context(), "KEY", `[]`, "bad", time.Minute); err == nil {
 		t.Fatal("invalid cache version accepted")
 	}
-	if _, err := New(nil, cache, CacheTTL, pagination.Limits{}, false); err == nil {
+	if _, err := New(nil, cache, CacheTTL, pagination.Limits{}, false, localizer); err == nil {
 		t.Fatal("nil store accepted")
 	}
 	database, _, _ := sqlmock.New()
 	t.Cleanup(func() { _ = database.Close() })
-	if _, err := New(&db.Store{DB: database}, nil, CacheTTL, pagination.Limits{}, false); err == nil {
+	if _, err := New(&db.Store{DB: database}, nil, CacheTTL, pagination.Limits{}, false, localizer); err == nil {
 		t.Fatal("nil cache accepted")
 	}
-	if _, err := New(&db.Store{DB: database}, cache, 0, pagination.Limits{}, false); err == nil {
+	if _, err := New(&db.Store{DB: database}, cache, 0, pagination.Limits{}, false, localizer); err == nil {
 		t.Fatal("invalid ttl accepted")
 	}
 }

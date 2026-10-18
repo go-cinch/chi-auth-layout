@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
@@ -26,7 +27,7 @@ var (
 	ErrConflict       = apperror.New("ROLE_CONFLICT", "role word already exists")
 )
 
-const AdminRoleID int64 = 1
+const SuperRoleID int64 = 1
 
 type Role struct {
 	ActionSummaries *[]actionmodule.Summary `json:"action_summaries,omitempty"`
@@ -87,10 +88,11 @@ type ListRolesResult struct {
 }
 
 type Module struct {
-	store        *db.Store
-	limits       pagination.Limits
-	actions      Actions
-	protectSuper bool
+	administration PermissionAdministration
+	store          *db.Store
+	limits         pagination.Limits
+	actions        Actions
+	protectSuper   bool
 }
 
 type Actions interface {
@@ -198,6 +200,11 @@ func (m *Module) Create(ctx context.Context, input CreateRoleInput) (*Role, erro
 	}
 	var value *Role
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		if len(input.ActionCodes) > 0 {
+			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+				return err
+			}
+		}
 		codes, err := m.actions.ValidateCodes(ctx, m.store.SQL(ctx), input.ActionCodes)
 		if errors.Is(err, actionmodule.ErrNotFound) {
 			return ErrActionNotFound
@@ -243,6 +250,11 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateRoleInput) (*
 	}
 	var value *Role
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.ActionCodes != nil {
+			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+				return err
+			}
+		}
 		sets := make([]string, 0, 4)
 		args := make([]any, 0, 5)
 		add := func(column string, field any) {
@@ -263,7 +275,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateRoleInput) (*
 			if err != nil {
 				return err
 			}
-			if m.protectSuper && id == AdminRoleID {
+			if m.protectSuper && id == SuperRoleID {
 				allPermissions, err := m.actions.LookupByID(ctx, m.store.SQL(ctx), actionmodule.AllPermissionsActionID)
 				if errors.Is(err, actionmodule.ErrNotFound) {
 					return apperror.FeatureDisabled
@@ -310,23 +322,46 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 	}
 	if m.protectSuper {
 		for _, id := range ids {
-			if id == AdminRoleID {
+			if id == SuperRoleID {
 				return apperror.FeatureDisabled
 			}
 		}
 	}
-	result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_role WHERE id = ANY($1)`, pq.Array(ids))
-	if err != nil {
-		return fmt.Errorf("delete role: %w", err)
+
+	operation := func(ctx context.Context) error {
+		if m.administration != nil {
+			if err := authn.LockPermissionMutation(ctx, m.administration); err != nil {
+				return err
+			}
+			var assigned bool
+			if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM t_role WHERE id=ANY($1) AND BTRIM(action)<>'')`, pq.Array(ids)).Scan(&assigned); err != nil {
+				return err
+			}
+			if assigned {
+				if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+					return err
+				}
+			}
+		} else if err := authn.LockPermissionMutation(ctx, nil); err != nil {
+			return err
+		}
+		result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_role WHERE id = ANY($1)`, pq.Array(ids))
+		if err != nil {
+			return fmt.Errorf("delete role: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("delete role result: %w", err)
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+		return nil
 	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete role result: %w", err)
+	if m.administration != nil {
+		return m.store.Tx(ctx, operation)
 	}
-	if count == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return operation(ctx)
 }
 
 func containsCode(codes []string, target string) bool {
@@ -541,4 +576,13 @@ func orderedActions(codes []string, byCode map[string]ActionView) []ActionView {
 		}
 	}
 	return result
+}
+
+type PermissionAdministration interface {
+	RequirePermissionGrant(context.Context) error
+	LockPermissionMutation(context.Context) error
+}
+
+func (m *Module) SetPermissionAdministration(policy PermissionAdministration) {
+	m.administration = policy
 }

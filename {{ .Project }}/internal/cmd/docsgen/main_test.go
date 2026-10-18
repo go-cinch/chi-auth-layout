@@ -248,3 +248,56 @@ func TestImportedResponseSchema(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthInfoUsesHeaderWithoutScopeQuery(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "conf/http.yml", "http:\n  docs:\n    servers: []\n")
+	source := `package auth
+ type Module struct{}
+ func (*Module) Name() string { return "/auth" }
+ func (m *Module) HTTP() http.Handler {r:=chi.NewRouter();r.Get("/info",m.info);return r}
+ func (m *Module) info(w http.ResponseWriter,r *http.Request) {server.WriteOK(w)}
+ `
+	writeSource(t, root, "auth/http.go", source)
+	output := filepath.Join(root, "openapi.yaml")
+	if err := run(root, filepath.Join(root, "conf"), output, "test"); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "name: scope") || !strings.Contains(string(encoded), "name: X-Auth-Scope") {
+		t.Fatalf("info must document only the scope header: %s", encoded)
+	}
+}
+
+func TestProtectedErrorsPreserveHandlerDescription(t *testing.T) {
+	root := t.TempDir()
+	writeSource(t, root, "conf/http.yml", "http:\n  docs:\n    servers: []\n")
+	writeSource(t, root, "sample/http.go", `package sample
+ var errDenied=apperror.New("SAMPLE_DENIED","custom denial reason")
+ type Module struct{}
+ func (*Module) Name() string{return "/sample"}
+ func(m *Module)HTTP()http.Handler{r:=chi.NewRouter();r.Get("/",m.get);r.Post("/",m.create);return r}
+ func(m *Module)get(w http.ResponseWriter,r *http.Request){server.WriteOK(w)}
+ func(m *Module)create(w http.ResponseWriter,r *http.Request){server.WriteError(w,r,http.StatusForbidden,errDenied)}
+ `)
+	output := filepath.Join(root, "openapi.yaml")
+	if err := run(root, filepath.Join(root, "conf"), output, "test"); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(encoded)
+	for _, wanted := range []string{"invalid permission scope header", "permission denied", "custom denial reason", "X-Auth-Scope"} {
+		if !strings.Contains(doc, wanted) {
+			t.Fatalf("missing %s: %s", wanted, doc)
+		}
+	}
+	if strings.Contains(doc, "custom denial reason; permission denied") {
+		t.Fatal("handler denial description overwritten")
+	}
+}

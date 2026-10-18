@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/report"
 
 	"github.com/lib/pq"
@@ -128,6 +129,7 @@ type ListUsersResult struct {
 }
 
 type Module struct {
+	administration          PermissionAdministration
 	store                   *db.Store
 	limits                  pagination.Limits
 	registrationCredentials RegistrationCredentials
@@ -243,6 +245,11 @@ func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, erro
 	}
 	var value *User
 	err = m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.RoleID != nil || len(input.ActionCodes) > 0 {
+			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+				return err
+			}
+		}
 		if err := m.validateRole(ctx, m.store.SQL(ctx), input.RoleID); err != nil {
 			return err
 		}
@@ -308,7 +315,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 		if input.Username != nil && strings.TrimSpace(*input.Username) != authmodule.SuperUsername {
 			return nil, apperror.FeatureDisabled
 		}
-		if input.RoleID != nil && *input.RoleID != rolemodule.AdminRoleID {
+		if input.RoleID != nil && *input.RoleID != rolemodule.SuperRoleID {
 			return nil, apperror.FeatureDisabled
 		}
 		if input.Status != nil && *input.Status != StatusActive {
@@ -351,6 +358,16 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 	}
 	var value *User
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.RoleID != nil || input.ActionCodes != nil {
+			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+				return err
+			}
+		}
+		if input.Username != nil || input.Password != nil {
+			if err := authn.RequireAdministrationGrant(ctx, m.administration); err != nil {
+				return err
+			}
+		}
 		sets := make([]string, 0, 8)
 		args := make([]any, 0, 9)
 		add := func(column string, field any) {
@@ -450,18 +467,28 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 			}
 		}
 	}
-	result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_user WHERE id = ANY($1)`, pq.Array(ids))
-	if err != nil {
-		return fmt.Errorf("delete user: %w", err)
+
+	operation := func(ctx context.Context) error {
+		if err := authn.LockPermissionMutation(ctx, m.administration); err != nil {
+			return err
+		}
+		result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_user WHERE id = ANY($1)`, pq.Array(ids))
+		if err != nil {
+			return fmt.Errorf("delete user: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("delete user result: %w", err)
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+		return nil
 	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete user result: %w", err)
+	if m.administration != nil {
+		return m.store.Tx(ctx, operation)
 	}
-	if count == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return operation(ctx)
 }
 
 // Time filters preserve optional bounds and use JavaScript-safe Unix milliseconds.
@@ -902,4 +929,14 @@ func orderedActions(codes []string, byCode map[string]ActionView) []ActionView {
 		}
 	}
 	return result
+}
+
+type PermissionAdministration interface {
+	RequireAllPermissions(context.Context) error
+	RequirePermissionGrant(context.Context) error
+	LockPermissionMutation(context.Context) error
+}
+
+func (m *Module) SetPermissionAdministration(policy PermissionAdministration) {
+	m.administration = policy
 }

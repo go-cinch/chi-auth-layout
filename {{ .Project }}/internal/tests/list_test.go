@@ -2,22 +2,70 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"fmt"
 	"reflect"
 	"testing"
 	"time"
 
+	"{{ .Computed.module_name_final }}/internal/common/i18n"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/modules/action"
 	"{{ .Computed.module_name_final }}/internal/modules/auth"
+	"{{ .Computed.module_name_final }}/internal/modules/dictionary"
 	"{{ .Computed.module_name_final }}/internal/modules/role"
 	"{{ .Computed.module_name_final }}/internal/modules/user"
 	"{{ .Computed.module_name_final }}/internal/modules/usergroup"
 )
 
+func TestActionGRPCStorageAndListProjection(t *testing.T) {
+	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
+	ctx := t.Context()
+	for _, endpoints := range []string{
+		`[{"protocol":"grpc","path":"/auth.v1.Dictionary/GetDictionary"}]`,
+		`[{"protocol":"grpc","method":"","path":"/auth.v1.Dictionary/GetDictionary"}]`,
+		`[{"protocol":"grpc","method":"GET","path":"/auth.v1.Dictionary/GetDictionary"}]`,
+		`[{"protocol":"grpc","method":null,"path":"/auth.v1.Dictionary/GetDictionary"}]`,
+		`[{"protocol":"grpc","method":[],"path":"/auth.v1.Dictionary/GetDictionary"}]`,
+	} {
+		if _, err := store.DB.ExecContext(ctx, `UPDATE t_action SET config = JSONB_SET(config, '{endpoints}', $1::JSONB) WHERE word = 'admin:read:system:dictionary'`, endpoints); err == nil {
+			t.Fatalf("accepted invalid persisted gRPC method: %s", endpoints)
+		}
+	}
+	endpoints := `[{"protocol":"http","method":"GET","path":"/dictionary/{id}"},{"protocol":"grpc","method":"GRPC","path":"/auth.v1.Dictionary/GetDictionary"}]`
+	if _, err := store.DB.ExecContext(ctx, `UPDATE t_action SET config = JSONB_SET(config, '{endpoints}', $1::JSONB) WHERE word = 'admin:read:system:dictionary'`, endpoints); err != nil {
+		t.Fatal(err)
+	}
+	catalog := localizer.Current()
+	for _, key := range catalog.ResourceCatalog.Resources["admin:system:dictionary"].Operations["read"].ButtonKeys {
+		feature := catalog.ResourceCatalog.Buttons[key]
+		feature.HTTP = []localization.HTTPPath{ {Method: "GET", Path: "/dictionary/{id}"}}
+		feature.GRPC = []string{"/auth.v1.Dictionary/GetDictionary"}
+		catalog.ResourceCatalog.Buttons[key] = feature
+	}
+	rawCatalog, _ := json.Marshal(catalog)
+	if err := localizer.Install(rawCatalog); err != nil {
+		t.Fatal(err)
+	}
+	limits, _ := pagination.New(100, 100)
+	actions := action.New(store, limits, false, localizer)
+	result, err := actions.List(ctx, action.ListActionsInput{Word: "admin:read:system:dictionary", Fields: report.Fields{"resource"}})
+	if err != nil || len(result.Items) != 1 {
+		t.Fatalf("list: %+v %v", result, err)
+	}
+	if got := result.Items[0].Resource; got != "GET|/dictionary/{id}\nGRPC|/auth.v1.Dictionary/GetDictionary" {
+		t.Fatalf("resource projection: %q", got)
+	}
+}
+
 func TestListsBatchRelationsAndEffectiveLockStatus(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	exec := func(query string, args ...any) {
 		t.Helper()
@@ -25,7 +73,7 @@ func TestListsBatchRelationsAndEffectiveLockStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec(`INSERT INTO t_action (id,name,action_group,code,word) VALUES (101,'Read','Batch','BATCHRD1','batch.read'),(102,'Write','Batch','BATCHWR1','batch.write')`)
+	exec(`INSERT INTO t_action (id,action_group,code,word,config) VALUES (101,'admin:batch:record','BATCHRD1','admin:read:batch:record','{"bindings":[],"ui":[],"endpoints":[]}'),(102,'admin:batch:record','BATCHWR1','admin:update:batch:record','{"bindings":[],"ui":[],"endpoints":[]}')`)
 	exec(`INSERT INTO t_role (id,name,word,action) VALUES (101,'Batch editor','batch.editor','BATCHRD1,BATCHWR1'),(102,'Batch empty','batch.empty','')`)
 	past, future := time.Now().Add(-time.Hour).UnixMilli(), time.Now().Add(time.Hour).UnixMilli()
 	for i, metadata := range []string{fmt.Sprintf(`{"lock_expired_at":%d,"source":"test"}`, past), `{"lock_expired_at":0}`, fmt.Sprintf(`{"lock_expired_at":%d}`, future), `{}`, `{}`} {
@@ -41,7 +89,7 @@ func TestListsBatchRelationsAndEffectiveLockStatus(t *testing.T) {
 	exec(`INSERT INTO t_user_group (id,name,word,action) VALUES (101,'Batch first','batch.first','BATCHWR1,BATCHRD1'),(102,'Batch second','batch.second','BATCHRD1'),(103,'Batch empty','batch.empty','')`)
 	exec(`INSERT INTO t_user_user_group_relation (user_id,user_group_id) VALUES (103,101),(101,101),(101,102)`)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{PasswordResetRequired: true})
 	groups := usergroup.New(store, limits, actions, users)
@@ -147,6 +195,8 @@ func TestListsBatchRelationsAndEffectiveLockStatus(t *testing.T) {
 
 func TestRoleExactPermissionGroupPostgres(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	exec := func(query string, args ...any) {
 		t.Helper()
@@ -154,10 +204,10 @@ func TestRoleExactPermissionGroupPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exact := "Finance, 100%_'"
-	exec(`INSERT INTO t_action (id,name,action_group,code,word) VALUES
-		(101,'Read',$1,'GROUPRD1','group.read'),(102,'Write',$1,'GROUPWR1','group.write'),
-		(103,'Similar',$2,'GROUPSM1','group.similar'),(104,'Other','Other','GROUPUN1','group.other')`, exact, exact+" extra")
+	exact := "admin:finance:report_100"
+	exec(`INSERT INTO t_action (id,action_group,code,word,config) VALUES
+ (101,$1,'GROUPRD1','admin:read:group:record','{"bindings":[],"ui":[],"endpoints":[]}'),(102,$1,'GROUPWR1','admin:update:group:record','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (103,$2,'GROUPSM1','admin:read:group:similar','{"bindings":[],"ui":[],"endpoints":[]}'),(104,'admin:group:other','GROUPUN1','admin:read:group:other','{"bindings":[],"ui":[],"endpoints":[]}')`, exact, exact+"_extra")
 	exec(`INSERT INTO t_role (id,name,word,action) VALUES
 		(101,'Group editor','group.editor',' GROUPWR1, GROUPRD1, GROUPRD1, MISSING1 '),
 		(102,'Group reader','group.reader','GROUPRD1'),
@@ -166,7 +216,7 @@ func TestRoleExactPermissionGroupPostgres(t *testing.T) {
 		(105,'Group orphan','group.orphan','MISSING1'),
 		(106,'Group empty','group.empty','')`)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	size, one, two, three := int32(100), int32(1), int32(2), int32(3)
 	empty, partial, unknown := "", "Finance", "Missing"
@@ -216,6 +266,8 @@ func TestRoleExactPermissionGroupPostgres(t *testing.T) {
 
 func TestRoleAllPermissionGroupsPostgres(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	exec := func(query string, args ...any) {
 		t.Helper()
@@ -223,12 +275,12 @@ func TestRoleAllPermissionGroupsPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	finance, operations, audit := "Finance, 100%_'", "Operations", "Audit"
-	exec(`INSERT INTO t_action (id,name,action_group,code,word) VALUES
-		(101,'Finance read',$1,'ALLFINR1','all.finance.read'),(102,'Finance write',$1,'ALLFINW1','all.finance.write'),
-		(103,'Operations',$2,'ALLOPSR1','all.operations'),(104,'Audit',$3,'ALLAUDR1','all.audit'),
-		(105,'Extra group','Extra','ALLEXT01','all.extra'),(106,'Spaced operations',' Operations ','ALLSPA01','all.spaced'),
-		(107,'Partial finance','Finance','ALLPAR01','all.partial')`, finance, operations, audit)
+	finance, operations, audit := "admin:finance:report_100", "admin:operations:record", "admin:audit:record"
+	exec(`INSERT INTO t_action(id,action_group,code,word,config) VALUES
+ (101,$1,'ALLFINR1','admin:read:all:finance','{"bindings":[],"ui":[],"endpoints":[]}'),(102,$1,'ALLFINW1','admin:update:all:finance','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (103,$2,'ALLOPSR1','admin:read:all:operations','{"bindings":[],"ui":[],"endpoints":[]}'),(104,$3,'ALLAUDR1','admin:read:all:audit','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (105,'admin:extra:record','ALLEXT01','admin:read:all:extra','{"bindings":[],"ui":[],"endpoints":[]}'),(106,'admin:operations:extra','ALLSPA01','admin:read:all:spaced','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (107,'admin:finance:record','ALLPAR01','admin:read:all:partial','{"bindings":[],"ui":[],"endpoints":[]}')`, finance, operations, audit)
 	exec(`INSERT INTO t_role (id,name,word,action) VALUES
 		(101,'All three first','all.first',' ALLFINW1, ALLOPSR1, ALLAUDR1, ALLFINR1, ALLFINW1, ALLEXT01, MISSING1 '),
 		(102,'All three second','all.second','ALLFINR1,ALLOPSR1,ALLAUDR1'),
@@ -240,10 +292,10 @@ func TestRoleAllPermissionGroupsPostgres(t *testing.T) {
 		(109,'Spaced group','all.spaced','ALLFINR1,ALLSPA01,ALLAUDR1'),
 		(110,'Partial finance','all.partial','ALLPAR01,ALLOPSR1,ALLAUDR1')`)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	size, one, two, three := int32(100), int32(1), int32(2), int32(3)
-	empty, extra := "", "Extra"
+	empty, extra := "", "admin:extra:record"
 	assigned, unassigned := true, false
 	cases := []struct {
 		name  string
@@ -257,10 +309,10 @@ func TestRoleAllPermissionGroupsPostgres(t *testing.T) {
 		{"remove audit condition", role.ListRolesInput{GroupsAll: []string{finance, operations}}, 3, []int64{103, 102, 101}},
 		{"remove operations condition", role.ListRolesInput{GroupsAll: []string{finance, audit}}, 4, []int64{109, 104, 102, 101}},
 		{"duplicate selections and actions do not duplicate roles", role.ListRolesInput{GroupsAll: []string{finance, operations, audit, finance, operations}}, 2, []int64{102, 101}},
-		{"commas are literal", role.ListRolesInput{GroupsAll: []string{"Finance", operations, audit}}, 1, []int64{110}},
+		{"similar group remains independent", role.ListRolesInput{GroupsAll: []string{"admin:finance:record", operations, audit}}, 1, []int64{110}},
 		{"empty group does not clear filter", role.ListRolesInput{GroupsAll: []string{""}}, 0, []int64{}},
 		{"whitespace group does not clear filter", role.ListRolesInput{GroupsAll: []string{" "}}, 0, []int64{}},
-		{"group spaces are preserved", role.ListRolesInput{GroupsAll: []string{finance, " Operations ", audit}}, 1, []int64{109}},
+		{"different group keys remain independent", role.ListRolesInput{GroupsAll: []string{finance, "admin:operations:extra", audit}}, 1, []int64{109}},
 		{"case sensitive", role.ListRolesInput{GroupsAll: []string{finance, "operations", audit}}, 0, []int64{}},
 		{"unknown group excludes all", role.ListRolesInput{GroupsAll: []string{finance, operations, "Missing"}}, 0, []int64{}},
 		{"legacy condition also required", role.ListRolesInput{GroupExact: &extra, GroupsAll: []string{finance, operations, audit}}, 1, []int64{101}},
@@ -298,6 +350,8 @@ func TestRoleAllPermissionGroupsPostgres(t *testing.T) {
 
 func TestRoleKeywordPostgres(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	_, err := store.DB.ExecContext(ctx, `INSERT INTO t_role (id,name,word,action) VALUES
 		(101,'Needle name','keyword.first',''),
@@ -310,7 +364,7 @@ func TestRoleKeywordPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	roles := role.New(store, limits, action.New(store, limits, false), false)
+	roles := role.New(store, limits, action.New(store, limits, false, localizer), false)
 	size, one, two, four := int32(100), int32(1), int32(2), int32(4)
 	cases := []struct {
 		name  string
@@ -351,21 +405,23 @@ func TestRoleKeywordPostgres(t *testing.T) {
 
 func TestActionKeywordPostgres(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
-	_, err := store.DB.ExecContext(ctx, `INSERT INTO t_action (id,name,word,code,action_group) VALUES
-		(101,'QMatch name','qtest.first','QKEY0001','Keyword'),
-		(102,'Other','qtest.qmatch','QKEY0002','Keyword'),
-		(103,'Code only','qtest.third','QMATCH03','Other'),
-		(104,'QMatch both','qtest.qmatch.both','QMATCH04','Keyword'),
-		(105,'Literal 100%_!','qtest.literal','QKEY0005','Keyword'),
-		(106,'Literal 100xyz','qtest.decoy','QKEY0006','Keyword')`)
+	_, err := store.DB.ExecContext(ctx, `INSERT INTO t_action(id,word,code,action_group,config) VALUES
+ (101,'admin:read:qtest:qmatch-first','QKEY0001','admin:keyword:record','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (102,'admin:read:qtest:qmatch-other','QKEY0002','admin:keyword:record','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (103,'admin:read:qtest:third','QMATCH03','admin:other:record','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (104,'admin:read:qtest:qmatch-both','QMATCH04','admin:keyword:record','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (105,'admin:read:qtest:literal_100','QKEY0005','admin:keyword:record','{"bindings":[],"ui":[],"endpoints":[]}'),
+ (106,'admin:read:qtest:literalx100','QKEY0006','admin:keyword:record','{"bindings":[],"ui":[],"endpoints":[]}')`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	size, one, two, five := int32(100), int32(1), int32(2), int32(5)
-	group := "Keyword"
+	group := "admin:keyword:record"
 	cases := []struct {
 		name  string
 		input action.ListActionsInput
@@ -376,7 +432,7 @@ func TestActionKeywordPostgres(t *testing.T) {
 		{"AND group", action.ListActionsInput{Q: "qmatch", GroupExact: &group}, 3, []int64{104, 102, 101}},
 		{"AND name", action.ListActionsInput{Q: "qmatch", Name: "Other"}, 1, []int64{102}},
 		{"AND code", action.ListActionsInput{Q: "qmatch", Code: "QKEY0001"}, 1, []int64{101}},
-		{"literal wildcards", action.ListActionsInput{Q: "100%_!"}, 1, []int64{105}},
+		{"literal wildcards", action.ListActionsInput{Q: "literal_100"}, 1, []int64{105}},
 		{"blank", action.ListActionsInput{Q: " "}, 6, []int64{106, 105, 104, 103, 102, 101}},
 		{"missing", action.ListActionsInput{Q: "missing"}, 0, []int64{}},
 		{"second page", action.ListActionsInput{Q: "qmatch", Page: &two, PageSize: &one}, 4, []int64{103}},
@@ -385,7 +441,7 @@ func TestActionKeywordPostgres(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			input := tc.input
-			input.Word = "qtest."
+			input.Word = ":qtest:"
 			if input.PageSize == nil {
 				input.PageSize = &size
 			}
@@ -406,6 +462,8 @@ func TestActionKeywordPostgres(t *testing.T) {
 
 func TestUserKeywordPostgres(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	_, err := store.DB.ExecContext(ctx, `INSERT INTO t_user (id,username,code,password,status) VALUES
 		(101,'qtest_qmatch','UKEY0001','hash',1),
@@ -417,7 +475,7 @@ func TestUserKeywordPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	users := user.New(store, limits, nil, nil, actions, role.New(store, limits, actions, false), auth.Switches{})
 	size, one, two, four := int32(100), int32(1), int32(2), int32(4)
 	cases := []struct {
@@ -458,4 +516,115 @@ func TestUserKeywordPostgres(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestActionLocalizedCatalogPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
+	limits, _ := pagination.New(100, 100)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dictionaries.LoadLocalization(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(localizer.Reset)
+	actions := action.New(store, limits, false, localizer)
+	english := i18n.WithLocale(t.Context(), "en-US")
+	chinese := i18n.WithLocale(t.Context(), "zh-CN")
+	group := "admin:system:msg"
+	size := int32(100)
+	list := func(ctx context.Context, input action.ListActionsInput, total int64) *action.ListActionsResult {
+		t.Helper()
+		if input.PageSize == nil {
+			input.PageSize = &size
+		}
+		input.Scope = "admin"
+		input.GroupExact = &group
+		value, err := actions.List(ctx, input)
+		if err != nil || value.Total != total {
+			t.Fatalf("localized list %+v: %+v %v", input, value, err)
+		}
+		return value
+	}
+	value := list(english, action.ListActionsInput{Q: "View message"}, 1)
+	if len(value.Items) != 1 || value.Items[0].Name != "View message" || value.Items[0].Word != "admin:read:system:msg" {
+		t.Fatalf("localized name: %+v", value)
+	}
+	readAction := value.Items[0]
+	list(english, action.ListActionsInput{Q: readAction.Word}, 1)
+	list(english, action.ListActionsInput{Q: readAction.Code}, 1)
+	list(english, action.ListActionsInput{Name: "View message"}, 1)
+	list(chinese, action.ListActionsInput{Q: "查看站内信"}, 1)
+	list(chinese, action.ListActionsInput{Q: "View message"}, 0)
+	list(chinese, action.ListActionsInput{Group: localizer.Current().Labels("zh-CN", "groups")[group]}, 3)
+	groups, err := actions.ListGroups(chinese, localizer.Current().Labels("zh-CN", "groups")[group])
+	if err != nil || len(groups.Items) != 1 || groups.Items[0] != group {
+		t.Fatalf("localized group: %+v %v", groups, err)
+	}
+	one, two := int32(1), int32(2)
+	value = list(english, action.ListActionsInput{Q: "message", Page: &two, PageSize: &one, Fields: report.Fields{"name"}}, 3)
+	if len(value.Items) != 1 || value.Items[0].Name != "Send message" {
+		t.Fatalf("localized pagination: %+v", value)
+	}
+	current := localizer.Current()
+	current.Messages["en-US"].Frontend["actions"].(map[string]any)[readAction.Word] = "Inspect inbox 100%_!"
+	encoded, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(encoded)
+	var dictionaryID int64
+	if err := store.DB.QueryRowContext(t.Context(), `SELECT id FROM t_dictionary WHERE dictionary_key='I18N_CATALOG'`).Scan(&dictionaryID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dictionaries.Update(t.Context(), dictionaryID, dictionary.UpdateDictionaryInput{Value: &raw}); err != nil {
+		t.Fatal(err)
+	}
+	// The committed dictionary update changes both the search predicate and labels without a build/restart.
+	value = list(english, action.ListActionsInput{Q: "100%_!"}, 1)
+	if value.Items[0].Name != "Inspect inbox 100%_!" {
+		t.Fatal(value.Items[0].Name)
+	}
+	list(english, action.ListActionsInput{Q: "View message"}, 0)
+	detail, err := actions.Get(english, readAction.ID)
+	if err != nil || detail.Name != "Inspect inbox 100%_!" {
+		t.Fatalf("detail after update: %+v %v", detail, err)
+	}
+	summary, err := actions.LookupSummaries(english, store.DB, []string{readAction.Code})
+	if err != nil || summary[readAction.Code].Name != "Inspect inbox 100%_!" {
+		t.Fatalf("summary after update: %+v %v", summary, err)
+	}
+}
+
+func TestActionBindingNameFallbackPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	limits, _ := pagination.New(100, 100)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	if err != nil { t.Fatal(err) }
+	actions := action.New(store, limits, false, localizer)
+	actions.SetDefinitionCatalog(dictionaries)
+	ctx := i18n.WithLocale(t.Context(), "en-US")
+	value, err := actions.Create(ctx, action.CreateActionInput{
+		Word: "admin:read:custom:users",
+		Config: action.Config{ResourceKey: "admin:system:user", Operation: "update", UI: []action.UIBinding{}, Endpoints: []action.Endpoint{}},
+	})
+	if err != nil { t.Fatal(err) }
+	catalog := localizer.Current()
+	want := catalog.Labels("en-US", "operations")["update"] + " " + catalog.Labels("en-US", "resources")["admin:system:user"]
+	if value.Name != want { t.Fatalf("created name=%q want=%q", value.Name, want) }
+	for _, input := range []action.ListActionsInput{
+		{Code: value.Code, Q: want, Fields: report.Fields{"name"}},
+		{Code: value.Code, Name: want, Fields: report.Fields{"name"}},
+	} {
+		list, err := actions.List(ctx, input)
+		if err != nil || list.Total != 1 || len(list.Items) != 1 || list.Items[0].Name != want {
+			t.Fatalf("binding name filter %+v: %+v %v", input, list, err)
+		}
+	}
+	summaries, err := actions.LookupSummaries(ctx, store.DB, []string{value.Code})
+	if err != nil || summaries[value.Code].Name != want { t.Fatalf("summary=%+v err=%v", summaries, err) }
 }

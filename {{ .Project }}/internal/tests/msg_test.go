@@ -7,10 +7,6 @@ import (
 
 	"net/http/httptest"
 
-	"strings"
-	"sync"
-	"testing"
-	"time"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
@@ -21,10 +17,16 @@ import (
 	"{{ .Computed.module_name_final }}/internal/modules/msg"
 	"{{ .Computed.module_name_final }}/internal/modules/role"
 	"{{ .Computed.module_name_final }}/internal/modules/user"
+	"strings"
+	"sync"
+	"testing"
+	"time"
 )
 
 func TestMessageDeliveryAndIsolation(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := msg.New(store, limits)
 	ctx := t.Context()
@@ -141,13 +143,15 @@ func TestMessageDeliveryAndIsolation(t *testing.T) {
 
 func TestMessageHTTPPermissions(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	messages := msg.New(store, limits)
 	manager, err := authn.New("test", strings.Repeat("k", 64), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{})
+	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer)
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute
@@ -188,6 +192,8 @@ func TestMessageHTTPPermissions(t *testing.T) {
 // Status must remain a compact, exact snapshot after every delivery/state change.
 func TestMessageStatusLifecycle(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := msg.New(store, limits)
 	ctx := t.Context()
@@ -255,6 +261,8 @@ func TestMessageStatusLifecycle(t *testing.T) {
 // delivery/receipts. Compare it with inbox truth without invoking Status repair.
 func TestMessagePersistedStatusConcurrency(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := msg.New(store, limits)
 	ctx := t.Context()
@@ -319,6 +327,8 @@ func TestMessagePersistedStatusConcurrency(t *testing.T) {
 
 func TestMessageStatusExpiryWorkerAndBackfill(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := msg.New(store, limits)
 	ctx := t.Context()
@@ -377,6 +387,8 @@ func TestMessageStatusFuturePublication(t *testing.T) {
 		for _, repair := range []string{"read-all", "initialize", "rebuild"} {
 			t.Run(scope+"/"+repair, func(t *testing.T) {
 				store := permissionDatabase(t)
+				localizer := testLocalization(t, store)
+				_ = localizer
 				limits, _ := pagination.New(100, 100)
 				m := msg.New(store, limits)
 				ctx := t.Context()
@@ -451,6 +463,8 @@ func TestMessageStatusFuturePublication(t *testing.T) {
 
 func TestMessageCreateChecksExpiryAfterLock(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	limits, _ := pagination.New(100, 100)
 	m := msg.New(store, limits)
 	ctx := t.Context()
@@ -488,6 +502,8 @@ func TestMessageCreateChecksExpiryAfterLock(t *testing.T) {
 
 func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	// Require the statement's exact timestamp, so passing an application timestamp
 	// fails even when the database and application clocks are almost synchronized.
@@ -509,7 +525,7 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 	if _, err := messages.Create(ctx, 1, msg.CreateInput{Title: "before registration", Content: "body", Type: "notice", Scope: "all"}); err != nil {
 		t.Fatal(err)
 	}
-	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, auth.Switches{})
+	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, auth.Switches{}, localizer)
 	if err := authentication.Register(ctx, auth.RegisterInput{Username: "clock-registered", Password: "secret123"}); err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +533,7 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 	if err := store.DB.QueryRowContext(ctx, `SELECT id FROM t_user WHERE username='clock-registered'`).Scan(&registeredID); err != nil {
 		t.Fatal(err)
 	}
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
 	created, err := users.Create(ctx, user.CreateUserInput{Username: "clock-created", Password: "secret123"})
@@ -538,6 +554,8 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 
 func TestInboxIDFilterIsolation(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	limits, _ := pagination.New(100, 100)
 	m := msg.New(store, limits)

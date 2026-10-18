@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/report"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
 	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
@@ -27,10 +28,11 @@ const (
 )
 
 var (
-	ErrNotFound = apperror.New("DICTIONARY_NOT_FOUND", "dictionary not found")
-	ErrIDs      = apperror.New("DICTIONARY_IDS", "provide 1-100 positive dictionary ids")
-	ErrInvalid  = apperror.New("DICTIONARY_INVALID", "invalid dictionary")
-	ErrConflict = apperror.New("DICTIONARY_CONFLICT", "dictionary key already exists")
+	ErrNotFound        = apperror.New("DICTIONARY_NOT_FOUND", "dictionary not found")
+	ErrIDs             = apperror.New("DICTIONARY_IDS", "provide 1-100 positive dictionary ids")
+	ErrInvalid         = apperror.New("DICTIONARY_INVALID", "invalid dictionary")
+	ErrConflict        = apperror.New("DICTIONARY_CONFLICT", "dictionary key already exists")
+	ErrVersionConflict = apperror.New("DICTIONARY_VERSION_CONFLICT", "dictionary changed; compare the latest version before submitting")
 )
 
 var dictionaryKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$`)
@@ -88,7 +90,21 @@ func (c *memoryValueCache) Invalidate(_ context.Context) error {
 	return nil
 }
 
+type CatalogSource interface {
+	Current() localization.Catalog
+	Install([]byte) error
+	Reset()
+	PublicCatalog(...string) localization.PublicCatalog
+}
+
 type Module struct {
+	resourcePermissions        ResourcePermissions
+	catalogSource              CatalogSource
+	permissionGroups           PermissionGroups
+	administration             PermissionAdministration
+	localizationGate           chan struct{}
+	localizationEnabled        bool
+	localizationRaw            []byte
 	store                      *db.Store
 	cache                      ValueCache
 	ttl                        time.Duration
@@ -96,7 +112,7 @@ type Module struct {
 	protectCaptchaDictionaries bool
 }
 
-func New(store *db.Store, cache ValueCache, ttl time.Duration, limits pagination.Limits, protectCaptchaDictionaries bool) (*Module, error) {
+func New(store *db.Store, cache ValueCache, ttl time.Duration, limits pagination.Limits, protectCaptchaDictionaries bool, catalog CatalogSource) (*Module, error) {
 	if store == nil || store.DB == nil {
 		return nil, errors.New("dictionary database is required")
 	}
@@ -106,7 +122,7 @@ func New(store *db.Store, cache ValueCache, ttl time.Duration, limits pagination
 	if ttl <= 0 {
 		return nil, errors.New("dictionary cache ttl must be positive")
 	}
-	return &Module{store: store, cache: cache, ttl: ttl, limits: limits, protectCaptchaDictionaries: protectCaptchaDictionaries}, nil
+	return &Module{catalogSource: catalog, store: store, cache: cache, ttl: ttl, limits: limits, protectCaptchaDictionaries: protectCaptchaDictionaries, localizationGate: make(chan struct{}, 1)}, nil
 }
 
 // DictionaryValue returns an enabled dictionary's arbitrary JSON value.
@@ -140,6 +156,11 @@ func (m *Module) DictionaryValue(ctx context.Context, key string) (json.RawMessa
 func (m *Module) invalidate(ctx context.Context, operation string, ids ...int64) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
+	defer func() {
+		refreshCtx, refreshCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer refreshCancel()
+		m.refreshLocalizationAfterWrite(refreshCtx)
+	}()
 	started := time.Now()
 	var lastErr error
 	attempts := 0
@@ -194,11 +215,15 @@ type CreateDictionaryInput struct {
 }
 
 type UpdateDictionaryInput struct {
-	Key         *string          `json:"key,omitempty"`
-	Name        *string          `json:"name,omitempty"`
-	Value       *json.RawMessage `json:"value,omitempty"`
-	Description *string          `json:"description,omitempty"`
-	Enabled     *bool            `json:"enabled,omitempty"`
+	ExpectedValue   *json.RawMessage  `json:"expected_value,omitempty"`
+	GroupRenames    map[string]string `json:"group_renames,omitempty"`
+	ResourceRenames map[string]string `json:"resource_renames,omitempty"`
+	FeatureRenames  map[string]string `json:"feature_renames,omitempty"`
+	Key             *string           `json:"key,omitempty"`
+	Name            *string           `json:"name,omitempty"`
+	Value           *json.RawMessage  `json:"value,omitempty"`
+	Description     *string           `json:"description,omitempty"`
+	Enabled         *bool             `json:"enabled,omitempty"`
 }
 
 type ListDictionariesInput struct {
@@ -277,12 +302,20 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 	if !validKey(input.Key) || input.Name == "" || len(input.Name) > 100 || len(input.Description) > 2000 || !validValue(input.Value) {
 		return nil, ErrInvalid
 	}
+	candidate := &Dictionary{Key: input.Key, Value: input.Value}
+	if err := prepareLocalization(candidate); err != nil {
+		return nil, err
+	}
+	input.Value = candidate.Value
 	enabled := true
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
 	var value *Dictionary
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		if err := m.guardCatalogMutation(ctx, nil, input.Key); err != nil {
+			return err
+		}
 		now := time.Now().UnixMilli()
 		var id int64
 		err := m.store.SQL(ctx).QueryRowContext(ctx, `INSERT INTO t_dictionary (created_at, updated_at, dictionary_key, name, value, description, enabled) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id`, now, now, input.Key, input.Name, string(input.Value), input.Description, enabled).Scan(&id)
@@ -290,6 +323,9 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 			return mapWriteError(err)
 		}
 		value, err = get(ctx, m.store.SQL(ctx), id)
+		if err == nil {
+			err = prepareLocalization(value)
+		}
 		return err
 	})
 	if err != nil {
@@ -303,6 +339,9 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 }
 
 func (m *Module) Update(ctx context.Context, id int64, input UpdateDictionaryInput) (*Dictionary, error) {
+	if (len(input.GroupRenames) > 0 || len(input.ResourceRenames) > 0 || len(input.FeatureRenames) > 0) && (input.Value == nil || input.ExpectedValue == nil) {
+		return nil, ErrInvalid
+	}
 	if id <= 0 || (input.Key == nil && input.Name == nil && input.Value == nil && input.Description == nil && input.Enabled == nil) {
 		return nil, ErrInvalid
 	}
@@ -333,8 +372,48 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateDictionaryInp
 	if input.Value != nil && !validValue(*input.Value) {
 		return nil, ErrInvalid
 	}
+	if input.ExpectedValue != nil && !validValue(*input.ExpectedValue) {
+		return nil, ErrInvalid
+	}
 	var value *Dictionary
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		nextKey := ""
+		if input.Key != nil {
+			nextKey = *input.Key
+		}
+		groupsOnly := input.Value != nil && input.ExpectedValue != nil && input.Key == nil && input.Enabled == nil && input.Name == nil && input.Description == nil && len(input.ResourceRenames) == 0 && len(input.FeatureRenames) == 0 && permissionGroupsOnly(*input.ExpectedValue, *input.Value)
+		if err := m.guardCatalogMutation(ctx, []int64{id}, nextKey, groupsOnly); err != nil {
+			return err
+		}
+		var previousCatalog json.RawMessage
+		if input.Value != nil {
+			var key string
+			var raw json.RawMessage
+			if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT dictionary_key, value FROM t_dictionary WHERE id = $1 FOR UPDATE`, id).Scan(&key, &raw); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrNotFound
+				}
+				return err
+			}
+			if key == LocalizationKey {
+				previousCatalog = raw
+			}
+		}
+		// Compare JSONB semantically under the row lock, in the write transaction.
+		// A concurrent update after the editor's preflight must not be overwritten.
+		if input.ExpectedValue != nil {
+			var matches bool
+			err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT value = $2::jsonb FROM t_dictionary WHERE id = $1 FOR UPDATE`, id, string(*input.ExpectedValue)).Scan(&matches)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return ErrVersionConflict
+			}
+		}
 		sets := make([]string, 0, 6)
 		args := make([]any, 0, 7)
 		add := func(column string, field any) {
@@ -372,6 +451,19 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateDictionaryInp
 			return ErrNotFound
 		}
 		value, err = get(ctx, m.store.SQL(ctx), id)
+		if err == nil {
+			original := string(value.Value)
+			err = prepareLocalization(value)
+			if err == nil && original != string(value.Value) {
+				_, err = m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_dictionary SET value = $2::jsonb, updated_at = $3 WHERE id = $1`, id, string(value.Value), value.UpdatedAt)
+			}
+		}
+		if err == nil && input.Value != nil {
+			err = m.migrateResourcePermissions(ctx, previousCatalog, value, input.ResourceRenames, input.FeatureRenames)
+		}
+		if err == nil && input.Value != nil {
+			err = m.reconcilePermissionGroups(ctx, previousCatalog, value, input.GroupRenames)
+		}
 		return err
 	})
 	if err != nil {
@@ -396,17 +488,32 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 			}
 		}
 	}
-	result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_dictionary WHERE id = ANY($1)`, pq.Array(ids))
+	operation := func(ctx context.Context) error {
+		if err := m.guardCatalogMutation(ctx, ids, ""); err != nil {
+			return err
+		}
+		result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_dictionary WHERE id = ANY($1)`, pq.Array(ids))
+		if err != nil {
+			return fmt.Errorf("delete dictionaries: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("delete dictionaries result: %w", err)
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+		return nil
+	}
+	if m.permissionContext(ctx) {
+		err = m.store.Tx(ctx, operation)
+	} else {
+		err = operation(ctx)
+	}
 	if err != nil {
-		return fmt.Errorf("delete dictionaries: %w", err)
+		return err
 	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete dictionaries result: %w", err)
-	}
-	if count == 0 {
-		return ErrNotFound
-	}
+
 	m.invalidate(ctx, "delete", ids...)
 	return nil
 }

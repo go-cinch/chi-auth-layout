@@ -2,7 +2,7 @@
 
 The authenticated GET routes `/user/summary`, `/role/summary`,
 `/user-group/summary`, `/action/summary`, `/dictionary/summary`,
-`/whitelist/summary` and `/msg/sent/summary` return:
+`/msg/sent/summary` return:
 
 ```json
 {"total":0,"counts":{},"groups":[],"trend":[]}
@@ -20,7 +20,6 @@ create/send, update and delete grants do not grant access to a summary.
 | user-group | memberships, unique_members, empty_groups | top 8 groups by member count; id breaks ties |
 | action | resource, menu, button | all action groups with their record counts |
 | dictionary | enabled, disabled | none |
-| whitelist | permission, jwt | none |
 | msg/sent | notice, system, all, targeted, latest_published_at | none |
 
 Role assignments resolve against existing actions and count each role/action

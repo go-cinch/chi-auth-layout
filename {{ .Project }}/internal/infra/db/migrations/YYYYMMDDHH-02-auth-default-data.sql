@@ -1,76 +1,17 @@
 -- +migrate Up
-INSERT INTO t_action (id, name, action_group, code, word, resource, menu, btn) VALUES
-    (1, 'All Permissions', 'General', 'V65CB2Q6', '*', '*', '*', '*'),
-    (2, 'Default Permissions', 'General', 'K4F783SP', 'default', 'POST|/auth/logout|/auth.v1.Auth/Logout
-GET|/auth/info|/auth.v1.Auth/Info
-POST|/auth/challenge|/auth.v1.Auth/Challenge
-POST|/auth/captcha|/auth.v1.Auth/Captcha
-PATCH|/auth/change/pwd|/auth.v1.Auth/Pwd
-POST|/auth/captcha/verify
-PATCH|/auth/reset/pwd
-GET|/msg/inbox
-GET,PATCH,DELETE|/msg/inbox/*
-POST|/msg/inbox/read-all
-GET|/msg/unread-count', '/dashboard/overview
-/user/index
-/msg/inbox', ''),
-    (3, 'Dashboard', 'General', 'B4NMDEN3', 'dashboard', '', '/dashboard/overview', ''),
-    (4, 'User Read', 'User', 'BBY8JH9N', 'user.read', 'GET|/user|/auth.v1.User/ListUsers
-GET|/user/*|/auth.v1.User/GetUser', '/system/user', 'system.user.read'),
-    (5, 'User Create', 'User', '5S5B99YX', 'user.create', 'POST|/user|/auth.v1.User/CreateUser', '/system/user', 'system.user.create'),
-    (6, 'User Update', 'User', 'AS7XR8BN', 'user.update', 'PATCH|/user/*|/auth.v1.User/UpdateUser', '/system/user', 'system.user.update'),
-    (7, 'User Delete', 'User', 'GJ6BJFFR', 'user.delete', 'DELETE|/user/*|/auth.v1.User/DeleteUser', '/system/user', 'system.user.delete'),
-    (8, 'User Group Read', 'User Group', 'HKCDREG8', 'user.group.read', 'GET|/user-group|/auth.v1.UserGroup/ListUserGroups
-GET|/user-group/*|/auth.v1.UserGroup/GetUserGroup', '/system/user-group', 'system.user.group.read'),
-    (9, 'User Group Create', 'User Group', '6Q2WPTJV', 'user.group.create', 'POST|/user-group|/auth.v1.UserGroup/CreateUserGroup', '/system/user-group', 'system.user.group.create'),
-    (10, 'User Group Update', 'User Group', 'L2MYAAJ7', 'user.group.update', 'PATCH|/user-group/*|/auth.v1.UserGroup/UpdateUserGroup', '/system/user-group', 'system.user.group.update'),
-    (11, 'User Group Delete', 'User Group', 'BLLHMF73', 'user.group.delete', 'DELETE|/user-group/*|/auth.v1.UserGroup/DeleteUserGroup', '/system/user-group', 'system.user.group.delete'),
-    (12, 'Role Read', 'Role', '6GMVPV2A', 'role.read', 'GET|/role|/auth.v1.Role/ListRoles
-GET|/role/*|/auth.v1.Role/GetRole', '/system/role', 'system.role.read'),
-    (13, 'Role Create', 'Role', 'WV9248H7', 'role.create', 'POST|/role|/auth.v1.Role/CreateRole', '/system/role', 'system.role.create'),
-    (14, 'Role Update', 'Role', 'TN6DW6EF', 'role.update', 'PATCH|/role/*|/auth.v1.Role/UpdateRole', '/system/role', 'system.role.update'),
-    (15, 'Role Delete', 'Role', '9DW528AF', 'role.delete', 'DELETE|/role/*|/auth.v1.Role/DeleteRole', '/system/role', 'system.role.delete'),
-    (16, 'Action Read', 'Action', '95YTHT6H', 'action.read', 'GET|/action|/auth.v1.Action/ListActions
-GET|/action/*|/auth.v1.Action/GetAction', '/system/action', 'system.action.read'),
-    (17, 'Action Create', 'Action', 'NQMJVNGD', 'action.create', 'POST|/action|/auth.v1.Action/CreateAction', '/system/action', 'system.action.create'),
-    (18, 'Action Update', 'Action', 'YRHJTJ6L', 'action.update', 'PATCH|/action/*|/auth.v1.Action/UpdateAction', '/system/action', 'system.action.update'),
-    (19, 'Action Delete', 'Action', 'Q4YJPP3M', 'action.delete', 'DELETE|/action/*|/auth.v1.Action/DeleteAction', '/system/action', 'system.action.delete'),
-    (20, 'Whitelist Read', 'Whitelist', 'G83QYKCG', 'whitelist.read', 'GET|/whitelist|/auth.v1.Whitelist/ListWhitelists
-GET|/whitelist/*|/auth.v1.Whitelist/GetWhitelist', '/system/whitelist', 'system.whitelist.read'),
-    (21, 'Whitelist Create', 'Whitelist', 'B866ESV9', 'whitelist.create', 'POST|/whitelist|/auth.v1.Whitelist/CreateWhitelist', '/system/whitelist', 'system.whitelist.create'),
-    (22, 'Whitelist Update', 'Whitelist', 'Y7L2NP7G', 'whitelist.update', 'PATCH|/whitelist/*|/auth.v1.Whitelist/UpdateWhitelist', '/system/whitelist', 'system.whitelist.update'),
-    (23, 'Whitelist Delete', 'Whitelist', '59J7L52P', 'whitelist.delete', 'DELETE|/whitelist/*|/auth.v1.Whitelist/DeleteWhitelist', '/system/whitelist', 'system.whitelist.delete'),
-    (24, 'Dictionary Read', 'Dictionary', 'G78XK9BK', 'dictionary.read', 'GET|/dictionary|/auth.v1.Dictionary/ListDictionaries
-GET|/dictionary/*|/auth.v1.Dictionary/GetDictionary', '/system/dictionary', 'system.dictionary.read'),
-    (25, 'Dictionary Create', 'Dictionary', '793D34MA', 'dictionary.create', 'POST|/dictionary|/auth.v1.Dictionary/CreateDictionary', '/system/dictionary', 'system.dictionary.create'),
-    (26, 'Dictionary Update', 'Dictionary', 'PH4BW3YB', 'dictionary.update', 'PATCH|/dictionary/*|/auth.v1.Dictionary/UpdateDictionary', '/system/dictionary', 'system.dictionary.update'),
-    (27, 'Dictionary Delete', 'Dictionary', 'PEE6DRBQ', 'dictionary.delete', 'DELETE|/dictionary/*|/auth.v1.Dictionary/DeleteDictionary', '/system/dictionary', 'system.dictionary.delete'),
-    (28, 'Message Read', 'Message', 'M9LA3JV7', 'msg.read', 'GET|/msg/sent
-GET|/msg/sent/*', '/system/msg', 'system.msg.read'),
-    (29, 'Message Send', 'Message', 'ND2DTPQ8', 'msg.send', 'POST|/msg
-GET|/msg/recipient-option', '/system/msg', 'system.msg.send'),
-    (30, 'Message Delete', 'Message', '8KFMG5MQ', 'msg.delete', 'DELETE|/msg/sent/*', '/system/msg', 'system.msg.delete');
-
-INSERT INTO t_action (id, name, action_group, code, word, resource, menu, btn) VALUES
-    (31, 'Login Audit Read','Audit','ADTARD23','audit.login.read','GET|/audit/login
-GET|/audit/login/summary
-GET|/audit/login/option
-GET|/audit/login/detail/*','/audit/login','audit.login.read'),
-    (32, 'Login Audit Export','Audit','ADTAEX23','audit.login.export','GET|/audit/login/export','/audit/login','audit.login.export'),
-    (33, 'Operation Audit Read','Audit','ADTBRD23','audit.operation.read','GET|/audit/operation
-GET|/audit/operation/summary
-GET|/audit/operation/option
-GET|/audit/operation/detail/*','/audit/operation','audit.operation.read'),
-    (34, 'Operation Audit Export','Audit','ADTBEX23','audit.operation.export','GET|/audit/operation/export','/audit/operation','audit.operation.export');
-
+-- Seed accounts, roles, user groups and other non-catalog defaults.
+-- Assignment codes are resolved by the following action seed migration before startup completes.
 INSERT INTO t_role (id, name, word, action) VALUES
-    (1, 'Admin', 'admin', 'V65CB2Q6'),
-    (2, 'Guest', 'guest', 'B4NMDEN3');
+    (1, 'Super', 'super', 'M6TG8SR9'),
+    (2, 'Guest', 'guest', '35VY9TRL'),
+    (3, 'Admin', 'admin', 'B7RP4HYW,35VY9TRL,Y6RW5544,PMWSQYY5,R2LTBEEG,JBVF9YWV,F9PEAFVW,VLN9HX2E,K4AQMSC6,B2VYAELW,XXY567KR,3V5GWBQT,QYALLJEG,K5VF772F,E66VGBKA,5RNWYB4S,TW535HD8,V75R23SD,JJNWC246,9TS8JETG,SNP225K5,47WDGP7H,GW3JY8SJ,SKFRSH2E,HFSNA574'),
+    (4, 'Developer', 'developer', 'B7RP4HYW,35VY9TRL,Y6RW5544,PMWSQYY5,R2LTBEEG,JBVF9YWV,F9PEAFVW,VLN9HX2E,K4AQMSC6,B2VYAELW,XXY567KR,3V5GWBQT,QYALLJEG,K5VF772F,E66VGBKA,5RNWYB4S,TW535HD8,V75R23SD,H3HW2LEB,HED6QQTL,E3WB6LE7,MCHJ3RY3,JJNWC246,9TS8JETG,SNP225K5,47WDGP7H,GW3JY8SJ,SKFRSH2E,HFSNA574,76JJGCBN'),
+    (5, 'Operator', 'operator', 'B7RP4HYW,SKFRSH2E');
 
 INSERT INTO t_user_group (id, name, word, action) VALUES
-    (1, 'Read Only', 'readonly', 'BBY8JH9N,HKCDREG8,6GMVPV2A,95YTHT6H'),
-    (2, 'Read Write', 'write', 'BBY8JH9N,5S5B99YX,AS7XR8BN,GJ6BJFFR,HKCDREG8,6Q2WPTJV,L2MYAAJ7,BLLHMF73,6GMVPV2A,WV9248H7,TN6DW6EF,9DW528AF,95YTHT6H,NQMJVNGD,YRHJTJ6L,Q4YJPP3M'),
-    (3, 'No Delete', 'nodelete', 'BBY8JH9N,5S5B99YX,AS7XR8BN,HKCDREG8,6Q2WPTJV,L2MYAAJ7,6GMVPV2A,WV9248H7,TN6DW6EF,95YTHT6H,NQMJVNGD,YRHJTJ6L');
+    (1, 'Read Only', 'readonly', 'Y6RW5544,F9PEAFVW,XXY567KR,E66VGBKA'),
+    (2, 'Read Write', 'write', 'Y6RW5544,PMWSQYY5,R2LTBEEG,JBVF9YWV,F9PEAFVW,VLN9HX2E,K4AQMSC6,B2VYAELW,XXY567KR,3V5GWBQT,QYALLJEG,K5VF772F,E66VGBKA,5RNWYB4S,TW535HD8,V75R23SD'),
+    (3, 'No Delete', 'nodelete', 'Y6RW5544,PMWSQYY5,R2LTBEEG,F9PEAFVW,VLN9HX2E,K4AQMSC6,XXY567KR,3V5GWBQT,QYALLJEG,E66VGBKA,5RNWYB4S,TW535HD8');
 
 -- Local seed credentials intentionally use the username as the password.
 INSERT INTO t_user (id, role_id, username, code, password, status) VALUES
@@ -78,22 +19,15 @@ INSERT INTO t_user (id, role_id, username, code, password, status) VALUES
     (2, 2, 'guest', 'VWKNYWNF', '$2a$10$DzWbkb12WHoyj5UPIAdHBOYXFi6jn5gzQRUoOU8c6oZ9XJx9w6Tju', 1),
     (3, NULL, 'readonly', 'SWS8MCD6', '$2a$10$e5bhTbZUo8JLBWOfxWY7A.BpiGCTgvV3PxIhPozM9UolwFuENjIZi', 1),
     (4, NULL, 'write', 'C4FL7VGG', '$2a$10$SB4cqKKE5t9ACvMXtHaJuOafN1nvJgdK.5XxVAITBCSsU.gSNTbAm', 1),
-    (5, NULL, 'nodelete', 'RSY34NYR', '$2a$10$.QZNNNrOuEdPvV0UdYwEae942Bb7Hr28Zb0vrbBRocHUkSpqk/Uqu', 1);
+    (5, NULL, 'nodelete', 'RSY34NYR', '$2a$10$.QZNNNrOuEdPvV0UdYwEae942Bb7Hr28Zb0vrbBRocHUkSpqk/Uqu', 1),
+    (6, 3, 'admin', 'RYQQFLEF', '$2a$10$30p0/2rXDEQMlENvObbsOOWEcQ/UtK7HwTnSph0OWg9YSXWWWADjm', 1),
+    (7, 4, 'developer', 'PC787YK3', '$2a$10$27TEL7BVoUIC1eBQaOsIueLPuoID2VA.2aIXAy4kcI5e3IaxwDIl.', 1),
+    (8, 5, 'operator', 'GT8229RP', '$2a$10$ibw1wSobR/4DJhrPPey6.ekHt/1XuPwzf16D.MUpWQQHHz9k/yGJe', 1);
 
 INSERT INTO t_user_user_group_relation (user_id, user_group_id) VALUES
     (3, 1),
     (4, 2),
     (5, 3);
-
-INSERT INTO t_whitelist (id, category, resource) VALUES
-    (1, 0, '/grpc.health.v1.Health/Check
-/grpc.health.v1.Health/Watch'),
-    (2, 1, '/grpc.health.v1.Health/Check
-/grpc.health.v1.Health/Watch');
-
-INSERT INTO t_dictionary (id, dictionary_key, name, value, description) VALUES
-    (1, 'POINT_CAPTCHA_ENGLISH_CHARACTERS', 'Point Captcha English Characters', '["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","0","1","2","3","4","5","6","7","8","9"]'::jsonb, 'Uppercase English letters and digits available to point captcha challenges.'),
-    (2, 'POINT_CAPTCHA_CHINESE_CHARACTERS', 'Point Captcha Chinese Characters', '["啊","挨","皑","艾","鞍","俺","胺","盎","翱","奥","捌","笆","拔","把","罢","百","拜","班","颁","拌","办","帮","绑","镑","胞","剥","堡","报","爆","悲","背","狈","被","本","甭","逼","笔","蓖","毖","闭","辟","避","编","变","辫","彪","憋","斌","摈","柄","炳","菠","波","铂","帛","渤","卜","不","簿","猜","财","彩","餐","惭","舱","操","曹","侧","蹭","茶","搽","诧","搀","谗","产","猖","长","敞","倡","朝","吵","撤","澈","尘","陈","称","成","惩","逞","痴","池","耻","赤","充","崇","畴","筹","丑","出","锄","楚","搐","川","传","疮","闯","捶","春","淳","绰","雌","瓷","赐","囱","凑","簇","窜","脆","翠","寸","措","达","大","傣","代","逮","丹","掸","但","弹","党","刀","岛","稻","德","蹬","瞪","低","笛","翟","地","弟","掂","点","电","惦","碉","凋","钓","碟","叠","钉","锭","东","动","冻","抖","逗","毒","堵","杜","渡","锻","堆","对","敦","盾","多","躲","剁","峨","讹","厄","饿","耳","二","罚","阀","帆","矾","凡","范","泛","肪","妨","放","飞","吠","沸","吩","坟","奋","愤","枫","风","冯","奉","夫","扶","氟","服","福","抚","斧","腐","覆","付","负","妇","噶","概","干","竿","感","冈","肛","杠","高","搞","哥","鸽","割","蛤","个","跟","庚","梗","恭","公","巩","共","苟","购","菇","沽","古","股","固","剐","乖","关","观","惯","广","圭","龟","诡","跪","滚","郭","过","海","骇","韩","寒","翰","憾","汉","航","毫","号","荷","禾","盒","涸","贺","痕","哼","恒","虹","宏","侯","候","忽","葫","糊","唬","户","华","划","徊","欢","还","唤","涣","慌","蝗","惶","恍","辉","蛔","慧","贿","汇","绘","魂","活","或","货","基","积","迹","姬","吉","籍","疾","级","脊","冀","剂","寂","既","继","夹","荚","甲","价","歼","笺","兼","缄","碱","简","减","践","箭","剑","溅","姜","疆","讲","降","焦","浇","搅","侥","饺","教","叫","接","阶","桔","竭","解","芥","疥","筋","今","锦","靳","烬","荆","睛","惊","井","静","镜","竟","窘","玖","灸","救","咎","拘","居","咀","聚","具","锯","炬","娟","绢","抉","觉","均","君","竣","喀","开","慨","勘","康","抗","拷","坷","磕","咳","刻","肯","坑","孔","扣","哭","库","挎","筷","宽","狂","旷","岿","魁","愧","捆","廓","喇","辣","赖","拦","澜","览","滥","廊","捞","老","烙","雷","累","擂","棱","梨","狸","理","礼","栗","砾","傈","立","力","联","镰","帘","恋","凉","良","晾","聊","寥","了","料","劣","磷","邻","赁","菱","伶","灵","另","榴","刘","柳","咙","垄","娄","陋","颅","卤","碌","鹿","录","吕","履","氯","滤","孪","掠","伦","纶","罗","骡","骆","麻","马","埋","迈","馒","曼","芒","忙","茅","铆","帽","玫","酶","眉","美","媚","们","盟","孟","糜","弥","泌","棉","免","缅","瞄","庙","民","敏","螟","命","蘑","摩","末","沫","谋","牡","母","募","睦","哪","那","乃","南","挠","闹","内","霓","拟","腻","拈","捻","鸟","聂","镍","狞","泞","钮","农","怒","疟","糯","鸥","偶","爬","琶","徘","潘","畔","乓","胖","炮","呸","裴","佩","砰","彭","硼","鹏","砒","劈","脾","匹","譬","骗","票","拼","聘","萍","评","泼","魄","扑","葡","埔","浦","期","妻","漆","棋","崎","祈","起","启","气","泣","恰","钎","签","黔","前","谴","歉","羌","强","敲","乔","撬","俏","且","侵","勤","禽","轻","清","情","庆","丘","囚","区","屈","取","去","醛","拳","劝","却","雀","燃","瓤","让","惹","人","任","纫","戎","融","容","柔","儒","乳","褥","瑞","若","萨","塞","伞","丧","嫂","涩","砂","纱","筛","苫","煽","擅","汕","墒","晌","梢","芍","少","奢","舍","慑","设","伸","绅","婶","慎","甥","省","圣","施","尸","拾","蚀","矢","驶","士","拭","是","适","饰","室","手","寿","瘦","梳","叔","疏","熟","署","属","树","墅","恕","衰","栓","爽","税","舜","朔","嘶","丝","嗣","似","耸","宋","艘","苏","速","溯","酸","虽","髓","遂","损","梭","索","他","獭","胎","台","态","贪","檀","谭","袒","炭","堂","唐","淌","涛","桃","陶","藤","梯","提","啼","惕","天","甜","腆","眺","帖","汀","亭","通","同","桶","统","头","突","涂","吐","推","褪","臀","脱","驼","唾","洼","袜","弯","丸","挽","惋","腕","枉","望","巍","韦","唯","维","伟","纬","畏","位","慰","温","纹","问","挝","窝","握","钨","屋","梧","武","舞","戊","物","误","西","嘻","牺","悉","熄","犀","席","铣","戏","匣","暇","下","掀","鲜","贤","涎","险","腺","宪","相","箱","翔","想","巷","象","削","消","晓","肖","楔","鞋","携","谐","蟹","谢","芯","新","衅","惺","型","醒","姓","匈","熊","朽","袖","需","须","酗","畜","绪","喧","玄","绚","穴","勋","询","殉","逊","押","丫","崖","哑","焉","淹","蜒","颜","沿","衍","燕","唁","宴","央","扬","洋","仰","漾","瑶","窑","舀","耀","爷","页","曳","液","揖","衣","移","疑","彝","已","艺","邑","臆","亦","忆","溢","译","绎","殷","姻","寅","隐","婴","缨","荧","盈","映","佣","雍","泳","勇","优","由","油","友","釉","迂","榆","余","鱼","隅","与","语","域","遇","愈","誉","预","鸳","垣","辕","猿","远","院","跃","月","耘","陨","酝","匝","栽","载","攒","脏","糟","早","噪","燥","则","增","扎","轧","眨","乍","斋","寨","詹","斩","蘸","站","樟","张","丈","胀","招","赵","肇","哲","者","浙","甄","针","疹","镇","睁","怔","政","郑","支","肢","织","植","侄","趾","志","至","峙","稚","滞","中","衷","重","周","诌","帚","昼","蛛","诸","烛","嘱","助","铸","祝","拽","撰","桩","撞","锥","缀","捉","琢","着","咨","滋","仔","自","棕","综","走","足","诅","钻","最","昨","做"]'::jsonb, 'One thousand common simplified Chinese characters sampled from the GB2312 level-one repertoire.');
 
 -- A fresh schema has no messages; initialize zero-count statistics for seed users.
 INSERT INTO t_user_msg_status (user_id)
@@ -101,26 +35,19 @@ SELECT id
 FROM t_user
 ORDER BY id;
 
-SELECT setval(pg_get_serial_sequence('t_action', 'id'), (SELECT MAX(id) FROM t_action), true);
-SELECT setval(pg_get_serial_sequence('t_role', 'id'), (SELECT MAX(id) FROM t_role), true);
-SELECT setval(pg_get_serial_sequence('t_user_group', 'id'), (SELECT MAX(id) FROM t_user_group), true);
-SELECT setval(pg_get_serial_sequence('t_user', 'id'), (SELECT MAX(id) FROM t_user), true);
-SELECT setval(pg_get_serial_sequence('t_whitelist', 'id'), (SELECT MAX(id) FROM t_whitelist), true);
-
-SELECT setval(pg_get_serial_sequence('t_dictionary', 'id'), (SELECT MAX(id) FROM t_dictionary), true);
+SELECT setval(pg_get_serial_sequence('t_role', 'id'), (SELECT MAX(id) FROM t_role), TRUE);
+SELECT setval(pg_get_serial_sequence('t_user_group', 'id'), (SELECT MAX(id) FROM t_user_group), TRUE);
+SELECT setval(pg_get_serial_sequence('t_user', 'id'), (SELECT MAX(id) FROM t_user), TRUE);
 
 -- +migrate Down
--- Clear all auth tables, including runtime data, and reset their sequences.
+-- Clear the non-catalog auth tables and reset their sequences.
 TRUNCATE TABLE
     t_audit_event,
     t_user_msg_status,
     t_msg_recipient,
     t_msg,
-    t_dictionary,
-    t_whitelist,
     t_user_user_group_relation,
     t_user,
     t_user_group,
-    t_role,
-    t_action
+    t_role
 RESTART IDENTITY;

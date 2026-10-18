@@ -56,6 +56,9 @@ func Locale(ctx context.Context, accept string) string {
 	if locale, ok := ctx.Value(localeKey{}).(string); ok {
 		return locale
 	}
+	if translator, ok := ctx.Value(translatorKey{}).(Translator); ok {
+		return translator.Match(accept)
+	}
 	return Match(accept)
 }
 
@@ -67,4 +70,26 @@ func Translate(locale, code, fallback string) string {
 		return message
 	}
 	return fallback
+}
+
+// Translator supplies application-specific language registration and messages.
+type Translator interface {
+	Match(string) string
+	Translate(string, string, string) string
+}
+
+type translatorKey struct{}
+
+func WithTranslator(ctx context.Context, translator Translator) context.Context {
+	if translator == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, translatorKey{}, translator)
+}
+
+func TranslateContext(ctx context.Context, locale, code, fallback string) string {
+	if translator, ok := ctx.Value(translatorKey{}).(Translator); ok {
+		return translator.Translate(locale, code, fallback)
+	}
+	return Translate(locale, code, fallback)
 }

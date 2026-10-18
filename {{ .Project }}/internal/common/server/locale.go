@@ -11,23 +11,23 @@ import (
 )
 
 {{ if eq .Computed.http_router_final "gin" -}}
-func Locale() gin.HandlerFunc {
+func Locale(translators ...i18n.Translator) gin.HandlerFunc {
  return func(c *gin.Context) {
-  locale := i18n.Match(c.Request.Header.Get("Accept-Language"))
-  c.Request = c.Request.WithContext(i18n.WithLocale(c.Request.Context(), locale))
+  ctx:=c.Request.Context(); if len(translators)>0 {ctx=i18n.WithTranslator(ctx,translators[0])}; locale := i18n.Locale(ctx,c.Request.Header.Get("Accept-Language"))
+  c.Request = c.Request.WithContext(i18n.WithLocale(ctx, locale))
   c.Header("Content-Language", locale)
   c.Writer.Header().Add("Vary", "Accept-Language")
   c.Next()
  }
 }
 {{ else -}}
-func Locale() func(http.Handler) http.Handler {
+func Locale(translators ...i18n.Translator) func(http.Handler) http.Handler {
  return func(next http.Handler) http.Handler {
   return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-   locale := i18n.Match(r.Header.Get("Accept-Language"))
+   ctx:=r.Context(); if len(translators)>0 {ctx=i18n.WithTranslator(ctx,translators[0])}; locale := i18n.Locale(ctx,r.Header.Get("Accept-Language"))
    w.Header().Set("Content-Language", locale)
    w.Header().Add("Vary", "Accept-Language")
-   next.ServeHTTP(w, r.WithContext(i18n.WithLocale(r.Context(), locale)))
+   next.ServeHTTP(w, r.WithContext(i18n.WithLocale(ctx, locale)))
   })
  }
 }

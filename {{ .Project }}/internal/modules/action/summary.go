@@ -19,9 +19,9 @@ func (m *Module) Summary(ctx context.Context, fields ...string) (*report.Managem
 	var groups []byte
 	projection := report.Projection{Fields: selection}
 	projection.Add("total", `COUNT(*)`, &value.Total)
-	projection.Add("counts", `COUNT(*) FILTER (WHERE BTRIM(resource) <> '')`, &resources)
-	projection.Add("counts", `COUNT(*) FILTER (WHERE BTRIM(menu) <> '')`, &menus)
-	projection.Add("counts", `COUNT(*) FILTER (WHERE BTRIM(btn) <> '')`, &buttons)
+	projection.Add("counts", `COUNT(*) FILTER (WHERE jsonb_array_length(config->'endpoints') > 0)`, &resources)
+	projection.Add("counts", `COUNT(*) FILTER (WHERE jsonb_array_length(config->'ui') > 0)`, &menus)
+	projection.Add("counts", `COUNT(*) FILTER (WHERE jsonb_path_exists(config, '$.ui[*].button_keys[*]'))`, &buttons)
 	projection.Add("groups", `COALESCE((SELECT json_agg(g ORDER BY g.count DESC, g.name) FROM (
  SELECT action_group AS name, COUNT(*) AS count FROM t_action GROUP BY action_group
  ) g), '[]'::json)`, &groups)

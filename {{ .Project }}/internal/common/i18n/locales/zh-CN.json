@@ -54,7 +54,6 @@
   "HTTP_INVALID_USER_GROUP_ID": "用户组 ID 无效",
   "HTTP_INVALID_USER_ID": "用户 ID 无效",
   "HTTP_INVALID_USER_STATUS": "状态必须为 0 至 2 的值，多个值用逗号分隔",
-  "HTTP_INVALID_WHITELIST_ID": "白名单 ID 无效",
   "ROLE_ACTION_NOT_FOUND": "角色关联的权限不存在",
   "ROLE_CONFLICT": "角色标识已存在",
   "ROLE_IDS": "请提供 1 至 100 个有效的角色 ID",
@@ -73,10 +72,6 @@
   "USER_INVALID": "用户参数无效",
   "USER_NOT_FOUND": "用户不存在",
   "USER_ROLE_NOT_FOUND": "用户关联的角色不存在",
-  "WHITELIST_CONFLICT": "白名单记录已存在",
-  "WHITELIST_IDS": "请提供 1 至 100 个有效的白名单 ID",
-  "WHITELIST_INVALID": "白名单参数无效",
-  "WHITELIST_NOT_FOUND": "白名单记录不存在",
   "AUTH_PASSWORD_RESET_REQUIRED": "请先重置密码再继续使用",
   "AUTH_PASSWORD_RESET_NOT_REQUIRED": "当前账号无需首次重置密码",
   "AUTH_INVALID_PASSWORD_RESET": "请输入新密码",
@@ -85,5 +80,11 @@
   "MSG_NOT_FOUND": "消息不存在或不可见",
   "AUDIT_FILTER_INVALID": "审计筛选条件或时间范围无效（最长 90 天）。",
   "AUDIT_NOT_FOUND": "审计记录不存在。",
-  "AUDIT_EXPORT_LIMIT": "超过 10,000 条记录，请缩小筛选范围后导出。"
+  "AUDIT_EXPORT_LIMIT": "超过 10,000 条记录，请缩小筛选范围后导出。",
+  "AUTH_INFO_SCOPE_REQUIRED": "请指定权限作用域",
+  "AUTH_INFO_SCOPE_INVALID": "权限作用域无效",
+  "AUTH_PERMISSION_ADMIN_REQUIRED": "仅拥有当前作用域全部权限的管理员可以修改权限定义或账户凭证",
+  "AUTH_PERMISSION_GRANT_REQUIRED": "需要当前作用域的全部权限或权限分配权限",
+  "DICTIONARY_VERSION_CONFLICT": "目录已被修改，请对比线上最新版本后再提交",
+  "DICTIONARY_GROUP_NOT_EMPTY": "只能删除没有权限的分组"
 }

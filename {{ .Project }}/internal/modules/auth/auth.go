@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
+
 	"context"
 	"database/sql"
 	"errors"
@@ -15,6 +17,8 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/code"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
+	"{{ .Computed.module_name_final }}/internal/modules"
+	"{{ .Computed.module_name_final }}/internal/modules/action"
 )
 
 var (
@@ -23,6 +27,8 @@ var (
 	ErrPendingApproval       = apperror.New("AUTH_PENDING_APPROVAL", "user registration is pending approval")
 	ErrLocked                = apperror.New("AUTH_LOCKED", "user is locked")
 	ErrPointCaptchaRequired  = apperror.New("AUTH_POINT_CAPTCHA_REQUIRED", "invalid captcha")
+	ErrInfoScopeRequired     = apperror.New("AUTH_INFO_SCOPE_REQUIRED", "please specify a permission scope")
+	ErrInfoScopeInvalid      = apperror.New("AUTH_INFO_SCOPE_INVALID", "invalid permission scope")
 	ErrUnauthorized          = apperror.New("AUTH_UNAUTHORIZED", "unauthorized")
 	ErrInvalidRegistration   = apperror.New("AUTH_INVALID_REGISTRATION", "invalid registration")
 	ErrUsernameExists        = apperror.New("AUTH_USERNAME_EXISTS", "username already exists")
@@ -96,6 +102,7 @@ type UserRole struct {
 }
 
 type UserInfo struct {
+	Scope      string     `json:"scope"`
 	ID         int64      `json:"id"`
 	Username   string     `json:"username"`
 	Code       string     `json:"code"`
@@ -144,19 +151,26 @@ func requiresPasswordChangeCaptcha(err error) bool {
 	return errors.As(err, &failure) && failure.captchaRequired
 }
 
-type Module struct {
-	store         *db.Store
-	authenticator *authn.Manager
-	credentials   *Credentials
-	sessions      *Sessions
-	captcha       *PointCaptcha
-	sliderCaptcha *SliderCaptcha
-	passwordGuard *PasswordChangeGuard
-	switches      Switches
+type CatalogSource interface {
+	Current() localization.Catalog
+	Select([]string) localization.Catalog
 }
 
-func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, switches Switches) *Module {
-	return &Module{store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, switches: switches}
+type Module struct {
+	catalogSource    CatalogSource
+	permissionRoutes []modules.HTTPPermissionRoute
+	store            *db.Store
+	authenticator    *authn.Manager
+	credentials      *Credentials
+	sessions         *Sessions
+	captcha          *PointCaptcha
+	sliderCaptcha    *SliderCaptcha
+	passwordGuard    *PasswordChangeGuard
+	switches         Switches
+}
+
+func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, switches Switches, catalog CatalogSource) *Module {
+	return &Module{catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, switches: switches}
 }
 
 func (m *Module) Register(ctx context.Context, input RegisterInput) error {
@@ -612,7 +626,17 @@ func (m *Module) recordWrongPassword(ctx context.Context, userID int64) (int64, 
 	return wrong, nil
 }
 
-func (m *Module) Info(ctx context.Context) (*UserInfo, error) {
+func (m *Module) Info(ctx context.Context, scopes ...string) (*UserInfo, error) {
+	scope := ""
+	if len(scopes) > 0 {
+		scope = strings.TrimSpace(scopes[0])
+	}
+	if scope == "" {
+		return nil, ErrInfoScopeRequired
+	}
+	if !action.ValidScope(scope) {
+		return nil, ErrInfoScopeInvalid
+	}
 	identity, ok := authn.FromContext(ctx)
 	if !ok {
 		return nil, ErrUnauthorized
@@ -636,10 +660,13 @@ func (m *Module) Info(ctx context.Context) (*UserInfo, error) {
 	if roleID.Valid {
 		value.Role = &UserRole{ID: roleID.Int64, Name: roleName.String, Word: roleWord.String}
 	}
-	permission, err := m.permissions(ctx, value.ID)
+	catalog := m.catalogSource.Select([]string{"resource_catalog"})
+	permission, err := m.permissionsFromCatalog(ctx, value.ID, scope, nil, catalog)
 	if err != nil {
 		return nil, err
 	}
+	value.Scope = scope
+	permission.Navigation = permissionNavigation(catalog.ResourceCatalog, scope, permission.Menus)
 	value.Permission = permission
 	return &value, nil
 }

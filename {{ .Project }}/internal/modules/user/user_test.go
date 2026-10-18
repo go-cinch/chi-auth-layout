@@ -4,19 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
 	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 )
 
 var userTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
@@ -47,7 +49,7 @@ func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 		t.Fatal(err)
 	}
 	store := &db.Store{DB: database}
-	actions := actionmodule.New(store, limits, false)
+	actions := actionmodule.New(store, limits, false, localization.New())
 	return New(store, limits, nil, nil, actions, rolemodule.New(store, limits, actions, false), authmodule.Switches{PasswordResetRequired: true}), mock
 }
 
@@ -273,8 +275,8 @@ func TestUserRelationsAndFullUpdate(t *testing.T) {
 	roleID := int64(1)
 	codes := []string{"ABCDEFGH"}
 	actionRows := func() *sqlmock.Rows {
-		return sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
-			AddRow(1, userTestTime, userTestTime, "ABCDEFGH", "Demo", "Demo", "demo.read", "", "", "")
+		return sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}).
+			AddRow(1, userTestTime, userTestTime, "ABCDEFGH", "Demo", "demo.read", "admin", `{"ui":[],"endpoints":[]}`)
 	}
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT EXISTS").WithArgs(roleID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
@@ -335,10 +337,10 @@ func TestUserListBatchesRelations(t *testing.T) {
 			mock.ExpectQuery(`SELECT .* FROM t_role WHERE id = ANY`).WithArgs(pq.Array([]int64{7})).WillReturnRows(
 				sqlmock.NewRows([]string{"id", "created_at", "updated_at", "name", "word", "action"}).AddRow(7, userTestTime, userTestTime, "Editor", "editor", "READ,DELETE,WRITE"))
 			mock.ExpectQuery(`SELECT .* FROM t_action WHERE code = ANY`).WithArgs(pq.Array([]string{"WRITE", "READ", "MISSING", "DELETE"})).WillReturnRows(
-				sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "name", "action_group", "word", "resource", "menu", "btn"}).
-					AddRow(1, userTestTime, userTestTime, "READ", "Read", "Demo", "read", "", "", "").
-					AddRow(3, userTestTime, userTestTime, "DELETE", "Delete", "Demo", "delete", "", "", "").
-					AddRow(2, userTestTime, userTestTime, "WRITE", "Write", "Demo", "write", "", "", ""))
+				sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"}).
+					AddRow(1, userTestTime, userTestTime, "READ", "Demo", "read", "admin", `{"ui":[],"endpoints":[]}`).
+					AddRow(3, userTestTime, userTestTime, "DELETE", "Demo", "delete", "admin", `{"ui":[],"endpoints":[]}`).
+					AddRow(2, userTestTime, userTestTime, "WRITE", "Demo", "write", "admin", `{"ui":[],"endpoints":[]}`))
 			result, err := m.List(ctx, ListUsersInput{PageSize: &size})
 			if err != nil {
 				t.Fatal(err)
@@ -429,5 +431,49 @@ func TestLastLoggedInTimeRanges(t *testing.T) {
 	value, err := m.List(t.Context(), ListUsersInput{CreatedFrom: &createdFrom, CreatedTo: &createdTo, LastLoggedInFrom: &from, LastLoggedInTo: &to, Statuses: []int16{StatusActive}, PageSize: &size})
 	if err != nil || value.Total != 1 || len(value.Items) != 1 || value.Items[0].LastLoggedInAt == nil || *value.Items[0].LastLoggedInAt != 150 {
 		t.Fatalf("combined list: %#v %v", value, err)
+	}
+}
+
+type userPermissionPolicy struct{}
+
+func (userPermissionPolicy) RequireAllPermissions(context.Context) error {
+	return authn.ErrPermissionAdministrationRequired
+}
+
+func (userPermissionPolicy) RequirePermissionGrant(context.Context) error {
+	return authn.ErrPermissionGrantRequired
+}
+
+func (userPermissionPolicy) LockPermissionMutation(context.Context) error { return nil }
+func TestUserAssignmentAndCredentialPolicies(t *testing.T) {
+	m, mock := newTestModule(t)
+	m.SetPermissionAdministration(userPermissionPolicy{})
+	roleID := int64(1)
+	codes := []string{"ALL00001"}
+	username, password := "renamed-user", "new-password"
+	operations := []struct {
+		run  func() error
+		want error
+	}{
+		{func() error {
+			_, err := m.Create(t.Context(), CreateUserInput{Username: "plain-user", Password: "password1", RoleID: &roleID})
+			return err
+		}, authn.ErrPermissionGrantRequired},
+		{func() error { _, err := m.Update(t.Context(), 2, UpdateUserInput{ActionCodes: &codes}); return err }, authn.ErrPermissionGrantRequired},
+		{func() error { _, err := m.Update(t.Context(), 2, UpdateUserInput{Username: &username}); return err }, authn.ErrPermissionGrantRequired},
+		{func() error { _, err := m.Update(t.Context(), 2, UpdateUserInput{Password: &password}); return err }, authn.ErrPermissionGrantRequired},
+	}
+	for _, operation := range operations {
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+		if err := operation.run(); !errors.Is(err, operation.want) {
+			t.Fatalf("error=%v want=%v", err, operation.want)
+		}
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM t_user").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := m.Delete(t.Context(), 2); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -2,6 +2,7 @@
 package server
 
 import (
+ "{{ .Computed.module_name_final }}/internal/common/i18n"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"errors"
 	
@@ -40,7 +41,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(ClientIP(), Locale(), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
+	r.Use(ClientIP(), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
 	r.NoRoute(func(c *gin.Context) {
 		WriteError(c.Writer, c.Request, http.StatusNotFound, apperror.NotFound)
 	})
@@ -77,7 +78,17 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 
 		module.HTTP(group)
 	}
-	return r, nil
+	// Gateway checks need route precedence even when local authorization is disabled.
+	catalog := make([]modules.HTTPPermissionRoute, 0)
+	for _, route := range r.Routes() {
+		catalog = append(catalog, modules.HTTPPermissionRoute{Method: route.Method, Path: route.Path})
+	}
+	for _, module := range mounted {
+		if receiver, ok := module.(modules.HTTPPermissionRouteCatalog); ok {
+			receiver.SetHTTPPermissionRoutes(catalog)
+		}
+	}
+ return r,nil
 }
 
 func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.HTTPPermissionAuthorizer, permissionEndpoint, modulePath string, module modules.Module) gin.HandlerFunc {
@@ -98,7 +109,9 @@ func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.H
             } else { WriteError(c.Writer, c.Request, http.StatusUnauthorized, apperror.Unauthorized) }
 			return
 		}
-		c.Request = request
+		request, err = authn.ScopeRequest(request)
+ if err != nil { c.Abort(); WriteError(c.Writer,c.Request,http.StatusBadRequest,err); return }
+ c.Request = request
         identity, _ := authn.FromContext(request.Context()); auditctx.Identity(request.Context(),identity.UserID,identity.Username)
 		if authorizer != nil && c.Request.URL.Path != permissionEndpoint {
 			allowed, err := authorizer.AuthorizeHTTP(c.Request.Context(), c.Request.Method, c.Request.URL.Path)
@@ -163,6 +176,7 @@ func isPublicEndpoint(path, modulePath string) bool {
 package server
 
 import (
+ "{{ .Computed.module_name_final }}/internal/common/i18n"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"errors"
 	
@@ -194,7 +208,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(ClientIP(), Locale(), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer())
+	r.Use(ClientIP(), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer())
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, http.StatusNotFound, apperror.NotFound)
@@ -203,7 +217,8 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 		WriteError(w, r, http.StatusMethodNotAllowed, apperror.MethodNotAllowed)
 	})
 	routes := r.With(RequestTimeout(cfg.HTTP.Timeout))
-	seen := make(map[string]struct{}, len(mounted))
+	catalog:=make([]modules.HTTPPermissionRoute,0)
+ seen := make(map[string]struct{}, len(mounted))
 	for _, module := range mounted {
 		if module == nil {
 			return nil, errors.New("http module is required")
@@ -221,6 +236,10 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 			return nil, errors.New("http module handler is required")
 		}
 
+  if registered,ok:=handler.(chi.Routes);ok {
+   if err:=chi.Walk(registered,func(method,path string,_ http.Handler,_ ...func(http.Handler)http.Handler)error{catalog=append(catalog,modules.HTTPPermissionRoute{Method:method,Path:strings.TrimSuffix(pattern,"/")+path});return nil});err!=nil{return nil,err}
+  }
+
 		if isIdempotentModule(module) {
 			if idempotencyKeys == nil || cfg.Idempotency.TTL <= 0 {
 				return nil, errors.New("idempotency store and positive ttl are required")
@@ -237,7 +256,13 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 		routes.Mount(pattern, handler)
 	}
 
-	return r, nil
+	// Gateway checks need route precedence even when local authorization is disabled.
+	for _, module := range mounted {
+		if receiver, ok := module.(modules.HTTPPermissionRouteCatalog); ok {
+			receiver.SetHTTPPermissionRoutes(catalog)
+		}
+	}
+ return r,nil
 }
 
 func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.HTTPPermissionAuthorizer, permissionEndpoint, modulePath string, module modules.Module, next http.Handler) http.Handler {
@@ -257,7 +282,9 @@ func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.H
             } else { WriteError(w, r, http.StatusUnauthorized, apperror.Unauthorized) }
 			return
 		}
-		identity, _ := authn.FromContext(request.Context()); auditctx.Identity(request.Context(),identity.UserID,identity.Username)
+		request, err = authn.ScopeRequest(request)
+ if err != nil { WriteError(w,r,http.StatusBadRequest,err); return }
+ identity, _ := authn.FromContext(request.Context()); auditctx.Identity(request.Context(),identity.UserID,identity.Username)
         if authorizer != nil && request.URL.Path != permissionEndpoint {
 			allowed, err := authorizer.AuthorizeHTTP(request.Context(), request.Method, request.URL.Path)
 			if err != nil {
@@ -316,3 +343,5 @@ func isPublicEndpoint(path, modulePath string) bool {
 }
 
 {{ end -}}
+
+func httpTranslator(mounted []modules.Module) i18n.Translator { for _, module := range mounted { if source,ok:=module.(modules.HTTPLocalizer);ok {return source.Translator()} }; return nil }

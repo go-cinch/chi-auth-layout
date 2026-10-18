@@ -21,11 +21,12 @@ import (
 	"{{ .Computed.module_name_final }}/internal/modules/role"
 	"{{ .Computed.module_name_final }}/internal/modules/user"
 	"{{ .Computed.module_name_final }}/internal/modules/usergroup"
-	"{{ .Computed.module_name_final }}/internal/modules/whitelist"
 )
 
 func TestManagementSummaryPostgres(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	exec := func(query string, args ...any) {
 		t.Helper()
@@ -34,34 +35,41 @@ func TestManagementSummaryPostgres(t *testing.T) {
 		}
 	}
 	// permissionDatabase gives this test its own schema, never the application's tables.
-	exec(`TRUNCATE t_msg, t_whitelist, t_dictionary, t_user, t_user_group, t_role, t_action RESTART IDENTITY CASCADE`)
+	exec(`TRUNCATE t_msg, t_dictionary, t_user, t_user_group, t_role, t_action RESTART IDENTITY CASCADE`)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
 	groups := usergroup.New(store, limits, actions, users)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	whitelists := whitelist.New(store, limits)
 	messages := msg.New(store, limits)
-	operations := []func(context.Context, ...string) (*report.ManagementSummary, error){actions.Summary, roles.Summary, groups.Summary, dictionaries.Summary, whitelists.Summary, messages.SentSummary}
- // Selective aggregates must also return one row on an empty database.
- for _, operation := range operations {
-  value, err := operation(ctx, "total")
-  if err != nil || value.Total != 0 { t.Fatalf("selected total: %#v %v", value, err) }
-  if _, err := operation(ctx, "counts"); err != nil { t.Fatal(err) }
- }
- for _, operation := range []func(context.Context, ...string) (*report.ManagementSummary, error){actions.Summary, roles.Summary, groups.Summary} {
-  value, err := operation(ctx, "groups")
-  if err != nil || len(value.Groups) != 0 { t.Fatalf("empty selected groups: %#v %v", value, err) }
- }
- selectedUsers := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
- for _, fields := range []report.Fields{ {"total"}, {"counts"}, {"trend"}, {"total", "counts"}, {"total", "trend"}} {
-  value, err := selectedUsers.Summary(ctx, user.SummaryInput{Fields:fields})
-  if err != nil || value.Total != 0 { t.Fatalf("selected user %v: %#v %v", fields, value, err) }
- }
+	operations := []func(context.Context, ...string) (*report.ManagementSummary, error){actions.Summary, roles.Summary, groups.Summary, dictionaries.Summary, messages.SentSummary}
+	// Selective aggregates must also return one row on an empty database.
+	for _, operation := range operations {
+		value, err := operation(ctx, "total")
+		if err != nil || value.Total != 0 {
+			t.Fatalf("selected total: %#v %v", value, err)
+		}
+		if _, err := operation(ctx, "counts"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, operation := range []func(context.Context, ...string) (*report.ManagementSummary, error){actions.Summary, roles.Summary, groups.Summary} {
+		value, err := operation(ctx, "groups")
+		if err != nil || len(value.Groups) != 0 {
+			t.Fatalf("empty selected groups: %#v %v", value, err)
+		}
+	}
+	selectedUsers := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+	for _, fields := range []report.Fields{ {"total"}, {"counts"}, {"trend"}, {"total", "counts"}, {"total", "trend"}} {
+		value, err := selectedUsers.Summary(ctx, user.SummaryInput{Fields: fields})
+		if err != nil || value.Total != 0 {
+			t.Fatalf("selected user %v: %#v %v", fields, value, err)
+		}
+	}
 	for _, operation := range operations {
 		value, err := operation(ctx)
 		if err != nil || value.Total != 0 || value.Groups == nil || value.Trend == nil {
@@ -85,12 +93,14 @@ func TestManagementSummaryPostgres(t *testing.T) {
 	for i, at := range dates {
 		exec(`INSERT INTO t_user (id,username,code,password,status,metadata,created_at,updated_at) VALUES ($1,$2,$3,'hash',$4,$5,$6,42)`, i+1, fmt.Sprintf("summary%d", i), fmt.Sprintf("SUMUSR%02d", i), states[i], metadata[i], at)
 	}
-	exec(`INSERT INTO t_action (id,name,action_group,code,word,resource,menu,btn) VALUES (1,'Read','Group A','SUMACT01','summary.read','GET|/test','/test',''),(2,'Write','Group A','SUMACT02','summary.write','POST|/test','','test.write'),(3,'Other','Group B','SUMACT03','summary.empty','','','')`)
+	exec(`INSERT INTO t_action(id,action_group,code,word,config) VALUES
+ (1,'admin:summary:group-a','SUMACT01','admin:read:summary:record','{"bindings":[],"ui":[{"menu_key":"admin:menu:summary:record","menu_path":"/test","page_entry":true,"button_keys":["admin:btn:summary:record:query"]}],"endpoints":[{"protocol":"http","method":"GET","path":"/test"}]}'),
+ (2,'admin:summary:group-a','SUMACT02','admin:update:summary:record','{"bindings":[],"ui":[],"endpoints":[{"protocol":"http","method":"POST","path":"/test"}]}'),
+ (3,'admin:summary:group-b','SUMACT03','admin:read:summary:empty','{"bindings":[],"ui":[],"endpoints":[]}')`)
 	exec(`INSERT INTO t_role (id,name,word,action) VALUES (1,'Reader','summary.reader','SUMACT01,SUMACT02'),(2,'Empty','summary.empty','MISSING1'),(3,'Duplicate','summary.duplicate','SUMACT01,SUMACT01')`)
 	exec(`INSERT INTO t_user_group (id,name,word,action) VALUES (1,'First','summary.first','SUMACT01'),(2,'Second','summary.second','MISSING1'),(3,'Empty','summary.empty','')`)
 	exec(`INSERT INTO t_user_user_group_relation (user_id,user_group_id) VALUES (1,1),(2,1),(1,2)`)
 	exec(`INSERT INTO t_dictionary (dictionary_key,name,value,enabled) VALUES ('SUMMARY_ENABLED','Enabled','[]',true),('SUMMARY_DISABLED','Disabled','{}',false)`)
-	exec(`INSERT INTO t_whitelist (category,resource) VALUES (0,'GET|/a'),(1,'GET|/b'),(1,'GET|/c')`)
 	exec(`INSERT INTO t_msg (id,title,content,type,scope,published_at,expired_at) VALUES (1,'Literal 100%_','old','notice','all',$1,$2),(2,'Content search','Needle 100%_ here','system','targeted',$1,NULL),(3,'100xxxx','No match','notice','all',$3,NULL)`, now-7200000, now-3600000, now-1000)
 	exec(`INSERT INTO t_msg_recipient (msg_id,user_id,read_at,deleted_at) VALUES (1,1,$1,$1),(2,1,NULL,NULL)`, now)
 	check := func(value *report.ManagementSummary, err error, total int64, counts map[string]int64) {
@@ -151,18 +161,16 @@ func TestManagementSummaryPostgres(t *testing.T) {
 		}
 		value, err = actions.Summary(tx)
 		check(value, err, 3, map[string]int64{"resource": 2, "menu": 1, "button": 1})
-		if len(value.Groups) != 2 || value.Groups[1].Name != "Group B" || value.Groups[1].Count != 1 {
+		if len(value.Groups) != 2 || value.Groups[1].Name != "admin:summary:group-b" || value.Groups[1].Count != 1 {
 			t.Fatalf("ungrouped: %#v", value.Groups)
 		}
-		exact := "Group B"
+		exact := "admin:summary:group-b"
 		actionRows, err := actions.List(tx, action.ListActionsInput{GroupExact: &exact})
 		if err != nil || actionRows.Total != 1 || actionRows.Items[0].ID != 3 {
 			t.Fatalf("exact group: %#v %v", actionRows, err)
 		}
 		value, err = dictionaries.Summary(tx)
 		check(value, err, 2, map[string]int64{"enabled": 1, "disabled": 1})
-		value, err = whitelists.Summary(tx)
-		check(value, err, 3, map[string]int64{"permission": 1, "jwt": 2})
 		value, err = messages.SentSummary(tx)
 		check(value, err, 3, map[string]int64{"notice": 2, "system": 1, "all": 2, "targeted": 1, "latest_published_at": now - 1000})
 		sent, err := messages.ListSent(tx, msg.ListInput{Query: "100%_", PageSize: &size})
@@ -193,6 +201,8 @@ func TestManagementSummaryPostgres(t *testing.T) {
 
 func TestManagementSummaryPermissionBoundary(t *testing.T) {
 	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	_ = localizer
 	ctx := t.Context()
 	exec := func(query string, args ...any) {
 		t.Helper()
@@ -222,24 +232,24 @@ func TestManagementSummaryPermissionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authentication := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true})
+	authentication := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false)
+	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute
-	handler, err := server.NewRouter(cfg, manager, idempotency.NewMemoryStore(), authentication, actions, roles, users, usergroup.New(store, limits, actions, users), dictionaries, whitelist.New(store, limits), msg.New(store, limits))
+	handler, err := server.NewRouter(cfg, manager, idempotency.NewMemoryStore(), authentication, actions, roles, users, usergroup.New(store, limits, actions, users), dictionaries, msg.New(store, limits))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct{ path, read, write string }{
-		{"/user/summary", "user.read", "user.create"}, {"/role/summary", "role.read", "role.update"}, {"/user-group/summary", "user.group.read", "user.group.update"}, {"/action/summary", "action.read", "action.delete"}, {"/dictionary/summary", "dictionary.read", "dictionary.update"}, {"/whitelist/summary", "whitelist.read", "whitelist.create"}, {"/msg/sent/summary", "msg.read", "msg.send"},
+		{"/user/summary", "admin:read:system:user", "admin:create:system:user"}, {"/role/summary", "admin:read:system:role", "admin:update:system:role"}, {"/user-group/summary", "admin:read:system:user-group", "admin:update:system:user-group"}, {"/action/summary", "admin:read:system:action", "admin:delete:system:action"}, {"/dictionary/summary", "admin:read:system:dictionary", "admin:update:system:dictionary"}, {"/msg/sent/summary", "admin:read:system:msg", "admin:create:system:msg"},
 	}
 	request := func(path string, authorized bool, want int) {
 		t.Helper()
@@ -267,7 +277,7 @@ func TestManagementSummaryPermissionBoundary(t *testing.T) {
 			}
 		}
 	}
-	exec(`UPDATE t_user SET action=(SELECT code FROM t_action WHERE word='msg.delete') WHERE id=2`)
+	exec(`UPDATE t_user SET action=(SELECT code FROM t_action WHERE word='admin:delete:system:msg') WHERE id=2`)
 	request("/msg/sent/summary", true, 403)
 }
 
@@ -275,6 +285,8 @@ func TestRecentLoggedInUsersSummaryPostgres(t *testing.T) {
 	for _, zone := range []string{"Asia/Shanghai", "America/New_York"} {
 		t.Run(zone, func(t *testing.T) {
 			store := permissionDatabase(t)
+			localizer := testLocalization(t, store)
+			_ = localizer
 			ctx := t.Context()
 			exec := func(query string, args ...any) {
 				t.Helper()
@@ -387,6 +399,8 @@ func TestUserCalendarDayDrilldownPostgres(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%s-%02d-%02d", tc.zone, tc.month, tc.day), func(t *testing.T) {
 			store := permissionDatabase(t)
+			localizer := testLocalization(t, store)
+			_ = localizer
 			ctx := t.Context()
 			exec := func(query string, args ...any) {
 				t.Helper()
@@ -420,7 +434,7 @@ func TestUserCalendarDayDrilldownPostgres(t *testing.T) {
 				exec(`INSERT INTO t_user (id,username,code,password,status,created_at,updated_at,last_logged_in_at) VALUES ($1,$2,$3,'hash',$4,$5,42,$6)`, i+1, fmt.Sprintf("calendar%d", i), fmt.Sprintf("CALD%04d", i), status, at, last)
 			}
 			limits, _ := pagination.New(100, 100)
-			actions := action.New(store, limits, false)
+			actions := action.New(store, limits, false, localizer)
 			roles := role.New(store, limits, actions, false)
 			users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
 			size := int32(2)

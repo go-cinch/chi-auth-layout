@@ -1,6 +1,7 @@
 package role
 
 import (
+ "{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"encoding/json"
 	"errors"
@@ -85,6 +86,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 	if err := decoder.Decode(&input); err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody); return }
 	if err := decoder.Decode(new(any)); err != io.EOF { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody); return }
 	value, err := m.Create(r.Context(), input)
+ if errors.Is(err,authn.ErrPermissionAdministrationRequired)||errors.Is(err,authn.ErrPermissionGrantRequired){server.WriteError(w,r,http.StatusForbidden,err);return}
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) { server.WriteError(w, r, http.StatusBadRequest, err); return }
 	if errors.Is(err, ErrActionNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrActionNotFound); return }
 	if err != nil {
@@ -113,6 +115,7 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 	if err := decoder.Decode(&input); err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody); return }
 	if err := decoder.Decode(new(any)); err != io.EOF { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody); return }
 	value, err := m.Update(r.Context(), id, input)
+ if errors.Is(err,authn.ErrPermissionAdministrationRequired)||errors.Is(err,authn.ErrPermissionGrantRequired){server.WriteError(w,r,http.StatusForbidden,err);return}
 	if errors.Is(err, apperror.FeatureDisabled) { server.WriteError(w, r, http.StatusForbidden, err); return }
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) { server.WriteError(w, r, http.StatusBadRequest, err); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }
@@ -144,6 +147,7 @@ func (m *Module) delete(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, id)
 	}
 	err := m.Delete(r.Context(), ids...)
+ if errors.Is(err,authn.ErrPermissionAdministrationRequired)||errors.Is(err,authn.ErrPermissionGrantRequired){server.WriteError(w,r,http.StatusForbidden,err);return}
 	if errors.Is(err, apperror.FeatureDisabled) { server.WriteError(w, r, http.StatusForbidden, err); return }
 	if errors.Is(err, ErrIDs) { server.WriteError(w, r, http.StatusBadRequest, ErrIDs); return }
 	if errors.Is(err, ErrNotFound) { server.WriteError(w, r, http.StatusNotFound, ErrNotFound); return }

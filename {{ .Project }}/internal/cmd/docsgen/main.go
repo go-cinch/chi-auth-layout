@@ -53,10 +53,11 @@ type response struct {
 }
 
 type parameter struct {
-	in       string
-	required bool
-	name     string
-	schema   schema
+	description string
+	in          string
+	required    bool
+	name        string
+	schema      schema
 }
 
 type docServer struct {
@@ -154,9 +155,11 @@ func run(source, configDir, output, title string) error {
 	for index := range routes {
 		gen.describeRoute(&routes[index])
 		gen.describeAuditRoute(&routes[index])
-        gen.describeSummaryRoute(&routes[index])
-        gen.describeUserGroupRoute(&routes[index])
-        gen.describeListFields(&routes[index])
+		gen.describeSummaryRoute(&routes[index])
+		gen.describeUserGroupRoute(&routes[index])
+		gen.describeListFields(&routes[index])
+		gen.describeDetailFields(&routes[index])
+		gen.describeCatalogRoute(&routes[index])
 		if routes[index].idempotent && routes[index].method == http.MethodPost {
 			routes[index].parameters = append(routes[index].parameters, parameter{
 				in: "header", name: "X-Idempotent", schema: schema{typeName: "string"},
@@ -169,7 +172,14 @@ func run(source, configDir, output, title string) error {
 
 		if routeRequiresAuthentication(routes[index].path) {
 			routes[index].authenticated = true
+			routes[index].parameters = append(routes[index].parameters, parameter{in: "header", name: "X-Auth-Scope", schema: schema{typeName: "string", example: "admin"}})
 			gen.ensureErrorResponse()
+			if _, exists := routes[index].responses[http.StatusBadRequest]; !exists {
+				addErrorResponse(&routes[index], http.StatusBadRequest, "invalid permission scope header")
+			}
+			if _, exists := routes[index].responses[http.StatusForbidden]; !exists {
+				addErrorResponse(&routes[index], http.StatusForbidden, "permission denied")
+			}
 			routes[index].responses[http.StatusUnauthorized] = response{
 				description: http.StatusText(http.StatusUnauthorized),
 				schema:      &schema{ref: "#/components/schemas/ErrorResponse"},
@@ -650,6 +660,9 @@ func (g *generator) structSchema(pkg *sourcePackage, value *ast.StructType) *sch
 		if field.Tag != nil {
 			tag, _ := strconv.Unquote(field.Tag.Value)
 			properties[name].example = reflect.StructTag(tag).Get("example")
+			if reflect.StructTag(tag).Get("nullable") == "true" {
+				properties[name].nullable = true
+			}
 		}
 		if !optional {
 			required = append(required, name)
@@ -838,7 +851,11 @@ func render(title string, servers []docServer, routes []route, components map[st
 				if location == "" {
 					location = "path"
 				}
-				fmt.Fprintf(&output, "\n          in: %s\n          required: %t\n          schema:\n", location, parameter.required || location == "path")
+				fmt.Fprintf(&output, "\n          in: %s\n          required: %t\n", location, parameter.required || location == "path")
+				if parameter.description != "" {
+					fmt.Fprintf(&output, "          description: %q\n", parameter.description)
+				}
+				output.WriteString("          schema:\n")
 				renderSchema(&output, &parameter.schema, 12)
 			}
 		}

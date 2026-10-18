@@ -1,6 +1,7 @@
 package action
 
 import (
+ "{{ .Computed.module_name_final }}/internal/modules/localization"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -16,7 +17,9 @@ import (
 )
 
 func TestActionHTTP(t *testing.T) {
+ localizer := localization.New()
 	m, mock := newTestModule(t)
+ localizer = m.catalogSource.(*localization.Module)
 	if m.Name() != "/action" { t.Fatal(m.Name()) }
 {{ if eq .Computed.http_router_final "gin" -}}
 	router := gin.New()
@@ -45,22 +48,25 @@ func TestActionHTTP(t *testing.T) {
 	request(http.MethodPost, "/", `{}`, http.StatusBadRequest)
 	request(http.MethodPost, "/", `{"name":"x","word":"x","unknown":1}`, http.StatusBadRequest)
 	mock.ExpectBegin()
+	expectRegisteredActionCatalog(t, mock, localizer)
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(24))
 	mock.ExpectExec("INSERT INTO t_action").WillReturnResult(sqlmock.NewResult(0, 1))
 	expectActionGet(mock, 24, "ABCDEFGH", "Demo")
 	mock.ExpectCommit()
-	request(http.MethodPost, "/", `{"name":"Demo","group":"Demo","word":"demo.read"}`, http.StatusOK)
+	request(http.MethodPost, "/", `{"word":"admin:read:demo:record","config":{"bindings":[{"resource_key":"admin:demo:record","operation":"read","feature_keys":null}],"ui":[],"endpoints":[]}}`, http.StatusOK)
 	request(http.MethodPatch, "/1", `{}`, http.StatusBadRequest)
 	request(http.MethodPatch, "/bad", `{}`, http.StatusBadRequest)
-	name := "Updated"
+	name := "admin:demo:record"
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE t_action SET name").WithArgs(name, sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectActionGet(mock, 1, "ABCDEFGH", name)
+ expectRegisteredActionCatalog(t, mock, localizer)
+	mock.ExpectExec("UPDATE t_action SET action_group").WithArgs(name,"admin:read:demo:record",`{"bindings":[{"resource_key":"admin:demo:record","operation":"read","feature_keys":null}],"feature_keys":null,"ui":[],"endpoints":[]}`, sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
 	expectActionGet(mock, 1, "ABCDEFGH", name)
 	mock.ExpectCommit()
-	request(http.MethodPatch, "/1", `{"name":"Updated"}`, http.StatusOK)
+	request(http.MethodPatch, "/1", `{"group":"admin:demo:record"}`, http.StatusOK)
 	request(http.MethodDelete, "/bad", "", http.StatusBadRequest)
 	m.protectSuper = true
-	disabledBody := request(http.MethodPatch, "/1", `{"resource":"GET|/other"}`, http.StatusForbidden)
+	disabledBody := request(http.MethodPatch, "/1", `{"config":{"bindings":[{"resource_key":"admin:demo:record","operation":"read","feature_keys":null}],"ui":[],"endpoints":[]}}`, http.StatusForbidden)
 	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) { t.Fatalf("disabled All Permissions update: %s", disabledBody) }
 	disabledBody = request(http.MethodDelete, "/1", "", http.StatusForbidden)
 	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) { t.Fatalf("disabled All Permissions deletion: %s", disabledBody) }
@@ -71,7 +77,7 @@ func TestActionHTTP(t *testing.T) {
 	request(http.MethodGet, "/?broken=%zz", "", http.StatusBadRequest)
 	request(http.MethodGet, "/group?keyword=a&keyword=b", "", http.StatusBadRequest)
 	request(http.MethodGet, "/group?keyword="+strings.Repeat("x", 51), "", http.StatusBadRequest)
-	mock.ExpectQuery("SELECT MIN\\(action_group\\).*LIKE.*LIMIT 20").WithArgs("%User%").WillReturnRows(
+	mock.ExpectQuery("SELECT MIN\\(action_group\\).*LIKE.*LIMIT 20").WithArgs("%User%",sqlmock.AnyArg()).WillReturnRows(
 		sqlmock.NewRows([]string{"action_group"}).AddRow("User"),
 	)
 	request(http.MethodGet, "/group?keyword=User", "", http.StatusOK)
@@ -125,7 +131,8 @@ func TestActionKeywordHTTP(t *testing.T) {
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?"+query, nil))
 		if recorder.Code != http.StatusBadRequest { t.Fatalf("invalid keyword %q: %d", query, recorder.Code) }
 	}
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM t_action WHERE (LOWER(name) LIKE LOWER($1) ESCAPE '!' OR LOWER(word) LIKE LOWER($1) ESCAPE '!' OR LOWER(code) LIKE LOWER($1) ESCAPE '!')")).WithArgs("%Mixed!%!_!!%").
+	mock.ExpectQuery("SELECT word, config - 'ui' - 'endpoints' FROM t_action").WillReturnRows(sqlmock.NewRows([]string{"word", "config"}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM t_action WHERE (LOWER(word) LIKE LOWER($1) ESCAPE '!' OR LOWER(code) LIKE LOWER($1) ESCAPE '!')")).WithArgs("%Mixed!%!_!!%").
 		WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?q=+Mixed%25_!+", nil))

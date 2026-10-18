@@ -36,7 +36,7 @@ func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
  "/audit": a.auditModule,
 		"/action": a.actionModule,
  "/msg": a.msgModule,
-		"/auth": a.authModule,
+		"": a.authModule,
 		"/dictionary": a.dictionaryModule,
 		"/role": a.roleModule,
 		"/user": a.userModule,

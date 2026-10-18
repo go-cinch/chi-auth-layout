@@ -54,6 +54,15 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 			return nil, errors.New("http module is required")
 		}
 		pattern := strings.TrimSpace(module.Name())
+        if _, configured := module.(modules.ConfigurableHTTPModule); configured {
+            normalized, err := config.NormalizeHTTPPath(module.Name())
+            if err != nil { return nil, err }
+            if _, authorizes := module.(modules.HTTPPermissionAuthorizer); authorizes && authenticator != nil {
+                if err := authenticator.SetHTTPPath(normalized); err != nil { return nil, err }
+            }
+            pattern = normalized
+            if pattern == "" { pattern = "/" }
+        }
 		if pattern == "" || !strings.HasPrefix(pattern, "/") {
 			return nil, errors.New("http module pattern must start with /")
 		}
@@ -224,6 +233,15 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 			return nil, errors.New("http module is required")
 		}
 		pattern := strings.TrimSpace(module.Name())
+        if _, configured := module.(modules.ConfigurableHTTPModule); configured {
+            normalized, err := config.NormalizeHTTPPath(module.Name())
+            if err != nil { return nil, err }
+            if _, authorizes := module.(modules.HTTPPermissionAuthorizer); authorizes && authenticator != nil {
+                if err := authenticator.SetHTTPPath(normalized); err != nil { return nil, err }
+            }
+            pattern = normalized
+            if pattern == "" { pattern = "/" }
+        }
 		if pattern == "" || !strings.HasPrefix(pattern, "/") {
 			return nil, errors.New("http module pattern must start with /")
 		}
@@ -236,24 +254,35 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 			return nil, errors.New("http module handler is required")
 		}
 
-  if registered,ok:=handler.(chi.Routes);ok {
-   if err:=chi.Walk(registered,func(method,path string,_ http.Handler,_ ...func(http.Handler)http.Handler)error{catalog=append(catalog,modules.HTTPPermissionRoute{Method:method,Path:strings.TrimSuffix(pattern,"/")+path});return nil});err!=nil{return nil,err}
-  }
+        moduleRoutes := make([]modules.HTTPPermissionRoute, 0)
+        rootHandlers := make(map[string]http.Handler)
+        if registered, ok := handler.(chi.Routes); ok {
+            if err := chi.Walk(registered, func(method, path string, endpoint http.Handler, middleware ...func(http.Handler) http.Handler) error {
+                route := modules.HTTPPermissionRoute{Method: method, Path: strings.TrimSuffix(pattern, "/") + path}
+                catalog = append(catalog, route)
+                moduleRoutes = append(moduleRoutes, route)
+                rootHandlers[method+" "+route.Path] = chi.Chain(middleware...).Handler(endpoint)
+                return nil
+            }); err != nil { return nil, err }
+        }
 
-		if isIdempotentModule(module) {
-			if idempotencyKeys == nil || cfg.Idempotency.TTL <= 0 {
-				return nil, errors.New("idempotency store and positive ttl are required")
-			}
-			handler = Idempotency(idempotencyKeys, cfg.Idempotency.TTL)(handler)
-		}
-		if !isPublicModule(module) {
-			if authenticator == nil {
-				return nil, errors.New("http authenticator is required")
-			}
-			handler = authenticationMiddleware(authenticator, permissionAuthorizer, permissionEndpoint, pattern, module, handler)
-		}
-
-		routes.Mount(pattern, handler)
+        if isIdempotentModule(module) && (idempotencyKeys == nil || cfg.Idempotency.TTL <= 0) {
+            return nil, errors.New("idempotency store and positive ttl are required")
+        }
+        if !isPublicModule(module) && authenticator == nil {
+            return nil, errors.New("http authenticator is required")
+        }
+        wrapModule := func(next http.Handler) http.Handler {
+            if isIdempotentModule(module) { next = Idempotency(idempotencyKeys, cfg.Idempotency.TTL)(next) }
+            if !isPublicModule(module) { next = authenticationMiddleware(authenticator, permissionAuthorizer, permissionEndpoint, pattern, module, next) }
+            return next
+        }
+        if _, configured := module.(modules.ConfigurableHTTPModule); configured && pattern == "/" {
+            if len(moduleRoutes) == 0 { return nil, errors.New("root module must expose discoverable http routes") }
+            for _, route := range moduleRoutes { routes.Method(route.Method, route.Path, wrapModule(rootHandlers[route.Method+" "+route.Path])) }
+        } else {
+            routes.Mount(pattern, wrapModule(handler))
+        }
 	}
 
 	// Gateway checks need route precedence even when local authorization is disabled.

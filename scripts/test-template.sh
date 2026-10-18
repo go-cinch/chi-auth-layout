@@ -23,6 +23,14 @@ validate_project() (
   cp internal/docs/openapi.yaml "$tmp_dir/expected-openapi.yaml"
   make gen
   cmp internal/docs/openapi.yaml "$tmp_dir/expected-openapi.yaml"
+  SERVICE_AUTH_PATH=/auth make api > "$tmp_dir/prefixed-api.log" 2>&1
+  rg -q '^  /auth/info:' internal/docs/openapi.yaml
+  rg -q '^  /auth/pub/login:' internal/docs/openapi.yaml
+  ! rg -q '^  /info:' internal/docs/openapi.yaml
+  SERVICE_AUTH_PATH= make api > "$tmp_dir/root-api.log" 2>&1
+  rg -q '^  /info:' internal/docs/openapi.yaml
+  rg -q '^  /pub/login:' internal/docs/openapi.yaml
+  ! rg -q '^  /auth/info:' internal/docs/openapi.yaml
   gofmt -w .
   go mod tidy
   make lint test build
@@ -45,14 +53,14 @@ validate_project() (
   done
   test "$(find internal/infra/db/migrations -maxdepth 1 -name '*.sql' | wc -l | tr -d ' ')" = 4
   test "$(find internal/infra/db/migrations -maxdepth 1 -name '*-03-audit-header.sql' | wc -l | tr -d ' ')" = 0
-  rg -q '/auth/pub/login' internal/docs/openapi.yaml
-  rg -q '/auth/pub/register' internal/docs/openapi.yaml
-  rg -q '/auth/pub/challenge' internal/docs/openapi.yaml
-  rg -q '/auth/pub/captcha' internal/docs/openapi.yaml
-  rg -q '^  /auth/reset/pwd:' internal/docs/openapi.yaml
-  rg -q '^  /auth/challenge:' internal/docs/openapi.yaml
-  rg -q '^  /auth/captcha:' internal/docs/openapi.yaml
-  rg -q '/auth/pub/register/username' internal/docs/openapi.yaml
+  rg -q '/pub/login' internal/docs/openapi.yaml
+  rg -q '/pub/register' internal/docs/openapi.yaml
+  rg -q '/pub/challenge' internal/docs/openapi.yaml
+  rg -q '/pub/captcha' internal/docs/openapi.yaml
+  rg -q '^  /reset/pwd:' internal/docs/openapi.yaml
+  rg -q '^  /challenge:' internal/docs/openapi.yaml
+  rg -q '^  /captcha:' internal/docs/openapi.yaml
+  rg -q '/pub/register/username' internal/docs/openapi.yaml
   rg -q '/user/\{id\}' internal/docs/openapi.yaml
   inbox_docs=$(awk '/^  \/msg\/inbox:$/ { printing = 1; next } printing && /^  \// { exit } printing { print }' internal/docs/openapi.yaml)
   sent_docs=$(awk '/^  \/msg\/sent:$/ { printing = 1; next } printing && /^  \// { exit } printing { print }' internal/docs/openapi.yaml)
@@ -62,8 +70,8 @@ validate_project() (
     echo "sent-message documentation exposes an unsupported read filter" >&2
     exit 1
   fi
-  ! rg -q '^  /auth/codes:' internal/docs/openapi.yaml
-  ! rg -q '/auth/pub/login/challenge|/auth/pub/register/challenge|/auth/change/pwd/challenge|/auth/pub/login/captcha|/auth/change/pwd/captcha' internal/docs/openapi.yaml
+  ! rg -q '^  /codes:' internal/docs/openapi.yaml
+  ! rg -q '/pub/login/challenge|/auth/pub/register/challenge|/auth/change/pwd/challenge|/auth/pub/login/captcha|/auth/change/pwd/captcha' internal/docs/openapi.yaml
   test -f POINT_CAPTCHA_FONT_LICENSE.txt
   rg -q 'Noto Sans CJK SC Medium' POINT_CAPTCHA_FONT_LICENSE.txt
   rg -q '^COPY POINT_CAPTCHA_FONT_LICENSE.txt /app/POINT_CAPTCHA_FONT_LICENSE.txt$' Dockerfile

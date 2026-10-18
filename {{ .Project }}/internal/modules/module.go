@@ -22,6 +22,13 @@ type HTTPModule interface {
 {{- end }}
 }
 
+// ConfigurableHTTPModule declares the YAML scalar used by a module mount.
+// An explicitly configured empty mount serves module-relative routes at root.
+type ConfigurableHTTPModule interface {
+	HTTPModule
+	HTTPPathConfig() string
+}
+
 // Module aliases HTTPModule.
 type Module = HTTPModule
 

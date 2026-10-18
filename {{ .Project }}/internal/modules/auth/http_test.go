@@ -1,6 +1,10 @@
 package auth
 
 import (
+ rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
+ actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
+ "{{ .Computed.module_name_final }}/internal/common/idempotency"
+ "{{ .Computed.module_name_final }}/internal/common/pagination"
  "{{ .Computed.module_name_final }}/internal/common/authn"
  "{{ .Computed.module_name_final }}/internal/modules/localization"
 	"database/sql"
@@ -46,7 +50,7 @@ func validSliderProof(t *testing.T, slider *SliderCaptcha, purpose, username str
 }
 
 func TestPermissionTargetFromRequest(t *testing.T) {
-	request := httptest.NewRequest("GET", "/auth/permission", nil)
+	request := httptest.NewRequest("GET", "/permission", nil)
 	request.Header.Set(permissionHeaderMethod, " patch ")
 	request.Header.Set(permissionHeaderURI, "/gateway/user/7?verbose=true")
 	request.Header.Set(permissionHeaderPath, " /user/7?verbose=true ")
@@ -74,20 +78,20 @@ func TestGatewayAnonymousTargets(t *testing.T) {
 			endpoint, method, target string
 			status                   int
 		}{
-			{"/auth/permission", "GET", "/order/pub/item?x=1", 200},
-			{"/auth/permission", "GET", "/order/pub", 200},
-			{"/auth/permission", "HEAD", "/order/1", 200},
-			{"/auth/permission", "OPTIONS", "/order/1", 200},
-			{"/auth/permission", "GET", "/order/1", 401},
-			{"/auth/permission", "GET", "/order/public", 401},
-			{"/auth/permission", "GET", "/order/pub/../private", 401},
-			{"/auth/permission", "GET", "/order/pub/%2e%2e/private", 401},
-			{"/auth/permission", "GET", "/bad%zz/pub/item", 401},
-			{"/auth/permission", "HEAD", "", 401},
-			{"/auth/permission", "OPTIONS", "//host/path", 401},
-			{"/auth/permission", "", "/order/pub/item", 401},
-			{"/auth/info", "HEAD", "/order/1", 401},
-			{"/auth/info", "GET", "/order/pub/item", 401},
+			{"/permission", "GET", "/order/pub/item?x=1", 200},
+			{"/permission", "GET", "/order/pub", 200},
+			{"/permission", "HEAD", "/order/1", 200},
+			{"/permission", "OPTIONS", "/order/1", 200},
+			{"/permission", "GET", "/order/1", 401},
+			{"/permission", "GET", "/order/public", 401},
+			{"/permission", "GET", "/order/pub/../private", 401},
+			{"/permission", "GET", "/order/pub/%2e%2e/private", 401},
+			{"/permission", "GET", "/bad%zz/pub/item", 401},
+			{"/permission", "HEAD", "", 401},
+			{"/permission", "OPTIONS", "//host/path", 401},
+			{"/permission", "", "/order/pub/item", 401},
+			{"/info", "HEAD", "/order/1", 401},
+			{"/info", "GET", "/order/pub/item", 401},
 		} {
 			r := httptest.NewRequest(http.MethodGet, tc.endpoint, nil)
 			r.Header.Set(permissionHeaderMethod, tc.method)
@@ -108,7 +112,7 @@ func TestAuthHTTP(t *testing.T) {
  localizer := localization.New()
 	m, authenticator, mock := newAuthTestModule(t)
  localizer = m.catalogSource.(*localization.Module)
-	if m.Name() != "/auth" {
+	if m.Name() != "" {
 		t.Fatal(m.Name())
 	}
 	handler, err := server.NewRouter(&config.Config{}, authenticator, nil, m)
@@ -129,36 +133,36 @@ func TestAuthHTTP(t *testing.T) {
 		return recorder
 	}
 
-	request(http.MethodGet, "/auth/info", "", "", http.StatusUnauthorized)
-	request(http.MethodGet, "/auth/permission", "", "", http.StatusUnauthorized)
-	request(http.MethodPost, "/auth/challenge", `{"purpose":"password_change"}`, "", http.StatusUnauthorized)
-	request(http.MethodPost, "/auth/captcha", `{}`, "", http.StatusUnauthorized)
-	request(http.MethodPost, "/auth/captcha/verify", `{}`, "", http.StatusUnauthorized)
-	request(http.MethodPatch, "/auth/change/pwd", `{}`, "", http.StatusUnauthorized)
-	request(http.MethodPost, "/auth/pub/challenge", `{`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/challenge", `{} {}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/challenge", `{"purpose":"login","extra":true}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/challenge", `{"purpose":"password_change"}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/refresh", `{`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/captcha/verify", `{`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/refresh", `{}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/refresh", `{"refresh_token":"token","extra":true}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/logout", `{}`, "", http.StatusBadRequest)
-	request(http.MethodGet, "/auth/pub/register/username", "", "", http.StatusBadRequest)
-	request(http.MethodGet, "/auth/pub/register/username?username=one&username=two", "", "", http.StatusBadRequest)
-	request(http.MethodGet, "/auth/pub/register/username?broken=%zz", "", "", http.StatusBadRequest)
+	request(http.MethodGet, "/info", "", "", http.StatusUnauthorized)
+	request(http.MethodGet, "/permission", "", "", http.StatusUnauthorized)
+	request(http.MethodPost, "/challenge", `{"purpose":"password_change"}`, "", http.StatusUnauthorized)
+	request(http.MethodPost, "/captcha", `{}`, "", http.StatusUnauthorized)
+	request(http.MethodPost, "/captcha/verify", `{}`, "", http.StatusUnauthorized)
+	request(http.MethodPatch, "/change/pwd", `{}`, "", http.StatusUnauthorized)
+	request(http.MethodPost, "/pub/challenge", `{`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/challenge", `{} {}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/challenge", `{"purpose":"login","extra":true}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/challenge", `{"purpose":"password_change"}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/refresh", `{`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/captcha/verify", `{`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/refresh", `{}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/refresh", `{"refresh_token":"token","extra":true}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/logout", `{}`, "", http.StatusBadRequest)
+	request(http.MethodGet, "/pub/register/username", "", "", http.StatusBadRequest)
+	request(http.MethodGet, "/pub/register/username?username=one&username=two", "", "", http.StatusBadRequest)
+	request(http.MethodGet, "/pub/register/username?broken=%zz", "", "", http.StatusBadRequest)
 	mock.ExpectQuery("SELECT EXISTS").WithArgs("new-user").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	availabilityResponse := request(http.MethodGet, "/auth/pub/register/username?username=new-user", "", "", http.StatusOK)
+	availabilityResponse := request(http.MethodGet, "/pub/register/username?username=new-user", "", "", http.StatusOK)
 	var availability UsernameAvailability
 	if err := json.Unmarshal(availabilityResponse.Body.Bytes(), &availability); err != nil || !availability.Available {
 		t.Fatalf("availability response: %s %v", availabilityResponse.Body.String(), err)
 	}
 	mock.ExpectQuery("SELECT EXISTS").WithArgs("existing-user").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-	availabilityResponse = request(http.MethodGet, "/auth/pub/register/username?username=existing-user", "", "", http.StatusOK)
+	availabilityResponse = request(http.MethodGet, "/pub/register/username?username=existing-user", "", "", http.StatusOK)
 	if err := json.Unmarshal(availabilityResponse.Body.Bytes(), &availability); err != nil || availability.Available {
 		t.Fatalf("existing username response: %s %v", availabilityResponse.Body.String(), err)
 	}
-	registrationChallengeResponse := request(http.MethodPost, "/auth/pub/challenge", `{"purpose":"register"}`, "", http.StatusOK)
+	registrationChallengeResponse := request(http.MethodPost, "/pub/challenge", `{"purpose":"register"}`, "", http.StatusOK)
 	if registrationChallengeResponse.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("registration challenge cache control = %q", registrationChallengeResponse.Header().Get("Cache-Control"))
 	}
@@ -169,11 +173,11 @@ func TestAuthHTTP(t *testing.T) {
 	if err := m.credentials.consumeChallenge(t.Context(), registrationChallenge.ChallengeID, registerCredentialType, 0, ErrInvalidRegistrationCredential); err != nil {
 		t.Fatalf("registration challenge purpose: %v", err)
 	}
-	request(http.MethodPost, "/auth/pub/register", `{`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/register", `{} {}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/register", `{"username":"new-user","password":"secret1","extra":true}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/register", `{}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/register", `{"challenge_id":"missing","credential":"invalid"}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/register", `{`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/register", `{} {}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/register", `{"username":"new-user","password":"secret1","extra":true}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/register", `{}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/register", `{"challenge_id":"missing","credential":"invalid"}`, "", http.StatusBadRequest)
 	registerBody := func(username, password string) string {
 		t.Helper()
 		input := encryptedRegisterInputWithProof(t, m.credentials, username, password, validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeRegister, username))
@@ -187,15 +191,15 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request(http.MethodPost, "/auth/pub/register", string(missingRegisterProof), "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/register", registerBody("new-user", "   "), "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/register", string(missingRegisterProof), "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/register", registerBody("new-user", "   "), "", http.StatusBadRequest)
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(36)))
 	mock.ExpectExec("INSERT INTO t_user").WillReturnError(&pq.Error{Code: "23505", Constraint: "uk_user_username"})
-	request(http.MethodPost, "/auth/pub/register", registerBody("new-user", "secret1"), "", http.StatusConflict)
+	request(http.MethodPost, "/pub/register", registerBody("new-user", "secret1"), "", http.StatusConflict)
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(37)))
 	mock.ExpectExec("INSERT INTO t_user").WillReturnResult(sqlmock.NewResult(0, 1))
-	request(http.MethodPost, "/auth/pub/register", registerBody("new-user", "secret1"), "", http.StatusOK)
-	challengeResponse := request(http.MethodPost, "/auth/pub/challenge", `{"purpose":"login"}`, "", http.StatusOK)
+	request(http.MethodPost, "/pub/register", registerBody("new-user", "secret1"), "", http.StatusOK)
+	challengeResponse := request(http.MethodPost, "/pub/challenge", `{"purpose":"login"}`, "", http.StatusOK)
 	if challengeResponse.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("challenge cache control = %q", challengeResponse.Header().Get("Cache-Control"))
 	}
@@ -206,29 +210,29 @@ func TestAuthHTTP(t *testing.T) {
 	if err := m.credentials.consumeChallenge(t.Context(), loginChallenge.ChallengeID, loginCredentialType, 0, ErrInvalidCredential); err != nil {
 		t.Fatalf("login challenge purpose: %v", err)
 	}
-	request(http.MethodGet, "/auth/pub/login/verification", "", "", http.StatusBadRequest)
-	request(http.MethodGet, "/auth/pub/login/verification?username=one&username=two", "", "", http.StatusBadRequest)
-	request(http.MethodGet, "/auth/pub/login/verification?broken=%zz", "", "", http.StatusBadRequest)
-	request(http.MethodGet, "/auth/pub/login/verification?username=", "", "", http.StatusBadRequest)
+	request(http.MethodGet, "/pub/login/verification", "", "", http.StatusBadRequest)
+	request(http.MethodGet, "/pub/login/verification?username=one&username=two", "", "", http.StatusBadRequest)
+	request(http.MethodGet, "/pub/login/verification?broken=%zz", "", "", http.StatusBadRequest)
+	request(http.MethodGet, "/pub/login/verification?username=", "", "", http.StatusBadRequest)
 	mock.ExpectQuery("SELECT wrong FROM t_user").WithArgs("missing").WillReturnError(sql.ErrNoRows)
-	verificationResponse := request(http.MethodGet, "/auth/pub/login/verification?username=missing", "", "", http.StatusOK)
+	verificationResponse := request(http.MethodGet, "/pub/login/verification?username=missing", "", "", http.StatusOK)
 	var verification LoginVerificationResult
 	if err := json.Unmarshal(verificationResponse.Body.Bytes(), &verification); err != nil || verification.CaptchaRequired || verification.Captcha != nil {
 		t.Fatalf("missing login verification response: %s %v", verificationResponse.Body.String(), err)
 	}
 	mock.ExpectQuery("SELECT wrong FROM t_user").WithArgs("readonly").WillReturnRows(sqlmock.NewRows([]string{"wrong"}).AddRow(int64(5)))
-	verificationResponse = request(http.MethodGet, "/auth/pub/login/verification?username=readonly", "", "", http.StatusOK)
+	verificationResponse = request(http.MethodGet, "/pub/login/verification?username=readonly", "", "", http.StatusOK)
 	if err := json.Unmarshal(verificationResponse.Body.Bytes(), &verification); err != nil || !verification.CaptchaRequired || verification.Captcha == nil {
 		t.Fatalf("point login verification response: %s %v", verificationResponse.Body.String(), err)
 	}
 	if verificationResponse.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("verification cache control = %q", verificationResponse.Header().Get("Cache-Control"))
 	}
-	request(http.MethodPost, "/auth/pub/login", `{`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/login", `{} {}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/login", `{"challenge_id":"id","credential":"value","extra":true}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/login", `{}`, "", http.StatusBadRequest)
-	request(http.MethodPost, "/auth/pub/login", `{"challenge_id":"missing","credential":"invalid"}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/login", `{`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/login", `{} {}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/login", `{"challenge_id":"id","credential":"value","extra":true}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/login", `{}`, "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/login", `{"challenge_id":"missing","credential":"invalid"}`, "", http.StatusBadRequest)
 
 	loginBody := func(username, password string, rememberMe ...bool) string {
 		t.Helper()
@@ -244,14 +248,14 @@ func TestAuthHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
-	request(http.MethodPost, "/auth/pub/login", string(missingLoginProof), "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/login", string(missingLoginProof), "", http.StatusBadRequest)
 
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
 	mock.ExpectQuery("UPDATE t_user SET wrong").WithArgs(sqlmock.AnyArg(), int64(3)).WillReturnRows(sqlmock.NewRows([]string{"wrong"}).AddRow(int64(1)))
-	request(http.MethodPost, "/auth/pub/login", loginBody("readonly", "wrong"), "", http.StatusUnauthorized)
+	request(http.MethodPost, "/pub/login", loginBody("readonly", "wrong"), "", http.StatusUnauthorized)
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive, 4))
 	mock.ExpectQuery("UPDATE t_user SET wrong").WithArgs(sqlmock.AnyArg(), int64(3)).WillReturnRows(sqlmock.NewRows([]string{"wrong"}).AddRow(int64(5)))
-	captchaRecorder := request(http.MethodPost, "/auth/pub/login", loginBody("readonly", "wrong"), "", http.StatusUnauthorized)
+	captchaRecorder := request(http.MethodPost, "/pub/login", loginBody("readonly", "wrong"), "", http.StatusUnauthorized)
 	var captchaFailure struct {
 		CaptchaRequired bool                  `json:"captcha_required"`
 		Captcha         PointCaptchaChallenge `json:"captcha"`
@@ -269,12 +273,12 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refreshedCaptcha := request(http.MethodPost, "/auth/pub/captcha", string(refreshBody), "", http.StatusOK)
+	refreshedCaptcha := request(http.MethodPost, "/pub/captcha", string(refreshBody), "", http.StatusOK)
 	var refreshedChallenge PointCaptchaChallenge
 	if err := json.Unmarshal(refreshedCaptcha.Body.Bytes(), &refreshedChallenge); err != nil || refreshedChallenge.CaptchaID == captchaFailure.Captcha.CaptchaID {
 		t.Fatalf("refreshed captcha: %s %v", refreshedCaptcha.Body.String(), err)
 	}
-	request(http.MethodPost, "/auth/pub/captcha", string(refreshBody), "", http.StatusBadRequest)
+	request(http.MethodPost, "/pub/captcha", string(refreshBody), "", http.StatusBadRequest)
 	refreshedAnswer := storedPointCaptchaAnswer(t, m.captcha.store.(*memoryPointCaptchaStore), refreshedChallenge.CaptchaID)
 	wrongOrder := append([]CaptchaPoint(nil), refreshedAnswer.Points...)
 	wrongOrder[0], wrongOrder[1] = wrongOrder[1], wrongOrder[0]
@@ -284,7 +288,7 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongOrderRecorder := request(http.MethodPost, "/auth/pub/captcha/verify", string(verifyBody), "", http.StatusOK)
+	wrongOrderRecorder := request(http.MethodPost, "/pub/captcha/verify", string(verifyBody), "", http.StatusOK)
 	var captchaVerification PointCaptchaVerificationResult
 	if err := json.Unmarshal(wrongOrderRecorder.Body.Bytes(), &captchaVerification); err != nil || captchaVerification.Verified || captchaVerification.Captcha == nil {
 		t.Fatalf("wrong-order verification: %s %v", wrongOrderRecorder.Body.String(), err)
@@ -296,7 +300,7 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifiedRecorder := request(http.MethodPost, "/auth/pub/captcha/verify", string(verifyBody), "", http.StatusOK)
+	verifiedRecorder := request(http.MethodPost, "/pub/captcha/verify", string(verifyBody), "", http.StatusOK)
 	captchaVerification = PointCaptchaVerificationResult{}
 	if err := json.Unmarshal(verifiedRecorder.Body.Bytes(), &captchaVerification); err != nil || !captchaVerification.Verified || captchaVerification.Captcha != nil {
 		t.Fatalf("correct-order verification: %s %v", verifiedRecorder.Body.String(), err)
@@ -306,23 +310,23 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invalidCaptchaRecorder := request(http.MethodPost, "/auth/pub/login", string(invalidCaptchaBody), "", http.StatusUnauthorized)
+	invalidCaptchaRecorder := request(http.MethodPost, "/pub/login", string(invalidCaptchaBody), "", http.StatusUnauthorized)
 	var invalidCaptchaFailure LoginFailureResponse
 	if err := json.Unmarshal(invalidCaptchaRecorder.Body.Bytes(), &invalidCaptchaFailure); err != nil || invalidCaptchaFailure.Msg != ErrPointCaptchaRequired.Error() || !invalidCaptchaFailure.CaptchaRequired || invalidCaptchaFailure.Captcha == nil {
 		t.Fatalf("invalid captcha failure: %s %v", invalidCaptchaRecorder.Body.String(), err)
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusPending))
-	request(http.MethodPost, "/auth/pub/login", loginBody("readonly", "cinch123"), "", http.StatusForbidden)
+	request(http.MethodPost, "/pub/login", loginBody("readonly", "cinch123"), "", http.StatusForbidden)
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusLocked))
 	mock.ExpectExec("UPDATE t_user SET status").WithArgs(userStatusActive, sqlmock.AnyArg(), int64(3), userStatusLocked, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 0))
-	request(http.MethodPost, "/auth/pub/login", loginBody("readonly", "cinch123"), "", http.StatusForbidden)
+	request(http.MethodPost, "/pub/login", loginBody("readonly", "cinch123"), "", http.StatusForbidden)
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
 	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WithArgs(sqlmock.AnyArg(), int64(3), int64(1), userStatusActive).WillReturnError(sqlmock.ErrCancelled)
-	request(http.MethodPost, "/auth/pub/login", loginBody("readonly", "cinch123"), "", http.StatusInternalServerError)
+	request(http.MethodPost, "/pub/login", loginBody("readonly", "cinch123"), "", http.StatusInternalServerError)
 
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
 	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WithArgs(sqlmock.AnyArg(), int64(3), int64(1), userStatusActive).WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(int64(2)))
-	recorder := request(http.MethodPost, "/auth/pub/login", loginBody("readonly", "cinch123", true), "", http.StatusOK)
+	recorder := request(http.MethodPost, "/pub/login", loginBody("readonly", "cinch123", true), "", http.StatusOK)
 	if recorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("login cache control = %q", recorder.Header().Get("Cache-Control"))
 	}
@@ -337,7 +341,7 @@ func TestAuthHTTP(t *testing.T) {
 	permissionRequest := func(targetMethod, targetPath string, want int) *httptest.ResponseRecorder {
 		t.Helper()
 		recorder := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/auth/permission", nil)
+		req := httptest.NewRequest(http.MethodGet, "/permission", nil)
 		req.Header.Set("Authorization", "Bearer "+login.AccessToken)
 		req.Header.Set(permissionHeaderMethod, targetMethod)
 		req.Header.Set(permissionHeaderPath, targetPath)
@@ -348,9 +352,9 @@ func TestAuthHTTP(t *testing.T) {
 		return recorder
 	}
 	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(
- permissionRows().AddRow("admin:read:system:info",permissionConfig(localizer, "GET","/auth/info")),
+ permissionRows().AddRow("admin:read:system:info",permissionConfig(localizer, "GET","/info")),
 	)
-	permissionRecorder := permissionRequest(http.MethodGet, "/auth/info", http.StatusOK)
+	permissionRecorder := permissionRequest(http.MethodGet, "/info", http.StatusOK)
 	if code := permissionRecorder.Header().Get(permissionResponseCode); code != "EXP78RGH" {
 		t.Fatalf("permission code = %q", code)
 	}
@@ -358,13 +362,13 @@ func TestAuthHTTP(t *testing.T) {
 		t.Fatalf("permission response exposed username: %q", value)
 	}
 	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(
- permissionRows().AddRow("admin:read:system:info",permissionConfig(localizer, "GET","/auth/info")),
+ permissionRows().AddRow("admin:read:system:info",permissionConfig(localizer, "GET","/info")),
 	)
 	permissionRequest(http.MethodGet, "/missing", http.StatusForbidden)
-	request(http.MethodPost, "/auth/challenge", `{`, login.AccessToken, http.StatusBadRequest)
-	request(http.MethodPost, "/auth/challenge", `{} {}`, login.AccessToken, http.StatusBadRequest)
-	request(http.MethodPost, "/auth/challenge", `{"purpose":"login"}`, login.AccessToken, http.StatusBadRequest)
-	passwordChallengeRecorder := request(http.MethodPost, "/auth/challenge", `{"purpose":"password_change"}`, login.AccessToken, http.StatusOK)
+	request(http.MethodPost, "/challenge", `{`, login.AccessToken, http.StatusBadRequest)
+	request(http.MethodPost, "/challenge", `{} {}`, login.AccessToken, http.StatusBadRequest)
+	request(http.MethodPost, "/challenge", `{"purpose":"login"}`, login.AccessToken, http.StatusBadRequest)
+	passwordChallengeRecorder := request(http.MethodPost, "/challenge", `{"purpose":"password_change"}`, login.AccessToken, http.StatusOK)
 	if passwordChallengeRecorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("password challenge cache control = %q", passwordChallengeRecorder.Header().Get("Cache-Control"))
 	}
@@ -375,10 +379,10 @@ func TestAuthHTTP(t *testing.T) {
 	if err := m.credentials.consumeChallenge(t.Context(), passwordChallenge.ChallengeID, passwordCredentialType, 3, ErrInvalidPasswordCredential); err != nil {
 		t.Fatalf("password challenge purpose: %v", err)
 	}
-	request(http.MethodPatch, "/auth/change/pwd", `{`, login.AccessToken, http.StatusBadRequest)
-	request(http.MethodPatch, "/auth/change/pwd", `{} {}`, login.AccessToken, http.StatusBadRequest)
-	request(http.MethodPatch, "/auth/change/pwd", `{"old_password":"cinch123","new_password":"new-secret"}`, login.AccessToken, http.StatusBadRequest)
-	request(http.MethodPatch, "/auth/change/pwd", `{"challenge_id":"missing","credential":"invalid"}`, login.AccessToken, http.StatusBadRequest)
+	request(http.MethodPatch, "/change/pwd", `{`, login.AccessToken, http.StatusBadRequest)
+	request(http.MethodPatch, "/change/pwd", `{} {}`, login.AccessToken, http.StatusBadRequest)
+	request(http.MethodPatch, "/change/pwd", `{"old_password":"cinch123","new_password":"new-secret"}`, login.AccessToken, http.StatusBadRequest)
+	request(http.MethodPatch, "/change/pwd", `{"challenge_id":"missing","credential":"invalid"}`, login.AccessToken, http.StatusBadRequest)
 	passwordChangeBody := func(oldPassword, newPassword string, captcha ...PasswordChangeInput) string {
 		t.Helper()
 		input := encryptedPasswordChangeInput(t, m.credentials, 3, oldPassword, newPassword, captcha...)
@@ -396,7 +400,7 @@ func TestAuthHTTP(t *testing.T) {
 			sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, "cinch123"), int64(1)),
 		)
 		mock.ExpectRollback()
-		failureRecorder := request(http.MethodPatch, "/auth/change/pwd", passwordChangeBody("wrong-password", "new-secret"), login.AccessToken, http.StatusBadRequest)
+		failureRecorder := request(http.MethodPatch, "/change/pwd", passwordChangeBody("wrong-password", "new-secret"), login.AccessToken, http.StatusBadRequest)
 		if attempt == 3 {
 			if err := json.Unmarshal(failureRecorder.Body.Bytes(), &passwordFailure); err != nil || !passwordFailure.CaptchaRequired || passwordFailure.Captcha == nil || passwordFailure.Msg != ErrIncorrectPassword.Error() {
 				t.Fatalf("password captcha failure: %s %v", failureRecorder.Body.String(), err)
@@ -407,13 +411,13 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refreshedPasswordCaptcha := request(http.MethodPost, "/auth/captcha", string(captchaRefreshBody), login.AccessToken, http.StatusOK)
+	refreshedPasswordCaptcha := request(http.MethodPost, "/captcha", string(captchaRefreshBody), login.AccessToken, http.StatusOK)
 	var refreshedPasswordChallenge PointCaptchaChallenge
 	if err := json.Unmarshal(refreshedPasswordCaptcha.Body.Bytes(), &refreshedPasswordChallenge); err != nil || refreshedPasswordChallenge.CaptchaID == passwordFailure.Captcha.CaptchaID {
 		t.Fatalf("refreshed password captcha: %s %v", refreshedPasswordCaptcha.Body.String(), err)
 	}
 	expectPasswordChangeLock(mock, false)
-	missingCaptchaRecorder := request(http.MethodPatch, "/auth/change/pwd", passwordChangeBody("cinch123", "new-secret"), login.AccessToken, http.StatusBadRequest)
+	missingCaptchaRecorder := request(http.MethodPatch, "/change/pwd", passwordChangeBody("cinch123", "new-secret"), login.AccessToken, http.StatusBadRequest)
 	if err := json.Unmarshal(missingCaptchaRecorder.Body.Bytes(), &passwordFailure); err != nil || passwordFailure.Captcha == nil || passwordFailure.Msg != ErrPointCaptchaRequired.Error() {
 		t.Fatalf("missing password captcha: %s %v", missingCaptchaRecorder.Body.String(), err)
 	}
@@ -424,7 +428,7 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	passwordVerifyRecorder := request(http.MethodPost, "/auth/captcha/verify", string(passwordVerifyBody), login.AccessToken, http.StatusOK)
+	passwordVerifyRecorder := request(http.MethodPost, "/captcha/verify", string(passwordVerifyBody), login.AccessToken, http.StatusOK)
 	var passwordVerification PointCaptchaVerificationResult
 	if err := json.Unmarshal(passwordVerifyRecorder.Body.Bytes(), &passwordVerification); err != nil || !passwordVerification.Verified {
 		t.Fatalf("password captcha verification: %s %v", passwordVerifyRecorder.Body.String(), err)
@@ -436,14 +440,14 @@ func TestAuthHTTP(t *testing.T) {
 	)
 	mock.ExpectExec("UPDATE t_user SET password").WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), int64(3), "EXP78RGH").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	passwordChangeRecorder := request(http.MethodPatch, "/auth/change/pwd", passwordChangeBody("cinch123", "new-secret", PasswordChangeInput{
+	passwordChangeRecorder := request(http.MethodPatch, "/change/pwd", passwordChangeBody("cinch123", "new-secret", PasswordChangeInput{
 		CaptchaID: passwordFailure.Captcha.CaptchaID, CaptchaPoints: answer.Points,
 	}), login.AccessToken, http.StatusOK)
 	if passwordChangeRecorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("password change cache control = %q", passwordChangeRecorder.Header().Get("Cache-Control"))
 	}
 	expectPasswordChangeLock(mock, true)
-	lockedPasswordRecorder := request(http.MethodPatch, "/auth/change/pwd", passwordChangeBody("cinch123", "another-secret"), login.AccessToken, http.StatusForbidden)
+	lockedPasswordRecorder := request(http.MethodPatch, "/change/pwd", passwordChangeBody("cinch123", "another-secret"), login.AccessToken, http.StatusForbidden)
 	if err := json.Unmarshal(lockedPasswordRecorder.Body.Bytes(), &passwordFailure); err != nil || passwordFailure.Msg != ErrPasswordChangeLocked.Error() || passwordFailure.CaptchaRequired {
 		t.Fatalf("locked password change: %s %v", lockedPasswordRecorder.Body.String(), err)
 	}
@@ -453,7 +457,7 @@ func TestAuthHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refreshRecorder := request(http.MethodPost, "/auth/pub/refresh", string(sessionRefreshBody), "", http.StatusOK)
+	refreshRecorder := request(http.MethodPost, "/pub/refresh", string(sessionRefreshBody), "", http.StatusOK)
 	var refreshed LoginResult
 	if err := json.Unmarshal(refreshRecorder.Body.Bytes(), &refreshed); err != nil || refreshed.AccessToken == "" || refreshed.RefreshToken == "" || refreshed.RefreshToken == oldRefreshToken {
 		t.Fatalf("refresh response: %s %v", refreshRecorder.Body.String(), err)
@@ -461,7 +465,7 @@ func TestAuthHTTP(t *testing.T) {
 	if cookies := refreshRecorder.Result().Cookies(); len(cookies) != 0 {
 		t.Fatalf("refresh unexpectedly set cookies: %#v", cookies)
 	}
-	request(http.MethodPost, "/auth/pub/refresh", string(sessionRefreshBody), "", http.StatusUnauthorized)
+	request(http.MethodPost, "/pub/refresh", string(sessionRefreshBody), "", http.StatusUnauthorized)
 
 	mock.ExpectQuery("SELECT u.id, u.username, u.code").WithArgs(int64(3), "EXP78RGH").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "code", "role_id", "role_name", "role_word"}).
@@ -469,22 +473,22 @@ func TestAuthHTTP(t *testing.T) {
 	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(
  permissionRows().AddRow("admin:read:system:user",userReadPermissionConfig),
 	)
-	infoRecorder := request(http.MethodGet, "/auth/info", "", refreshed.AccessToken, http.StatusOK)
+	infoRecorder := request(http.MethodGet, "/info", "", refreshed.AccessToken, http.StatusOK)
 	var info UserInfo
 	if err := json.Unmarshal(infoRecorder.Body.Bytes(), &info); err != nil || info.Role == nil || info.Role.Name != "Reader" || info.Role.Word != "reader" {
 		t.Fatalf("info response: %s %v", infoRecorder.Body.String(), err)
 	}
-	request(http.MethodGet, "/auth/codes", "", refreshed.AccessToken, http.StatusNotFound)
+	request(http.MethodGet, "/codes", "", refreshed.AccessToken, http.StatusNotFound)
 	logoutBody, err := json.Marshal(RefreshTokenInput{RefreshToken: refreshed.RefreshToken})
 	if err != nil {
 		t.Fatal(err)
 	}
-	logoutRecorder := request(http.MethodPost, "/auth/pub/logout", string(logoutBody), "", http.StatusOK)
+	logoutRecorder := request(http.MethodPost, "/pub/logout", string(logoutBody), "", http.StatusOK)
 	if cookies := logoutRecorder.Result().Cookies(); len(cookies) != 0 {
 		t.Fatalf("logout unexpectedly set cookies: %#v", cookies)
 	}
-	request(http.MethodGet, "/auth/info", "", refreshed.AccessToken, http.StatusUnauthorized)
-	request(http.MethodGet, "/auth/info", "", "invalid", http.StatusUnauthorized)
+	request(http.MethodGet, "/info", "", refreshed.AccessToken, http.StatusUnauthorized)
+	request(http.MethodGet, "/info", "", "invalid", http.StatusUnauthorized)
 }
 
 // Localizing errors must preserve the captcha challenge and the machine-readable code.
@@ -502,7 +506,7 @@ func TestLocalizedAuthFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := httptest.NewRequest("POST", "/auth/pub/login", strings.NewReader(string(body)))
+		req := httptest.NewRequest("POST", "/pub/login", strings.NewReader(string(body)))
 		req.Header.Set("Accept-Language", tc.locale)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, req)
@@ -514,7 +518,7 @@ func TestLocalizedAuthFailures(t *testing.T) {
 			t.Fatalf("captcha response: %d %s", recorder.Code, recorder.Body.String())
 		}
 	}
-	req := httptest.NewRequest("GET", "/auth/info", nil)
+	req := httptest.NewRequest("GET", "/info", nil)
 	req.Header.Set("Accept-Language", "zh-CN")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
@@ -556,4 +560,107 @@ func TestInfoUsesHeaderScopeAndIgnoresLegacyQuery(t *testing.T) {
    if value.Scope!=test.want {t.Fatalf("scope=%s want=%s",value.Scope,test.want)}
   }
  }
+}
+
+
+func TestConfiguredAuthHTTPPath(t *testing.T) {
+    for _, prefix := range []string{"", "/auth", "/identity/v2"} {
+        t.Run(prefix, func(t *testing.T) {
+            m, manager, mock := newAuthTestModule(t)
+            raw, err := json.Marshal(m.catalogSource.Current())
+            if err != nil { t.Fatal(err) }
+            canonical, err := localization.New(authn.AuthHTTPPaths("")).CanonicalCatalog(raw)
+            if err != nil { t.Fatal(err) }
+            catalog := localization.New(authn.AuthHTTPPaths(prefix))
+            if err := catalog.Install(canonical); err != nil { t.Fatal(err) }
+            m.httpPath, m.catalogSource = prefix, catalog
+            cfg := &config.Config{}
+            cfg.Auth.Path = prefix
+            cfg.Auth.Authorization.Enabled = true
+            cfg.Idempotency.TTL = time.Minute
+            actions := actionmodule.New(m.store, pagination.Limits{MaxP:100,MaxS:100}, false, catalog)
+            roles := rolemodule.New(m.store, pagination.Limits{MaxP:100,MaxS:100}, actions, false)
+            handler, err := server.NewRouter(cfg, manager, idempotency.NewMemoryStore(), roles, m)
+            if err != nil { t.Fatal(err) }
+            request := func(method, path, body, token string, want int) {
+                t.Helper()
+                r := httptest.NewRequest(method, path, strings.NewReader(body))
+                if token != "" { r.Header.Set("Authorization", "Bearer "+token) }
+                response := httptest.NewRecorder()
+                handler.ServeHTTP(response, r)
+                if response.Code != want { t.Fatalf("%s %s: got %d want %d: %s", method, path, response.Code, want, response.Body.String()) }
+            }
+            request("POST", prefix+"/pub/challenge", `{"purpose":"login"}`, "", 200)
+            request("GET", prefix+"/info", "", "", 401)
+            request("GET", "/role", "", "", 401)
+            request("GET", "/missing", "", "", 404)
+            if prefix == "" { request("GET", "/auth/info", "", "", 404) } else { request("GET", "/info", "", "", 404) }
+            identity := authn.Identity{UserID:3,Username:"readonly",Code:"EXP78RGH",CredentialVersion:1}
+            session, err := m.sessions.Issue(t.Context(), identity, false)
+            if err != nil { t.Fatal(err) }
+            identity.SessionID = session.SessionID
+            token, _, err := manager.Issue(identity)
+            if err != nil { t.Fatal(err) }
+            mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(permissionRows().AddRow("admin:update:account:profile", `{"bindings":[{"resource_key":"admin:account:profile","operation":"update","feature_keys":["admin:account:profile:modify"]}],"ui":[],"endpoints":[]}`))
+            request("POST", prefix+"/challenge", `{"purpose":"password_change"}`, token, 200)
+            r := httptest.NewRequest("GET", prefix+"/permission", nil)
+            r.Header.Set(permissionHeaderMethod,"GET")
+            r.Header.Set(permissionHeaderPath,"/order/pub/item")
+            response := httptest.NewRecorder()
+            handler.ServeHTTP(response,r)
+            if response.Code != 200 { t.Fatal(response.Code,response.Body.String()) }
+        })
+    }
+}
+
+func TestConfiguredAuthPathPreservesResetRestriction(t *testing.T) {
+    for _, prefix := range []string{"", "/auth"} {
+        t.Run(prefix,func(t *testing.T) {
+            m,_,mock := newAuthTestModule(t)
+            m.httpPath=prefix
+            manager,err:=authn.New("test",authTestKey,time.Hour,NewIdentityValidator(m.store,m.sessions,Switches{PasswordResetRequired:true}))
+            if err!=nil {t.Fatal(err)}
+            identity:=authn.Identity{UserID:3,Username:"readonly",Code:"EXP78RGH",CredentialVersion:1}
+            session,err:=m.sessions.Issue(t.Context(),identity,false)
+            if err!=nil {t.Fatal(err)}
+            identity.SessionID=session.SessionID
+            token,_,err:=manager.Issue(identity)
+            if err!=nil {t.Fatal(err)}
+            cfg:=&config.Config{}
+            cfg.Auth.Path=prefix
+            handler,err:=server.NewRouter(cfg,manager,nil,m)
+            if err!=nil {t.Fatal(err)}
+            for _,test:=range []struct{method,path,body string;want int}{
+                {"GET","/info","",403},
+                {"PATCH","/change/pwd","{}",403},
+                {"POST","/challenge",`{"purpose":"password_change"}`,403},
+                {"POST","/challenge",`{"purpose":"password_reset"}`,200},
+                {"PATCH","/reset/pwd","{}",400},
+            } {
+                mock.ExpectQuery("SELECT username, code, status, credential_version, login_count").WithArgs(int64(3),"EXP78RGH").WillReturnRows(sqlmock.NewRows([]string{"username","code","status","credential_version","login_count"}).AddRow("readonly","EXP78RGH",1,1,0))
+                r:=httptest.NewRequest(test.method,prefix+test.path,strings.NewReader(test.body))
+                r.Header.Set("Authorization","Bearer "+token)
+                response:=httptest.NewRecorder()
+                handler.ServeHTTP(response,r)
+                if response.Code!=test.want {t.Fatalf("%s %s: %d want %d: %s",test.method,prefix+test.path,response.Code,test.want,response.Body.String())}
+            }
+        })
+    }
+}
+
+
+func TestAuthHTTPPathMappingsCoverRegisteredRoutes(t *testing.T) {
+    for _,prefix:=range []string{"","/auth"} {
+        m,manager,_:=newAuthTestModule(t)
+        m.httpPath=prefix
+        if _,err:=server.NewRouter(&config.Config{},manager,nil,m);err!=nil {t.Fatal(err)}
+        mapped:=map[string]bool{}
+        for _,actual:=range authn.AuthHTTPPaths(prefix) {mapped[actual]=true}
+        registered:=map[string]bool{}
+        for _,route:=range m.permissionRoutes {
+            if !mapped[route.Path] {t.Fatalf("registered auth route %s has no configured-path mapping",route.Path)}
+            registered[route.Path]=true
+        }
+        for path:=range mapped {if !registered[path] {t.Fatalf("mapped path %s is not registered",path)}}
+    }
 }

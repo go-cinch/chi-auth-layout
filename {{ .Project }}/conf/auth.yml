@@ -1,4 +1,6 @@
 auth:
+  # Empty mounts authentication endpoints at the service root; /auth retains the prefixed layout.
+  path: ""
   authorization:
     enabled: true
   switches:

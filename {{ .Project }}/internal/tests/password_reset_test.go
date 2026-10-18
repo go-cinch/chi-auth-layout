@@ -133,15 +133,15 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	state(0, 1, false)
 	a, b := login("old-secret"), login("old-secret")
 	for _, token := range []*auth.LoginResult{a, b} {
-		if _, err := authenticate(token.AccessToken, "/auth/info"); !errors.Is(err, authn.ErrPasswordResetRequired) {
+		if _, err := authenticate(token.AccessToken, "/info"); !errors.Is(err, authn.ErrPasswordResetRequired) {
 			t.Fatalf("business bypass: %v", err)
 		}
 	}
-	aCtx, err := authenticate(a.AccessToken, "/auth/reset/pwd")
+	aCtx, err := authenticate(a.AccessToken, "/reset/pwd")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bCtx, err := authenticate(b.AccessToken, "/auth/reset/pwd")
+	bCtx, err := authenticate(b.AccessToken, "/reset/pwd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,14 +183,14 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 		t.Fatal("reset still required")
 	}
 	for _, token := range []*auth.LoginResult{a, b} {
-		if _, err := authenticate(token.AccessToken, "/auth/reset/pwd"); !errors.Is(err, authn.ErrUnauthorized) {
+		if _, err := authenticate(token.AccessToken, "/reset/pwd"); !errors.Is(err, authn.ErrUnauthorized) {
 			t.Fatalf("old access accepted: %v", err)
 		}
 		if _, err := m.Refresh(ctx, token.RefreshToken); !errors.Is(err, auth.ErrUnauthorized) {
 			t.Fatalf("old refresh accepted: %v", err)
 		}
 	}
-	winnerCtx, err := authenticate(winner.AccessToken, "/auth/info")
+	winnerCtx, err := authenticate(winner.AccessToken, "/info")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	state(0, 3, true)
-	if _, err := authenticate(winner.AccessToken, "/auth/info"); !errors.Is(err, authn.ErrUnauthorized) {
+	if _, err := authenticate(winner.AccessToken, "/info"); !errors.Is(err, authn.ErrUnauthorized) {
 		t.Fatalf("admin reset left old access valid: %v", err)
 	}
 	again := login(adminPassword)
@@ -234,7 +234,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 		t.Fatal("admin reset bypassed")
 	}
 	state(0, 3, true)
-	againCtx, err := authenticate(again.AccessToken, "/auth/reset/pwd")
+	againCtx, err := authenticate(again.AccessToken, "/reset/pwd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	if bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(adminPassword)) != nil {
 		t.Fatal("password not rolled back")
 	}
-	if _, err := authenticate(again.AccessToken, "/auth/reset/pwd"); err != nil {
+	if _, err := authenticate(again.AccessToken, "/reset/pwd"); err != nil {
 		t.Fatal(err)
 	}
 }

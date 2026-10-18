@@ -33,7 +33,7 @@ func eventRows() *sqlmock.Rows {
 }
 
 func row() *sqlmock.Rows {
-	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/auth/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"), []byte("null"))
+	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"), []byte("null"))
 }
 
 func TestRecordAndRead(t *testing.T) {
@@ -142,7 +142,7 @@ func TestFilters(t *testing.T) {
 
 func TestInvestigationFilters(t *testing.T) {
 	day, hour := int32(0), int32(8)
-	f, err := normalize(Filter{Kind: "login", Weekday: &day, Hour: &hour, Timezone: "Asia/Shanghai", Username: "alice", IP: "127.0.0.1", Path: "/auth/pub/login", Sort: "failure"})
+	f, err := normalize(Filter{Kind: "login", Weekday: &day, Hour: &hour, Timezone: "Asia/Shanghai", Username: "alice", IP: "127.0.0.1", Path: "/pub/login", Sort: "failure"})
 	if err != nil {
 		t.Fatal(err)
 	}

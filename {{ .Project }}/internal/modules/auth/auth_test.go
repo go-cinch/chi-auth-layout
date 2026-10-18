@@ -98,7 +98,7 @@ func authenticatedIdentityContext(t *testing.T, authenticator *authn.Manager, se
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest("GET", "/auth/info", nil)
+	request := httptest.NewRequest("GET", "/info", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request, err = authenticator.AuthenticateRequest(request)
 	if err != nil {

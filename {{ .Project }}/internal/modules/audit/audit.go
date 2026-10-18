@@ -24,8 +24,9 @@ var (
 )
 
 type Module struct {
-	store  *db.Store
-	limits pagination.Limits
+	authHTTPPath string
+	store        *db.Store
+	limits       pagination.Limits
 }
 
 func New(store *db.Store, limits pagination.Limits) *Module {

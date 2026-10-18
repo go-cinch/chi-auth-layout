@@ -76,7 +76,7 @@ func TestCredentialVersionTransactions(t *testing.T) {
 		return result
 	}
 	authenticate := func(token string) (context.Context, error) {
-		request := httptest.NewRequest("GET", "/auth/info", nil).WithContext(ctx)
+		request := httptest.NewRequest("GET", "/info", nil).WithContext(ctx)
 		request.Header.Set("Authorization", "Bearer "+token)
 		verified, err := manager.AuthenticateRequest(request)
 		if err != nil {

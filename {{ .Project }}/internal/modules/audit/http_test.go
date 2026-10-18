@@ -92,13 +92,13 @@ func TestHTTP(t *testing.T) {
 func TestAuditTargets(t *testing.T) {
 	m := &Module{}
 	cases := []struct{ method, path, kind, operation, id string }{
-		{"POST", "/auth/pub/login", "login", "login", ""},
-		{"GET", "/auth/pub/login", "", "", ""},
-		{"POST", "/auth/pub/register", "operation", "register", ""},
-		{"PATCH", "/auth/change/pwd", "operation", "change_password", ""},
-		{"PATCH", "/auth/reset/pwd", "operation", "reset_password", ""},
-		{"POST", "/auth/logout", "operation", "logout", ""},
-		{"POST", "/auth/pub/challenge", "", "", ""},
+		{"POST", "/pub/login", "login", "login", ""},
+		{"GET", "/pub/login", "", "", ""},
+		{"POST", "/pub/register", "operation", "register", ""},
+		{"PATCH", "/change/pwd", "operation", "change_password", ""},
+		{"PATCH", "/reset/pwd", "operation", "reset_password", ""},
+		{"POST", "/logout", "operation", "logout", ""},
+		{"POST", "/pub/challenge", "", "", ""},
 		{"POST", "/other", "", "", ""},
 		{"POST", "/user", "operation", "create", ""},
 		{"PATCH", "/user/2", "operation", "update", "2"},
@@ -115,4 +115,20 @@ func TestAuditTargets(t *testing.T) {
 			t.Fatalf("%s %s: %+v", c.method, c.path, target)
 		}
 	}
+}
+
+
+func TestAuditClassificationUsesConfiguredAuthPath(t *testing.T) {
+    for _,prefix:=range []string{"","/auth","/identity/v2"} {
+        m:=&Module{}
+        m.SetAuthHTTPPath(prefix)
+        login:=m.AuditTarget("POST",prefix+"/pub/login")
+        if login.Kind!="login" || login.Operation!="login" {t.Fatal(prefix,login)}
+        reset:=m.AuditTarget("PATCH",prefix+"/reset/pwd")
+        if reset.Kind!="operation" || reset.Operation!="reset_password" {t.Fatal(prefix,reset)}
+        if user:=m.AuditTarget("POST","/user");user.Module!="user" {t.Fatal(user)}
+        stale:="/auth/pub/login"
+        if prefix=="/auth" {stale="/pub/login"}
+        if old:=m.AuditTarget("POST",stale);old.Kind!="" {t.Fatalf("unregistered auth alias audited: %+v",old)}
+    }
 }

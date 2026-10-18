@@ -63,7 +63,7 @@ func TestPermissionAdministrationPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := httptest.NewRequest("GET", "/auth/info?scope=admin", nil)
+	original := httptest.NewRequest("GET", "/info?scope=admin", nil)
 	original.Header.Set("Authorization", "Bearer "+token)
 	authenticated, err := manager.AuthenticateRequest(original)
 	if err != nil {

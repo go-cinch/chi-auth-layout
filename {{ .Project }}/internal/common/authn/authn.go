@@ -45,6 +45,7 @@ type IdentityValidator interface {
 }
 
 type Manager struct {
+	httpPath string
 	issuer   string
 	key      []byte
 	ttl      time.Duration
@@ -138,7 +139,7 @@ func (m *Manager) AuthenticateRequest(r *http.Request) (*http.Request, error) {
 	} else if m.sessions != nil && m.sessions.ValidateIdentity(r.Context(), identity) != nil {
 		return nil, ErrUnauthorized
 	}
-	if identity.PasswordResetRequired && !PasswordResetAllowedHTTP(r.Method, r.URL.Path) && !(r.Method == http.MethodGet && r.URL.Path == "/auth/permission") {
+	if identity.PasswordResetRequired && !PasswordResetAllowedHTTP(r.Method, r.URL.Path, m.httpPath) && !(r.Method == http.MethodGet && r.URL.Path == m.httpPath+"/permission") {
 		return nil, ErrPasswordResetRequired
 	}
 	return r.WithContext(context.WithValue(r.Context(), identityContextKey{}, identity)), nil
@@ -150,7 +151,11 @@ func FromContext(ctx context.Context) (Identity, bool) {
 }
 
 // PasswordResetAllowedHTTP is deliberately independent of role/permission configuration.
-func PasswordResetAllowedHTTP(method, path string) bool {
-	return (method == http.MethodPatch && path == "/auth/reset/pwd") ||
-		(method == http.MethodPost && (path == "/auth/challenge" || path == "/auth/logout" || path == "/auth/pub/logout" || path == "/auth/pub/refresh"))
+func PasswordResetAllowedHTTP(method, path string, prefixes ...string) bool {
+	prefix := ""
+	if len(prefixes) > 0 {
+		prefix = prefixes[0]
+	}
+	return (method == http.MethodPatch && path == prefix+"/reset/pwd") ||
+		(method == http.MethodPost && (path == prefix+"/challenge" || path == prefix+"/logout" || path == prefix+"/pub/logout" || path == prefix+"/pub/refresh"))
 }

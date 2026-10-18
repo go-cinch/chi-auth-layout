@@ -254,7 +254,7 @@ func TestAuthInfoUsesHeaderWithoutScopeQuery(t *testing.T) {
 	writeSource(t, root, "conf/http.yml", "http:\n  docs:\n    servers: []\n")
 	source := `package auth
  type Module struct{}
- func (*Module) Name() string { return "/auth" }
+ func (*Module) Name() string { return "/" }
  func (m *Module) HTTP() http.Handler {r:=chi.NewRouter();r.Get("/info",m.info);return r}
  func (m *Module) info(w http.ResponseWriter,r *http.Request) {server.WriteOK(w)}
  `

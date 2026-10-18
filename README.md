@@ -10,6 +10,12 @@ modules. These are required capabilities and cannot be excluded at generation
 time. `database.migrate` in `conf/database.yml` controls whether migrations run
 at startup; setting it to `false` retains the migration files and every module.
 
+`conf/auth.yml` sets the authentication module path with `auth.path`, defaulting
+to an empty root mount (`/info`, `/pub/login`, `/permission`). Set it to `/auth`
+for prefixed endpoints. `SERVICE_AUTH_PATH` supports the same values, including
+an explicit empty override; business module paths such as `/user` stay unchanged.
+OpenAPI generation resolves the same YAML and environment value.
+
 The `full` preset enables gRPC, Redis, tracing support and health checks. These
 remain optional, and the HTTP router can be chi or Gin.
 

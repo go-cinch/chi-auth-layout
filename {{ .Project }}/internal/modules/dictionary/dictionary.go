@@ -91,6 +91,7 @@ func (c *memoryValueCache) Invalidate(_ context.Context) error {
 }
 
 type CatalogSource interface {
+	CanonicalCatalog([]byte) ([]byte, error)
 	Current() localization.Catalog
 	Install([]byte) error
 	Reset()
@@ -303,7 +304,7 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 		return nil, ErrInvalid
 	}
 	candidate := &Dictionary{Key: input.Key, Value: input.Value}
-	if err := prepareLocalization(candidate); err != nil {
+	if err := m.prepareLocalization(candidate); err != nil {
 		return nil, err
 	}
 	input.Value = candidate.Value
@@ -324,7 +325,7 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 		}
 		value, err = get(ctx, m.store.SQL(ctx), id)
 		if err == nil {
-			err = prepareLocalization(value)
+			err = m.prepareLocalization(value)
 		}
 		return err
 	})
@@ -453,7 +454,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateDictionaryInp
 		value, err = get(ctx, m.store.SQL(ctx), id)
 		if err == nil {
 			original := string(value.Value)
-			err = prepareLocalization(value)
+			err = m.prepareLocalization(value)
 			if err == nil && original != string(value.Value) {
 				_, err = m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_dictionary SET value = $2::jsonb, updated_at = $3 WHERE id = $1`, id, string(value.Value), value.UpdatedAt)
 			}

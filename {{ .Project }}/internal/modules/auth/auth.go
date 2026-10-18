@@ -157,6 +157,7 @@ type CatalogSource interface {
 }
 
 type Module struct {
+	httpPath         string
 	catalogSource    CatalogSource
 	permissionRoutes []modules.HTTPPermissionRoute
 	store            *db.Store
@@ -169,8 +170,13 @@ type Module struct {
 	switches         Switches
 }
 
-func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, switches Switches, catalog CatalogSource) *Module {
-	return &Module{catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, switches: switches}
+func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, switches Switches, catalog CatalogSource, paths ...string) *Module {
+	prefix := ""
+	if len(paths) > 0 {
+		prefix = paths[0]
+	}
+	if prefix == "/" { prefix = "" }
+	return &Module{httpPath: prefix, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, switches: switches}
 }
 
 func (m *Module) Register(ctx context.Context, input RegisterInput) error {

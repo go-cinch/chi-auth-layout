@@ -374,10 +374,7 @@ func (c Catalog) ResolveResourceBinding(scope, key, operation string, selected [
 }
 
 func (m *Module) PermissionCatalog() ResourceCatalog {
-	raw, _ := json.Marshal(m.active.Load().catalog.ResourceCatalog)
-	var value ResourceCatalog
-	_ = json.Unmarshal(raw, &value)
-	return value
+	return m.Select([]string{"resource_catalog"}).ResourceCatalog
 }
 
 // ResolvePermission reads one immutable snapshot. Request authorization does not

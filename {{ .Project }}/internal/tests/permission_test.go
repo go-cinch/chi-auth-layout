@@ -163,30 +163,30 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 			if granted {
 				want = 400
 			}
-			request("POST", "/auth/challenge", want)
-			request("POST", "/auth/logout", 403)
-			request("PATCH", "/auth/reset/pwd", want)
+			request("POST", "/challenge", want)
+			request("POST", "/logout", 403)
+			request("PATCH", "/reset/pwd", want)
 			captchaWant := want
 			if restricted {
 				captchaWant = 403
 			}
-			request("POST", "/auth/captcha/verify", captchaWant)
+			request("POST", "/captcha/verify", captchaWant)
 		}
 	}
 	// Even all permissions cannot lift the first-login restriction, including via the gateway.
 	exec(`UPDATE t_action SET config=$1 WHERE config->>'builtin'='default' AND scope='admin'`, defaultResources)
 	exec(`UPDATE t_user SET action=(SELECT code FROM t_action WHERE scope='admin' AND config->>'builtin'='all') WHERE id=2`)
-	request("GET", "/auth/info", 403)
+	request("GET", "/info", 403)
 	for _, target := range []struct {
 		method, path string
 		want         int
 	}{
-		{"PATCH", "/auth/reset/pwd", 200},
-		{"POST", "/auth/challenge", 200},
-		{"GET", "/auth/info", 403},
-		{"POST", "/auth/captcha/verify", 403},
+		{"PATCH", "/reset/pwd", 200},
+		{"POST", "/challenge", 200},
+		{"GET", "/info", 403},
+		{"POST", "/captcha/verify", 403},
 	} {
-		r := httptest.NewRequest("GET", "/auth/permission", nil)
+		r := httptest.NewRequest("GET", "/permission", nil)
 		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("X-Original-Method", target.method)
 		r.Header.Set("X-Original-URI", target.path)
@@ -258,7 +258,7 @@ func TestPermissionSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest("GET", "/auth/info", nil).WithContext(ctx)
+	request := httptest.NewRequest("GET", "/info", nil).WithContext(ctx)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request, err = manager.AuthenticateRequest(request)
 	if err != nil {
@@ -365,7 +365,7 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest("GET", "/auth/info?scope=admin", nil)
+	request := httptest.NewRequest("GET", "/info?scope=admin", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request, err = manager.AuthenticateRequest(request)
 	if err != nil {
@@ -452,9 +452,9 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 	httpCheck("/user", []string{"mini"}, 200)
 	httpCheck("/user", []string{""}, 400)
 	httpCheck("/user", []string{"admin", "mini"}, 400)
-	httpCheck("/auth/info?scope=admin", []string{"mini"}, 403)
- httpCheck("/auth/info", []string{"admin"}, 200)
- httpCheck("/auth/info?scope=mini", []string{"admin"}, 200)
+	httpCheck("/info?scope=admin", []string{"mini"}, 403)
+	httpCheck("/info", []string{"admin"}, 200)
+	httpCheck("/info?scope=mini", []string{"admin"}, 200)
 	// The actual server registers static-route precedence for both direct requests and gateway checks.
 	detailConfig := registerPermissionFixture(t, localizer, "admin:system:detail", "read", "/user/detail", []localization.HTTPPath{ {Method: "GET", Path: "/user/{id}"}})
 	encodedDetail, err := json.Marshal(detailConfig)
@@ -465,7 +465,7 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 	exec(`UPDATE t_user SET action='DETAIL01' WHERE id=2`)
 	httpCheck("/user/2", nil, 200)
 	httpCheck("/user/summary", nil, 403)
-	gateway := httptest.NewRequest("GET", "/auth/permission", nil)
+	gateway := httptest.NewRequest("GET", "/permission", nil)
 	gateway.Header.Set("Authorization", "Bearer "+token)
 	gateway.Header.Set("X-Original-Method", "GET")
 	gateway.Header.Set("X-Original-URI", "/user/summary")
@@ -631,7 +631,7 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := httptest.NewRequest("GET", "/auth/info?scope=admin", nil)
+			request := httptest.NewRequest("GET", "/info?scope=admin", nil)
 			request.Header.Set("Authorization", "Bearer "+token)
 			request, err = manager.AuthenticateRequest(request)
 			if err != nil {
@@ -728,7 +728,7 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 
 func testLocalization(t *testing.T, store *db.Store) *localization.Module {
 	t.Helper()
-	localizer := localization.New()
+	localizer := localization.New(authn.AuthHTTPPaths(""))
 	var raw []byte
 	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), "SELECT value FROM t_dictionary WHERE dictionary_key='I18N_CATALOG'").Scan(&raw); err != nil {
 		t.Fatal(err)

@@ -77,13 +77,13 @@ func TestIdentityValidator(t *testing.T) {
 				}
 				// A protected business route authenticates even when permission checks are disabled.
 				if scenario == "valid" && enabled {
-					mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(permissionRows().AddRow("admin:update:account:profile", permissionConfig(localizer, "PATCH", "/auth/change/pwd")))
+					mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(permissionRows().AddRow("admin:update:account:profile", permissionConfig(localizer, "PATCH", "/change/pwd")))
 				}
 				token, _, err := manager.Issue(identity)
 				if err != nil {
 					t.Fatal(err)
 				}
-				request := httptest.NewRequest(http.MethodPatch, "/auth/change/pwd", strings.NewReader("{"))
+				request := httptest.NewRequest(http.MethodPatch, "/change/pwd", strings.NewReader("{"))
 				request.Header.Set("Authorization", "Bearer "+token)
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, request)

@@ -23,10 +23,13 @@ import (
 )
 
 var _ modules.HTTPModule = (*Module)(nil)
+var _ modules.ConfigurableHTTPModule = (*Module)(nil)
 var _ modules.HTTPPermissionAuthorizer = (*Module)(nil)
 var _ modules.AnonymousHTTPModule = (*Module)(nil)
 
-func (*Module) Name() string { return "/auth" }
+func (m *Module) Name() string { return m.httpPath }
+
+func (*Module) HTTPPathConfig() string { return "auth.path" }
 
 func (*Module) PermissionEndpoint() string { return "/permission" }
 

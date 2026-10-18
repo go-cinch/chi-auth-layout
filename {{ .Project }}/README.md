@@ -16,15 +16,39 @@ make test
 make run
 ```
 
+## Authentication endpoint path
+
+`conf/auth.yml` controls only the authentication module's mount:
+
+```yaml
+auth:
+  path: ""
+```
+
+The empty default exposes `/info`, `/pub/login`, `/challenge`, `/reset/pwd`
+and `/permission` at the service root. Set `auth.path: "/auth"` to expose
+`/auth/info`, `/auth/pub/login` and the other authentication endpoints under
+`/auth`. `SERVICE_AUTH_PATH` overrides this scalar, including an explicitly
+empty environment value. Other modules retain `/user`, `/role`, `/action`, etc.
+Restart the service after changing the mount; regenerate OpenAPI with `make api`.
+Permissions, first-login password restrictions and audit classification use the
+same configured mount. Existing stored permission endpoint identities are retained;
+runtime catalog reads project them to the configured mount.
+
+Gateway service prefixes are independent. With an external `/api/auth` prefix
+and the default empty mount, the user-info URL is `/api/auth/info`.
+Frontend auth endpoint paths must use the same mount.
+
 ## Nginx configuration
 
 Add these locations inside your Nginx `server` block. Replace `order-service`
 and `auth-service` with your upstream addresses and `/order/` with your service
-path. The permission check uses `GET /auth/permission` and forwards the verified
+path. The default permission check uses `GET /permission` and forwards the verified
 user code through `X-Code`.
 
 Overwrite the target headers from the original request and keep the permission
-subrequest location `internal`:
+subrequest location `internal`. If `auth.path` is `/auth`, use
+`http://auth-service/auth/permission` instead:
 
 ```nginx
 location ^~ /order/ {
@@ -45,6 +69,6 @@ location = /_permission {
   proxy_set_header X-Permission-URI $request_uri;
   proxy_set_header X-Original-Resource "";
   proxy_set_header X-Verified-Client-IP $remote_addr;
-  proxy_pass http://auth-service/auth/permission;
+  proxy_pass http://auth-service/permission;
 }
 ```

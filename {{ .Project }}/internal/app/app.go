@@ -48,6 +48,7 @@ import (
 )
 
 type Application struct {
+	authPath string
  localization *localization.Module
  auditModule *auditmodule.Module
  msgModule *msgmodule.Module
@@ -89,6 +90,9 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	authPath, err := config.NormalizeHTTPPath(cfg.Auth.Path)
+	if err != nil { return nil, err }
 
 	if err := logging.Init(os.Stdout, cfg.Log.Level); err != nil {
 		return nil, err
@@ -159,7 +163,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	dictionaryCache = redisDictionaryCache
 	cleanups = append(cleanups, cleanupDictionaryCache)
 {{- end }}
-	localizer := localization.New()
+	localizer := localization.New(authn.AuthHTTPPaths(authPath))
  dictionaryModule, err := dictionarymodule.New(dbStore, dictionaryCache, dictionarymodule.CacheTTL, limits, authSwitches.ProtectCaptchaDictionaries, localizer)
 	if err != nil {
 		cleanup()
@@ -221,6 +225,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	}
 
 	application := &Application{
+		authPath: authPath,
 		pagination: limits,
 
 		authenticator: authenticator,
@@ -280,8 +285,9 @@ func authSwitchesFromConfig(cfg *config.Config) authmodule.Switches {
 func (a *Application) wireBusinessModules() {
 	// Build in dependency order; generatedModules registers these same instances.
 	// The dictionary is initialized earlier because captcha construction needs it.
-	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.authSwitches, a.localization)
+	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.authSwitches, a.localization, a.authPath)
 	a.auditModule = auditmodule.New(a.db,a.pagination)
+	a.auditModule.SetAuthHTTPPath(a.authPath)
  a.actionModule = actionmodule.New(a.db, a.pagination, a.authSwitches.ProtectSuper, a.localization)
 	if a.dictionaryModule != nil { a.actionModule.SetNameLocalization(a.dictionaryModule); a.actionModule.SetDefinitionCatalog(a.dictionaryModule) }
 	if a.dictionaryModule != nil { a.dictionaryModule.SetPermissionGroups(a.actionModule); a.dictionaryModule.SetResourcePermissions(a.actionModule) }

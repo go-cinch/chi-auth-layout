@@ -51,7 +51,7 @@ func (m *Module) CheckPermission(ctx context.Context, target PermissionTarget) (
 	if !target.valid() {
 		return identity, false, nil
 	}
-	if identity.PasswordResetRequired && (target.Resource != "" || !authn.PasswordResetAllowedHTTP(target.Method, target.Path)) {
+	if identity.PasswordResetRequired && (target.Resource != "" || !authn.PasswordResetAllowedHTTP(target.Method, target.Path, m.httpPath)) {
 		return identity, false, authn.ErrPasswordResetRequired
 	}
 	protocol := "http"

@@ -63,10 +63,15 @@ func (m *Module) refreshLocalization(ctx context.Context) error {
 	return nil
 }
 
-func prepareLocalization(value *Dictionary) error {
+func (m *Module) prepareLocalization(value *Dictionary) error {
 	if value.Key != LocalizationKey {
 		return nil
 	}
+	normalized, err := m.catalogSource.CanonicalCatalog(value.Value)
+	if err != nil {
+		return ErrInvalid
+	}
+	value.Value = normalized
 	catalog, err := localization.Parse(value.Value)
 	if err != nil {
 		return ErrInvalid

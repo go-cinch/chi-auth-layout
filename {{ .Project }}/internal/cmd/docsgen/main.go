@@ -150,6 +150,9 @@ func run(source, configDir, output, title string) error {
 	if err != nil {
 		return err
 	}
+	if err := configureModulePaths(packages, configDir); err != nil {
+		return err
+	}
 	routes := discoverRoutes(packages)
 	gen := &generator{limits: limits, components: make(map[string]*schema), visiting: make(map[string]bool)}
 	for index := range routes {

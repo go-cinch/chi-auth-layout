@@ -30,7 +30,7 @@ func installAuthCatalog(t *testing.T, localizer *localization.Module) {
 		c.ResourceCatalog.Resources[key] = localization.Resource{Kind: "resource", Operations: map[string]localization.ResourceOperation{
 			"read": {EntryKeys: []string{}, ButtonKeys: []string{key + ":transport"}}, "update": {EntryKeys: []string{}, ButtonKeys: []string{key + ":modify"}}}}
 		c.ResourceCatalog.Buttons[key+":transport"] = localization.Feature{Btn: []string{}, HTTP: []localization.HTTPPath{}, GRPC: []string{}}
-		c.ResourceCatalog.Buttons[key+":modify"] = localization.Feature{Btn: []string{}, HTTP: []localization.HTTPPath{ {Method: "POST", Path: "/auth/challenge"}, {Method: "PATCH", Path: "/auth/reset/pwd"}}, GRPC: []string{}}
+		c.ResourceCatalog.Buttons[key+":modify"] = localization.Feature{Btn: []string{}, HTTP: []localization.HTTPPath{ {Method: "POST", Path: "/challenge"}, {Method: "PATCH", Path: "/reset/pwd"}}, GRPC: []string{}}
 	}
 	r := c.ResourceCatalog.Resources["admin:system:user"]
 	r.Entries = map[string]localization.ResourceEntry{"admin:menu:system:user": {Path: "/system/user", ParentMenuKey: "admin:menu:system"}}
@@ -154,7 +154,7 @@ func TestCheckPermission(t *testing.T) {
  localizer = m.catalogSource.(*localization.Module)
 		ctx := authenticatedContext(t, authenticator, m.sessions)
 		for _, target := range []PermissionTarget{
-			{Method: "POST", Path: "/auth/logout"}, {Method: "POST", Path: "/auth/challenge"}, {Method: "PATCH", Path: "/auth/reset/pwd"}, {Method: "GET", Path: "/user"}} {
+			{Method: "POST", Path: "/logout"}, {Method: "POST", Path: "/challenge"}, {Method: "PATCH", Path: "/reset/pwd"}, {Method: "GET", Path: "/user"}} {
 			for _, granted := range []bool{true, false} {
 				rows := permissionRows()
 				if granted {

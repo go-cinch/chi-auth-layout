@@ -45,9 +45,23 @@ type snapshot struct {
 	tags    []string
 }
 
-type Module struct{ active atomic.Pointer[snapshot] }
+type Module struct {
+	active             atomic.Pointer[snapshot]
+	httpPaths          map[string]string
+	canonicalHTTPPaths map[string]string
+}
 
-func New() *Module { m := &Module{}; m.Reset(); return m }
+func New(mappings ...map[string]string) *Module {
+	m := &Module{httpPaths: map[string]string{}, canonicalHTTPPaths: map[string]string{}}
+	if len(mappings) > 0 {
+		for canonical, actual := range mappings[0] {
+			m.httpPaths[canonical] = actual
+			m.canonicalHTTPPaths[actual] = canonical
+		}
+	}
+	m.Reset()
+	return m
+}
 
 // Parse validates language registration before a catalog can be committed.
 func Parse(raw []byte) (*Catalog, error) {
@@ -124,6 +138,10 @@ func (c Catalog) GroupKeys() map[string]bool {
 
 // Install copies the validated catalog so readers never observe partial updates.
 func (m *Module) Install(raw []byte) error {
+	raw, err := m.CanonicalCatalog(raw)
+	if err != nil {
+		return err
+	}
 	value, err := Parse(raw)
 	if err != nil {
 		return err
@@ -153,7 +171,9 @@ func (m *Module) Current() Catalog { return m.Select(nil) }
 
 // Select copies only requested data from one immutable snapshot.
 func (m *Module) Select(fields []string) Catalog {
-	return selectCatalog(m.active.Load().catalog, fields)
+	value := selectCatalog(m.active.Load().catalog, fields)
+	rewriteHTTPPaths(&value.ResourceCatalog, m.httpPaths)
+	return value
 }
 
 func selectCatalog(source Catalog, fields []string) Catalog {

@@ -29,7 +29,7 @@ func TestAuditAggregationsAndIsolation(t *testing.T) {
 		if i < 5 {
 			status = 401
 		}
-		if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "login", Username: "audit_test", Module: "auth", Method: "POST", Path: "/auth/pub/login", Status: status, DurationMS: int64(i * 10), IP: "127.0.0.1", OccurredAt: at}); err != nil {
+		if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "login", Username: "audit_test", Module: "auth", Method: "POST", Path: "/pub/login", Status: status, DurationMS: int64(i * 10), IP: "127.0.0.1", OccurredAt: at}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -85,7 +85,7 @@ func TestAuditSelectedCellAndSort(t *testing.T) {
 		if i == 2 {
 			offset = 3600000
 		}
-		if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "login", Username: name, Module: "auth", Method: "POST", Path: "/auth/pub/login", Status: status, DurationMS: int64(10 + i), IP: "127.0.0.1", OccurredAt: at + offset}); err != nil {
+		if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "login", Username: name, Module: "auth", Method: "POST", Path: "/pub/login", Status: status, DurationMS: int64(10 + i), IP: "127.0.0.1", OccurredAt: at + offset}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -112,7 +112,7 @@ func TestAuditSelectedCellAndSort(t *testing.T) {
 	// The same wall-clock heat cell includes both repeated hours across a DST fold.
 	fold := time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC).UnixMilli()
 	for _, offset := range []int64{0, 3600000} {
-		if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "login", Username: "dst", Module: "auth", Method: "POST", Path: "/auth/pub/login", Status: 200, OccurredAt: fold + offset}); err != nil {
+		if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "login", Username: "dst", Module: "auth", Method: "POST", Path: "/pub/login", Status: 200, OccurredAt: fold + offset}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -248,7 +248,7 @@ func TestAuditEpochStorageAndActorConstraint(t *testing.T) {
 			t.Fatalf("%s: timestamps depend on zone: %d %d", zone, created, occurred)
 		}
 	}
-	if _, err := conn.ExecContext(t.Context(), `INSERT INTO t_audit_event(occurred_at,kind,user_id,module,method,path,status,duration_ms) VALUES (1,'login',-1,'auth','POST','/auth/pub/login',401,0)`); err == nil {
+	if _, err := conn.ExecContext(t.Context(), `INSERT INTO t_audit_event(occurred_at,kind,user_id,module,method,path,status,duration_ms) VALUES (1,'login',-1,'auth','POST','/pub/login',401,0)`); err == nil {
 		t.Fatal("negative actor accepted")
 	}
 	limits, _ := pagination.New(100, 100)
@@ -301,7 +301,7 @@ func TestAuditHeaderPersistenceAndHistory(t *testing.T) {
 	at := time.Now().UnixMilli()
 	header := json.RawMessage(`{"Authorization":"[redacted]","X-Verified-Client-Ip":"203.0.113.5","X-Real-Ip":"203.0.113.6","X-Forwarded-For":["192.0.2.99","203.0.113.5"]}`)
 	for _, kind := range []string{"login", "operation"} {
-		if err := m.RecordHTTP(t.Context(), auditctx.Event{Kind: kind, Module: "auth", Method: "POST", Path: "/auth/pub/login", Status: 401, OccurredAt: at, Header: header}); err != nil {
+		if err := m.RecordHTTP(t.Context(), auditctx.Event{Kind: kind, Module: "auth", Method: "POST", Path: "/pub/login", Status: 401, OccurredAt: at, Header: header}); err != nil {
 			t.Fatal(err)
 		}
 		page, err := m.List(t.Context(), audit.Filter{Kind: kind, From: at, To: at + 1000})
@@ -325,7 +325,7 @@ func TestAuditHeaderPersistenceAndHistory(t *testing.T) {
 		}
 	}
 	var legacyID int64
-	if err := store.DB.QueryRowContext(t.Context(), `INSERT INTO t_audit_event(occurred_at,kind,module,method,path,status,duration_ms) VALUES ($1,'login','auth','POST','/auth/pub/login',200,0) RETURNING id`, at).Scan(&legacyID); err != nil {
+	if err := store.DB.QueryRowContext(t.Context(), `INSERT INTO t_audit_event(occurred_at,kind,module,method,path,status,duration_ms) VALUES ($1,'login','auth','POST','/pub/login',200,0) RETURNING id`, at).Scan(&legacyID); err != nil {
 		t.Fatal(err)
 	}
 	legacy, err := m.Get(t.Context(), "login", legacyID)

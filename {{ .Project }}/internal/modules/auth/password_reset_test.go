@@ -165,7 +165,7 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 		expectPermission := func() {
 			if enabled {
 				mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(
-					permissionRows().AddRow("admin:update:account:profile",`{"bindings":[{"resource_key":"admin:account:profile","operation":"update","feature_keys":["admin:account:profile:modify"]}],"ui":[],"endpoints":[]}`),
+					permissionRows().AddRow("admin:update:account:profile", `{"bindings":[{"resource_key":"admin:account:profile","operation":"update","feature_keys":["admin:account:profile:modify"]}],"ui":[],"endpoints":[]}`),
 				)
 			}
 		}
@@ -190,19 +190,19 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 			}
 			return w
 		}
-		for _, path := range []string{"/auth/info", "/auth/permission"} {
+		for _, path := range []string{"/info", "/permission"} {
 			request("GET", path, "", 403)
 		}
-		request("PATCH", "/auth/change/pwd", "{}", 403)
-		request("POST", "/auth/challenge", `{"purpose":"password_change"}`, 403)
-		response := request("POST", "/auth/challenge", `{"purpose":"password_reset"}`, 200)
+		request("PATCH", "/change/pwd", "{}", 403)
+		request("POST", "/challenge", `{"purpose":"password_change"}`, 403)
+		response := request("POST", "/challenge", `{"purpose":"password_reset"}`, 200)
 		var challenge CredentialChallenge
 		if err := json.Unmarshal(response.Body.Bytes(), &challenge); err != nil {
 			t.Fatal(err)
 		}
-		request("PATCH", "/auth/reset/pwd", `{"new_password":"plaintext"}`, 400)
-		request("PATCH", "/auth/reset/pwd", `{} {}`, 400)
-		request("PATCH", "/auth/reset/pwd", `{"challenge_id":"bad","credential":"bad"}`, 400)
+		request("PATCH", "/reset/pwd", `{"new_password":"plaintext"}`, 400)
+		request("PATCH", "/reset/pwd", `{} {}`, 400)
+		request("PATCH", "/reset/pwd", `{"challenge_id":"bad","credential":"bad"}`, 400)
 		input := encryptedResetInput(t, m.credentials, challenge.ChallengeID, "new-secret", passwordResetCredentialType)
 		body, _ := json.Marshal(input)
 		// Authentication and configured permissions precede the password transaction.
@@ -212,7 +212,7 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 		mock.ExpectQuery("SELECT password, credential_version, login_count, status").WillReturnRows(sqlmock.NewRows([]string{"password", "credential_version", "login_count", "status"}).AddRow(passwordHash(t, "cinch123"), int64(1), int64(0), userStatusActive))
 		mock.ExpectExec("UPDATE t_user SET password").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
-		r := httptest.NewRequest(http.MethodPatch, "/auth/reset/pwd", strings.NewReader(string(body)))
+		r := httptest.NewRequest(http.MethodPatch, "/reset/pwd", strings.NewReader(string(body)))
 		r.Header.Set("Authorization", "Bearer "+token)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)

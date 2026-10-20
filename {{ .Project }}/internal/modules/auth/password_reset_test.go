@@ -145,7 +145,7 @@ func TestPasswordResetTransactions(t *testing.T) {
 
 func TestResetHTTPRestrictedSession(t *testing.T) {
 	m, _, mock := newAuthTestModule(t)
-	manager, err := authn.New("test", authTestKey, time.Hour, NewIdentityValidator(m.store, m.sessions, Switches{PasswordResetRequired: true}))
+	manager, err := authn.New("test", authTestKey, time.Hour, NewIdentityValidator(m.store, m.sessions))
 	if err != nil {
 		t.Fatal(err)
 	}

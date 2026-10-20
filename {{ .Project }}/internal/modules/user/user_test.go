@@ -12,12 +12,10 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
-	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
 )
 
@@ -49,8 +47,8 @@ func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 		t.Fatal(err)
 	}
 	store := &db.Store{DB: database}
-	actions := actionmodule.New(store, limits, false, localization.New())
-	return New(store, limits, nil, nil, actions, rolemodule.New(store, limits, actions, false), authmodule.Switches{PasswordResetRequired: true}), mock
+	actions := actionmodule.New(store, limits, localization.New())
+	return New(store, limits, nil, nil, actions, rolemodule.New(store, limits, actions)), mock
 }
 
 func userRows(id int64, username, code string) *sqlmock.Rows {
@@ -107,24 +105,6 @@ func TestUserCRUD(t *testing.T) {
 	if _, err := m.Update(ctx, 1, UpdateUserInput{}); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
-	password := "secret2"
-	m.switches.ProtectSuper = true
-	if _, err := m.Update(ctx, authmodule.SuperUserID, UpdateUserInput{Password: &password}); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("reset super password: %v", err)
-	}
-	otherUsername := "renamed"
-	otherRole := int64(2)
-	lockedStatus := StatusLocked
-	for name, input := range map[string]UpdateUserInput{
-		"username": {Username: &otherUsername},
-		"role":     {RoleID: &otherRole},
-		"status":   {Status: &lockedStatus},
-	} {
-		if _, err := m.Update(ctx, authmodule.SuperUserID, input); !errors.Is(err, apperror.FeatureDisabled) {
-			t.Fatalf("change super %s: %v", name, err)
-		}
-	}
-	m.switches.ProtectSuper = false
 	locked := StatusLocked
 	past := time.Now().Add(-time.Minute).UnixMilli()
 	pastMetadata := map[string]any{"lock_expired_at": past}
@@ -165,11 +145,6 @@ func TestUserCRUD(t *testing.T) {
 	if err := m.Delete(ctx, 0); !errors.Is(err, ErrIDs) {
 		t.Fatal(err)
 	}
-	m.switches.ProtectSuper = true
-	if err := m.Delete(ctx, authmodule.SuperUserID, 2); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("delete super user: %v", err)
-	}
-	m.switches.ProtectSuper = false
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT id FROM t_user .* FOR UPDATE").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE t_msg SET sender_id = NULL, updated_at").WillReturnResult(sqlmock.NewResult(0, 1))

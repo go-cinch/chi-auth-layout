@@ -12,7 +12,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
@@ -54,7 +53,7 @@ func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) 
 	if sliderErr != nil {
 		t.Fatal(sliderErr)
 	}
-	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, slider, passwordGuard, Switches{PasswordResetRequired: true}, localizer, defaultPermissionsStub{}), authenticator, mock
+	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, slider, passwordGuard, localizer, defaultPermissionsStub{}), authenticator, mock
 }
 
 func passwordHash(t *testing.T, password string) string {
@@ -105,32 +104,6 @@ func authenticatedIdentityContext(t *testing.T, authenticator *authn.Manager, se
 		t.Fatal(err)
 	}
 	return request.Context()
-}
-
-func TestAuthSwitches(t *testing.T) {
-	m, authenticator, mock := newAuthTestModule(t)
-	m.switches.PasswordResetRequired = false
-	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
-	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at = \\$1, login_count = login_count \\+ 1").WithArgs(sqlmock.AnyArg(), int64(3), int64(1), userStatusActive).
-		WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(int64(1)))
-	result, err := m.Login(t.Context(), LoginInput{Username: "readonly", Password: "cinch123", SliderProof: validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")})
-	if err != nil || result.PasswordResetRequired {
-		t.Fatalf("password-reset bypass login: %#v %v", result, err)
-	}
-
-	m.switches.ProtectSuper = true
-	ctx := authenticatedIdentityContext(t, authenticator, m.sessions, authn.Identity{
-		CredentialVersion: 1, UserID: SuperUserID, Username: "super", Code: "89HEK28Y",
-	})
-	if _, err := m.PasswordChangeChallenge(ctx); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("super password change challenge: %v", err)
-	}
-	if _, err := m.OpenPasswordChange(ctx, EncryptedPasswordChangeInput{}); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("open super password change: %v", err)
-	}
-	if err := m.ChangePassword(ctx, PasswordChangeInput{}); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("change super password: %v", err)
-	}
 }
 
 func TestLogin(t *testing.T) {

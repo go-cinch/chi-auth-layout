@@ -56,7 +56,6 @@
   "ROLE_INVALID_IDS": "请提供 1 至 100 个有效的角色 ID",
   "ROLE_INVALID": "角色参数无效",
   "ROLE_NOT_FOUND": "角色不存在",
-  "SYSTEM_FEATURE_DISABLED": "系统已禁用此功能",
   "USERGROUP_ACTION_NOT_FOUND": "用户组关联的权限不存在",
   "USERGROUP_CONFLICT": "用户组标识已存在",
   "USERGROUP_INVALID_IDS": "请提供 1 至 100 个有效的用户组 ID",

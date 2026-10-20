@@ -56,7 +56,6 @@
   "ROLE_INVALID_IDS": "provide 1-100 positive role ids",
   "ROLE_INVALID": "invalid role",
   "ROLE_NOT_FOUND": "role not found",
-  "SYSTEM_FEATURE_DISABLED": "this feature is disabled by the system",
   "USERGROUP_ACTION_NOT_FOUND": "user group action not found",
   "USERGROUP_CONFLICT": "user group word already exists",
   "USERGROUP_INVALID_IDS": "provide 1-100 positive user group ids",

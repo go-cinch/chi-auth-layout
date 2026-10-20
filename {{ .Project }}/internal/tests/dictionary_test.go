@@ -65,7 +65,7 @@ func TestDictionaryCommittedWritesAndCacheTTL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := dictionary.New(store, cache, dictionary.CacheTTL, limits, false, localizer)
+	m, err := dictionary.New(store, cache, dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}

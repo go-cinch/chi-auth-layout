@@ -69,16 +69,6 @@ func TestActionHTTP(t *testing.T) {
 	mock.ExpectCommit()
 	request(http.MethodPatch, "/1", `{"group":"admin:demo:record"}`, http.StatusOK)
 	request(http.MethodDelete, "/bad", "", http.StatusBadRequest)
-	m.protectSuper = true
-	disabledBody := request(http.MethodPatch, "/1", `{"config":{"bindings":[{"resource_key":"admin:demo:record","operation":"read","feature_keys":null}],"ui":[],"endpoints":[]}}`, http.StatusForbidden)
-	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) {
-		t.Fatalf("disabled All Permissions update: %s", disabledBody)
-	}
-	disabledBody = request(http.MethodDelete, "/1", "", http.StatusForbidden)
-	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) {
-		t.Fatalf("disabled All Permissions deletion: %s", disabledBody)
-	}
-	m.protectSuper = false
 	request(http.MethodGet, "/?p=x", "", http.StatusBadRequest)
 	request(http.MethodGet, "/?p=1&p=2", "", http.StatusBadRequest)
 	request(http.MethodGet, "/?s=x", "", http.StatusBadRequest)

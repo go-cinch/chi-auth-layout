@@ -151,7 +151,7 @@ func TestMessageHTTPPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
+	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute
@@ -525,8 +525,8 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 	if _, err := messages.Create(ctx, 1, msg.CreateInput{Title: "before registration", Content: "body", Type: "notice", Scope: "all"}); err != nil {
 		t.Fatal(err)
 	}
-	actions := action.New(store, limits, false, localizer)
-	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, auth.Switches{}, localizer, actions)
+	actions := action.New(store, limits, localizer)
+	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, localizer, actions)
 	if err := authentication.Register(ctx, auth.RegisterInput{Username: "clock-registered", Password: "secret123"}); err != nil {
 		t.Fatal(err)
 	}
@@ -534,8 +534,8 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 	if err := store.DB.QueryRowContext(ctx, `SELECT id FROM t_user WHERE username='clock-registered'`).Scan(&registeredID); err != nil {
 		t.Fatal(err)
 	}
-	roles := role.New(store, limits, actions, false)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+	roles := role.New(store, limits, actions)
+	users := user.New(store, limits, nil, nil, actions, roles)
 	created, err := users.Create(ctx, user.CreateUserInput{Username: "clock-created", Password: "secret123"})
 	if err != nil {
 		t.Fatal(err)

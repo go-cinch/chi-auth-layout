@@ -112,7 +112,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := authn.New("test", strings.Repeat("x", 32), time.Hour, auth.NewIdentityValidator(store, sessions, auth.Switches{PasswordResetRequired: true}))
+	manager, err := authn.New("test", strings.Repeat("x", 32), time.Hour, auth.NewIdentityValidator(store, sessions))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer, nil)
+	m := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil)
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	handler, err := server.NewRouter(cfg, manager, nil, m)
@@ -268,7 +268,7 @@ func TestPermissionSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx = request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer, nil)
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
 	info, err := m.Info(ctx, "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -313,9 +313,9 @@ func TestPermissionSQL(t *testing.T) {
 		t.Fatalf("empty permissions: %#v, %v", info, err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{PasswordResetRequired: true})
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
+	users := user.New(store, limits, nil, nil, actions, roles)
 	value, err := users.Get(ctx, 3)
 	if err != nil || value.LastLoggedInAt == nil || value.Metadata["lock_expired_at"] != float64(1790000000000) {
 		t.Fatalf("migrated user: %#v %v", value, err)
@@ -379,7 +379,7 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
 	check := func(method, path string, want bool) {
 		t.Helper()
 		_, allowed, err := m.CheckPermission(ctx, auth.PermissionTarget{Method: method, Path: path})
@@ -431,9 +431,9 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 		t.Fatalf("shared mini endpoint: %v %v", allowed, err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
+	users := user.New(store, limits, nil, nil, actions, roles)
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute
@@ -600,9 +600,9 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
 	limits, _ := pagination.New(100, 100)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +610,7 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 	if err := dictionaries.LoadLocalization(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	actions := action.New(store, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
 	actions.SetPermissionAdministration(policy)
 	actions.SetDefinitionCatalog(dictionaries)
 	dictionaries.SetResourcePermissions(actions)

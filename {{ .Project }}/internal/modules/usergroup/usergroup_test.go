@@ -14,7 +14,6 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
-	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
 	usermodule "{{ .Computed.module_name_final }}/internal/modules/user"
 )
@@ -38,9 +37,9 @@ func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 		t.Fatal(err)
 	}
 	store := &db.Store{DB: database}
-	actions := actionmodule.New(store, limits, false, localization.New())
-	roles := rolemodule.New(store, limits, actions, false)
-	users := usermodule.New(store, limits, nil, nil, actions, roles, authmodule.Switches{PasswordResetRequired: true})
+	actions := actionmodule.New(store, limits, localization.New())
+	roles := rolemodule.New(store, limits, actions)
+	users := usermodule.New(store, limits, nil, nil, actions, roles)
 	return New(store, limits, actions, users), mock
 }
 

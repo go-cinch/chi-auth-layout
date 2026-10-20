@@ -58,18 +58,18 @@ func TestPermissionAdministrationPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := verified.Context()
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	actions.SetDefinitionCatalog(dictionaries)
 	actions.SetPermissionAdministration(policy)
-	roles := role.New(store, limits, actions, false)
+	roles := role.New(store, limits, actions)
 	roles.SetPermissionAdministration(policy)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+	users := user.New(store, limits, nil, nil, actions, roles)
 	users.SetPermissionAdministration(policy)
 	assign := func(codes ...string) { exec(`UPDATE t_user SET action=$1 WHERE id=2`, strings.Join(codes, ",")) }
 	allowed := func(method, path string, want bool) {

@@ -139,7 +139,6 @@ type Module struct {
 	passwordFailures        PasswordFailureClearer
 	actions                 Actions
 	roles                   Roles
-	switches                authmodule.Switches
 }
 
 type RegistrationCredentials interface {
@@ -164,8 +163,8 @@ type Roles interface {
 	Exists(context.Context, db.SQLExecutor, int64) (bool, error)
 }
 
-func New(store *db.Store, limits pagination.Limits, credentials RegistrationCredentials, passwordFailures PasswordFailureClearer, actions Actions, roles Roles, switches authmodule.Switches) *Module {
-	module := &Module{store: store, limits: limits, registrationCredentials: credentials, actions: actions, roles: roles, switches: switches}
+func New(store *db.Store, limits pagination.Limits, credentials RegistrationCredentials, passwordFailures PasswordFailureClearer, actions Actions, roles Roles) *Module {
+	module := &Module{store: store, limits: limits, registrationCredentials: credentials, actions: actions, roles: roles}
 	if passwordFailures != nil {
 		module.passwordFailures = passwordFailures
 	}
@@ -333,20 +332,6 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 	if id <= 0 || allNil(input) {
 		return nil, ErrInvalid
 	}
-	if m.switches.ProtectSuper && id == authmodule.SuperUserID && input.Password != nil {
-		return nil, apperror.FeatureDisabled
-	}
-	if m.switches.ProtectSuper && id == authmodule.SuperUserID {
-		if input.Username != nil && strings.TrimSpace(*input.Username) != authmodule.SuperUsername {
-			return nil, apperror.FeatureDisabled
-		}
-		if input.RoleID != nil && *input.RoleID != rolemodule.SuperRoleID {
-			return nil, apperror.FeatureDisabled
-		}
-		if input.Status != nil && *input.Status != StatusActive {
-			return nil, apperror.FeatureDisabled
-		}
-	}
 	if input.Username != nil {
 		value := strings.TrimSpace(*input.Username)
 		if !validUsername(value) {
@@ -495,13 +480,6 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 	ids, err := normalizeIDs(ids)
 	if err != nil {
 		return err
-	}
-	if m.switches.ProtectSuper {
-		for _, id := range ids {
-			if id == authmodule.SuperUserID {
-				return apperror.FeatureDisabled
-			}
-		}
 	}
 
 	operation := func(ctx context.Context) error {

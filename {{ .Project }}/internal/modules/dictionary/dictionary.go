@@ -21,11 +21,7 @@ import (
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
 
-const (
-	CacheTTL                        = 10 * time.Minute
-	PointCaptchaEnglishDictionaryID = int64(1)
-	PointCaptchaChineseDictionaryID = int64(2)
-)
+const CacheTTL = 10 * time.Minute
 
 var (
 	ErrNotFound        = apperror.New("DICTIONARY_NOT_FOUND", "dictionary not found")
@@ -99,21 +95,20 @@ type CatalogSource interface {
 }
 
 type Module struct {
-	resourcePermissions        ResourcePermissions
-	catalogSource              CatalogSource
-	permissionGroups           PermissionGroups
-	administration             PermissionAdministration
-	localizationGate           chan struct{}
-	localizationEnabled        bool
-	localizationRaw            []byte
-	store                      *db.Store
-	cache                      ValueCache
-	ttl                        time.Duration
-	limits                     pagination.Limits
-	protectCaptchaDictionaries bool
+	resourcePermissions ResourcePermissions
+	catalogSource       CatalogSource
+	permissionGroups    PermissionGroups
+	administration      PermissionAdministration
+	localizationGate    chan struct{}
+	localizationEnabled bool
+	localizationRaw     []byte
+	store               *db.Store
+	cache               ValueCache
+	ttl                 time.Duration
+	limits              pagination.Limits
 }
 
-func New(store *db.Store, cache ValueCache, ttl time.Duration, limits pagination.Limits, protectCaptchaDictionaries bool, catalog CatalogSource) (*Module, error) {
+func New(store *db.Store, cache ValueCache, ttl time.Duration, limits pagination.Limits, catalog CatalogSource) (*Module, error) {
 	if store == nil || store.DB == nil {
 		return nil, errors.New("dictionary database is required")
 	}
@@ -123,7 +118,7 @@ func New(store *db.Store, cache ValueCache, ttl time.Duration, limits pagination
 	if ttl <= 0 {
 		return nil, errors.New("dictionary cache ttl must be positive")
 	}
-	return &Module{catalogSource: catalog, store: store, cache: cache, ttl: ttl, limits: limits, protectCaptchaDictionaries: protectCaptchaDictionaries, localizationGate: make(chan struct{}, 1)}, nil
+	return &Module{catalogSource: catalog, store: store, cache: cache, ttl: ttl, limits: limits, localizationGate: make(chan struct{}, 1)}, nil
 }
 
 // DictionaryValue returns an enabled dictionary's arbitrary JSON value.
@@ -346,9 +341,6 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateDictionaryInp
 	if id <= 0 || (input.Key == nil && input.Name == nil && input.Value == nil && input.Description == nil && input.Enabled == nil) {
 		return nil, ErrInvalid
 	}
-	if m.protectCaptchaDictionaries && isPointCaptchaDictionary(id) && (input.Key != nil || input.Value != nil || input.Enabled != nil) {
-		return nil, apperror.FeatureDisabled
-	}
 	if input.Key != nil {
 		value := strings.TrimSpace(*input.Key)
 		if !validKey(value) {
@@ -482,13 +474,6 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 	if err != nil {
 		return err
 	}
-	if m.protectCaptchaDictionaries {
-		for _, id := range ids {
-			if isPointCaptchaDictionary(id) {
-				return apperror.FeatureDisabled
-			}
-		}
-	}
 	operation := func(ctx context.Context) error {
 		if err := m.guardCatalogMutation(ctx, ids, ""); err != nil {
 			return err
@@ -517,10 +502,6 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 
 	m.invalidate(ctx, "delete", ids...)
 	return nil
-}
-
-func isPointCaptchaDictionary(id int64) bool {
-	return id == PointCaptchaEnglishDictionaryID || id == PointCaptchaChineseDictionaryID
 }
 
 func (m *Module) List(ctx context.Context, input ListDictionariesInput) (*ListDictionariesResult, error) {

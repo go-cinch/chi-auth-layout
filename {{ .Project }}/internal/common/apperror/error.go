@@ -43,7 +43,6 @@ var (
 	MethodNotAllowed   = New("HTTP_METHOD_NOT_ALLOWED", "Method Not Allowed")
 	GatewayTimeout     = New("HTTP_GATEWAY_TIMEOUT", "Gateway Timeout")
 	ServiceUnavailable = New("HTTP_SERVICE_UNAVAILABLE", "Service Unavailable")
-	FeatureDisabled    = New("SYSTEM_FEATURE_DISABLED", "this feature is disabled by the system")
 	ActionID           = New("HTTP_INVALID_ACTION_ID", "invalid action id")
 	RoleID             = New("HTTP_INVALID_ROLE_ID", "invalid role id")
 	UserID             = New("HTTP_INVALID_USER_ID", "invalid user id")

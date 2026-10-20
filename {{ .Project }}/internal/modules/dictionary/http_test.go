@@ -93,25 +93,13 @@ func TestDictionaryHTTP(t *testing.T) {
 	request(http.MethodPost, "/", `{"key":"TEST_VALUES","name":"Test Values","value":[1]}`, http.StatusOK)
 	request(http.MethodPatch, "/bad", `{}`, http.StatusBadRequest)
 	request(http.MethodPatch, "/1", `{}`, http.StatusBadRequest)
-	m.protectCaptchaDictionaries = true
 	name := "Updated"
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE t_dictionary SET name").WithArgs(name, sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
 	expectDictionaryGet(mock, 1, "TEST", name, `[1]`, true)
 	mock.ExpectCommit()
 	request(http.MethodPatch, "/1", `{"name":"Updated"}`, http.StatusOK)
-	for _, body := range []string{`{"key":"OTHER_KEY"}`, `{"value":["changed"]}`, `{"enabled":false}`} {
-		disabledBody := request(http.MethodPatch, "/1", body, http.StatusForbidden)
-		if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) {
-			t.Fatalf("disabled captcha dictionary update: %s", disabledBody)
-		}
-	}
 	request(http.MethodDelete, "/bad", "", http.StatusBadRequest)
-	disabledBody := request(http.MethodDelete, "/1,2", "", http.StatusForbidden)
-	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) {
-		t.Fatalf("disabled captcha dictionary deletion: %s", disabledBody)
-	}
-	m.protectCaptchaDictionaries = false
 	request(http.MethodGet, "/?enabled=x", "", http.StatusBadRequest)
 	request(http.MethodGet, "/?enabled=true&enabled=false", "", http.StatusBadRequest)
 	request(http.MethodGet, "/?p=x", "", http.StatusBadRequest)

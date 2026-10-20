@@ -104,11 +104,10 @@ type Module struct {
 	administration   PermissionAdministration
 	store            *db.Store
 	limits           pagination.Limits
-	protectSuper     bool
 }
 
-func New(store *db.Store, limits pagination.Limits, protectSuper bool, catalog CatalogSource) *Module {
-	return &Module{catalogSource: catalog, store: store, limits: limits, protectSuper: protectSuper}
+func New(store *db.Store, limits pagination.Limits, catalog CatalogSource) *Module {
+	return &Module{catalogSource: catalog, store: store, limits: limits}
 }
 
 func (m *Module) Get(ctx context.Context, id int64) (*Action, error) {
@@ -218,9 +217,6 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateActionInput) 
 	if id <= 0 || allNil(input) {
 		return nil, ErrInvalid
 	}
-	if m.protectSuper && id == AllPermissionsActionID {
-		return nil, apperror.FeatureDisabled
-	}
 	if input.Word != nil && !ValidWord(strings.TrimSpace(*input.Word)) {
 		return nil, ErrInvalid
 	}
@@ -300,13 +296,6 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 	ids, err := normalizeIDs(ids)
 	if err != nil {
 		return err
-	}
-	if m.protectSuper {
-		for _, id := range ids {
-			if id == AllPermissionsActionID {
-				return apperror.FeatureDisabled
-			}
-		}
 	}
 
 	operation := func(ctx context.Context) error {

@@ -15,7 +15,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
@@ -50,7 +49,7 @@ func newTestModule(t *testing.T) (*Module, *trackingValueCache, sqlmock.Sqlmock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := New(&db.Store{DB: database}, cache, CacheTTL, limits, false, localizer)
+	m, err := New(&db.Store{DB: database}, cache, CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,21 +176,6 @@ func TestDictionaryCRUD(t *testing.T) {
 	if _, err := m.Update(ctx, 1, UpdateDictionaryInput{}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("empty update = %v", err)
 	}
-	m.protectCaptchaDictionaries = true
-	protectedKey := "OTHER_KEY"
-	protectedValue := json.RawMessage(`["changed"]`)
-	protectedEnabled := false
-	for _, id := range []int64{PointCaptchaEnglishDictionaryID, PointCaptchaChineseDictionaryID} {
-		for field, input := range map[string]UpdateDictionaryInput{
-			"key":     {Key: &protectedKey},
-			"value":   {Value: &protectedValue},
-			"enabled": {Enabled: &protectedEnabled},
-		} {
-			if _, err := m.Update(ctx, id, input); !errors.Is(err, apperror.FeatureDisabled) {
-				t.Fatalf("update protected dictionary %d %s: %v", id, field, err)
-			}
-		}
-	}
 	description := "updated"
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE t_dictionary SET description").WithArgs(description, sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -204,13 +188,6 @@ func TestDictionaryCRUD(t *testing.T) {
 	if err := m.Delete(ctx, -1); !errors.Is(err, ErrIDs) {
 		t.Fatalf("invalid delete = %v", err)
 	}
-	if err := m.Delete(ctx, PointCaptchaEnglishDictionaryID, 3); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("delete protected English dictionary: %v", err)
-	}
-	if err := m.Delete(ctx, PointCaptchaChineseDictionaryID); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("delete protected Chinese dictionary: %v", err)
-	}
-	m.protectCaptchaDictionaries = false
 	mock.ExpectExec("DELETE FROM t_dictionary").WithArgs(pq.Array([]int64{1, 2})).WillReturnResult(sqlmock.NewResult(0, 2))
 	if err := m.Delete(ctx, 1, 2, 1); err != nil || cache.invalidations != 3 {
 		t.Fatalf("delete invalidations %d: %v", cache.invalidations, err)
@@ -279,15 +256,15 @@ func TestMemoryValueCacheAndValidation(t *testing.T) {
 	if err := cache.Store(t.Context(), "KEY", `[]`, "bad", time.Minute); err == nil {
 		t.Fatal("invalid cache version accepted")
 	}
-	if _, err := New(nil, cache, CacheTTL, pagination.Limits{}, false, localizer); err == nil {
+	if _, err := New(nil, cache, CacheTTL, pagination.Limits{}, localizer); err == nil {
 		t.Fatal("nil store accepted")
 	}
 	database, _, _ := sqlmock.New()
 	t.Cleanup(func() { _ = database.Close() })
-	if _, err := New(&db.Store{DB: database}, nil, CacheTTL, pagination.Limits{}, false, localizer); err == nil {
+	if _, err := New(&db.Store{DB: database}, nil, CacheTTL, pagination.Limits{}, localizer); err == nil {
 		t.Fatal("nil cache accepted")
 	}
-	if _, err := New(&db.Store{DB: database}, cache, 0, pagination.Limits{}, false, localizer); err == nil {
+	if _, err := New(&db.Store{DB: database}, cache, 0, pagination.Limits{}, localizer); err == nil {
 		t.Fatal("invalid ttl accepted")
 	}
 }

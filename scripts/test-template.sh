@@ -77,9 +77,8 @@ validate_project() (
   rg -q '^COPY POINT_CAPTCHA_FONT_LICENSE.txt /app/POINT_CAPTCHA_FONT_LICENSE.txt$' Dockerfile
   rg -q '^  challengeEncryption:$' conf/auth.yml
   rg -q '^  switches:$' conf/auth.yml
-  rg -q '^    passwordResetRequired: true$' conf/auth.yml
-  rg -q '^    protectSuper: false$' conf/auth.yml
-  rg -q '^    protectCaptchaDictionaries: false$' conf/auth.yml
+  rg -q '^    enableE2ETest: false$' conf/auth.yml
+  rg -q '^    enableE2ETestFile: ""$' conf/auth.yml
   rg -q '^    ttl: 1m$' conf/auth.yml
   ! rg -q 'loginEncryption|challengeTTL' conf/auth.yml
   rg -q 'ChallengeEncryption AuthChallengeEncryptionConfig `koanf:"challengeEncryption"`' internal/common/config/config.gen.go

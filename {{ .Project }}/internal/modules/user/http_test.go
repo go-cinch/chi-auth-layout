@@ -88,16 +88,6 @@ func TestUserHTTP(t *testing.T) {
 	request(http.MethodPatch, "/1", `{"challenge_id":"challenge","credential":"server-error"}`, http.StatusInternalServerError)
 	request(http.MethodPatch, "/1", `{"status":2,"lockExpire":0}`, http.StatusBadRequest)
 	request(http.MethodPatch, "/1", `{"status":2,"lock_expired_at":0}`, http.StatusBadRequest)
-	m.switches.ProtectSuper = true
-	disabledBody := request(http.MethodPatch, "/1", `{"challenge_id":"challenge","credential":"encrypted"}`, http.StatusForbidden)
-	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) {
-		t.Fatalf("disabled password reset: %s", disabledBody)
-	}
-	disabledBody = request(http.MethodPatch, "/1", `{"role_id":2}`, http.StatusForbidden)
-	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) {
-		t.Fatalf("disabled super role change: %s", disabledBody)
-	}
-	m.switches.ProtectSuper = false
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE t_user SET password").WillReturnResult(sqlmock.NewResult(0, 1))
 	expectUserGet(mock, 1, "super", "89HEK28Y")
@@ -112,12 +102,6 @@ func TestUserHTTP(t *testing.T) {
 	mock.ExpectCommit()
 	request(http.MethodPatch, "/1", `{"username":"updated"}`, http.StatusOK)
 	request(http.MethodDelete, "/bad", "", http.StatusBadRequest)
-	m.switches.ProtectSuper = true
-	disabledBody = request(http.MethodDelete, "/1", "", http.StatusForbidden)
-	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) {
-		t.Fatalf("disabled super deletion: %s", disabledBody)
-	}
-	m.switches.ProtectSuper = false
 	request(http.MethodGet, "/?status=wrong", "", http.StatusBadRequest)
 	request(http.MethodGet, "/?status=1,wrong", "", http.StatusBadRequest)
 	request(http.MethodGet, "/?status=1&status=2", "", http.StatusBadRequest)

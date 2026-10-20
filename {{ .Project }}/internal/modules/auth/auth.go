@@ -40,18 +40,6 @@ var (
 
 const PasswordChangeFailuresMetadataKey = "password_change_failures"
 
-const (
-	SuperUserID   int64 = 1
-	SuperUsername       = "super"
-)
-
-type Switches struct {
-	PasswordResetRequired      bool
-	ProtectSuper               bool
-	ProtectCaptchaDictionaries bool
-	EnableE2ETest              bool
-}
-
 type LoginInput struct {
 	Username      string         `json:"username" example:"super"`
 	Password      string         `json:"password" example:"super"`
@@ -169,10 +157,9 @@ type Module struct {
 	captcha                *PointCaptcha
 	sliderCaptcha          *SliderCaptcha
 	passwordGuard          *PasswordChangeGuard
-	switches               Switches
 }
 
-func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, switches Switches, catalog CatalogSource, defaults DefaultUserPermissions, paths ...string) *Module {
+func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, catalog CatalogSource, defaults DefaultUserPermissions, paths ...string) *Module {
 	prefix := ""
 	if len(paths) > 0 {
 		prefix = paths[0]
@@ -180,7 +167,7 @@ func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials
 	if prefix == "/" {
 		prefix = ""
 	}
-	return &Module{httpPath: prefix, defaultUserPermissions: defaults, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, switches: switches}
+	return &Module{httpPath: prefix, defaultUserPermissions: defaults, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard}
 }
 
 func (m *Module) Register(ctx context.Context, input RegisterInput) error {
@@ -250,9 +237,6 @@ func (m *Module) PasswordChangeChallenge(ctx context.Context) (*CredentialChalle
 	if !ok {
 		return nil, ErrUnauthorized
 	}
-	if m.switches.ProtectSuper && identity.UserID == SuperUserID {
-		return nil, apperror.FeatureDisabled
-	}
 	return m.credentials.PasswordChangeChallenge(ctx, identity.UserID)
 }
 
@@ -260,9 +244,6 @@ func (m *Module) OpenPasswordChange(ctx context.Context, encrypted EncryptedPass
 	identity, ok := authn.FromContext(ctx)
 	if !ok {
 		return PasswordChangeInput{}, ErrUnauthorized
-	}
-	if m.switches.ProtectSuper && identity.UserID == SuperUserID {
-		return PasswordChangeInput{}, apperror.FeatureDisabled
 	}
 	return m.credentials.OpenPasswordChange(ctx, identity.UserID, encrypted)
 }
@@ -305,9 +286,6 @@ func (m *Module) ChangePassword(ctx context.Context, input PasswordChangeInput) 
 	identity, ok := authn.FromContext(ctx)
 	if !ok {
 		return ErrUnauthorized
-	}
-	if m.switches.ProtectSuper && identity.UserID == SuperUserID {
-		return apperror.FeatureDisabled
 	}
 	if identity.PasswordResetRequired {
 		return authn.ErrPasswordResetRequired
@@ -537,10 +515,7 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 	}
 	now := time.Now().UnixMilli()
 	var loginCount int64
-	query := `UPDATE t_user SET last_logged_in_at = CASE WHEN login_count > 0 THEN $1 ELSE last_logged_in_at END, login_count = CASE WHEN login_count > 0 THEN login_count + 1 ELSE 0 END, wrong = 0, updated_at = $1 WHERE id = $2 AND credential_version = $3 AND status = $4 RETURNING login_count`
-	if !m.switches.PasswordResetRequired {
-		query = `UPDATE t_user SET last_logged_in_at = $1, login_count = login_count + 1, wrong = 0, updated_at = $1 WHERE id = $2 AND credential_version = $3 AND status = $4 RETURNING login_count`
-	}
+	const query = `UPDATE t_user SET last_logged_in_at = CASE WHEN login_count > 0 THEN $1 ELSE last_logged_in_at END, login_count = CASE WHEN login_count > 0 THEN login_count + 1 ELSE 0 END, wrong = 0, updated_at = $1 WHERE id = $2 AND credential_version = $3 AND status = $4 RETURNING login_count`
 	err = m.store.SQL(ctx).QueryRowContext(ctx, query, now, user.identity.UserID, user.identity.CredentialVersion, userStatusActive).Scan(&loginCount)
 	if err != nil {
 		_ = m.sessions.Revoke(context.WithoutCancel(ctx), sessionID)
@@ -550,7 +525,7 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 		return nil, fmt.Errorf("update user login: %w", err)
 	}
 	auditctx.Identity(ctx, user.identity.UserID, user.identity.Username)
-	result.PasswordResetRequired = m.switches.PasswordResetRequired && loginCount == 0
+	result.PasswordResetRequired = loginCount == 0
 	return result, nil
 }
 
@@ -582,7 +557,7 @@ func (m *Module) Refresh(ctx context.Context, refreshToken string) (*LoginResult
 }
 
 func (m *Module) refreshIdentity(ctx context.Context, identity authn.Identity) (authn.Identity, error) {
-	current, status, err := currentCredentialIdentity(ctx, m.store, identity, m.switches.PasswordResetRequired)
+	current, status, err := currentCredentialIdentity(ctx, m.store, identity)
 	if err != nil {
 		return authn.Identity{}, err
 	}

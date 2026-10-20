@@ -13,7 +13,6 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/modules/action"
-	"{{ .Computed.module_name_final }}/internal/modules/auth"
 	"{{ .Computed.module_name_final }}/internal/modules/dictionary"
 	"{{ .Computed.module_name_final }}/internal/modules/role"
 	"{{ .Computed.module_name_final }}/internal/modules/user"
@@ -52,7 +51,7 @@ func TestActionGRPCStorageAndListProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
 	result, err := actions.List(ctx, action.ListActionsInput{Word: "admin:read:system:dictionary", Fields: report.Fields{"resource"}})
 	if err != nil || len(result.Items) != 1 {
 		t.Fatalf("list: %+v %v", result, err)
@@ -89,9 +88,9 @@ func TestListsBatchRelationsAndEffectiveLockStatus(t *testing.T) {
 	exec(`INSERT INTO t_user_group (id,name,word,action) VALUES (101,'Batch first','batch.first','BATCHWR1,BATCHRD1'),(102,'Batch second','batch.second','BATCHRD1'),(103,'Batch empty','batch.empty','')`)
 	exec(`INSERT INTO t_user_user_group_relation (user_id,user_group_id) VALUES (103,101),(101,101),(101,102)`)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{PasswordResetRequired: true})
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
+	users := user.New(store, limits, nil, nil, actions, roles)
 	groups := usergroup.New(store, limits, actions, users)
 	// PostgreSQL rejects any attempted UPDATE here, including an accidental global unlock.
 	err := store.Tx(ctx, func(ctx context.Context) error {
@@ -216,8 +215,8 @@ func TestRoleExactPermissionGroupPostgres(t *testing.T) {
 		(105,'Group orphan','group.orphan','MISSING1'),
 		(106,'Group empty','group.empty','')`)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
 	size, one, two, three := int32(100), int32(1), int32(2), int32(3)
 	empty, partial, unknown := "", "Finance", "Missing"
 	assigned, unassigned := true, false
@@ -292,8 +291,8 @@ func TestRoleAllPermissionGroupsPostgres(t *testing.T) {
 		(109,'Spaced group','all.spaced','ALLFINR1,ALLSPA01,ALLAUDR1'),
 		(110,'Partial finance','all.partial','ALLPAR01,ALLOPSR1,ALLAUDR1')`)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
 	size, one, two, three := int32(100), int32(1), int32(2), int32(3)
 	empty, extra := "", "admin:extra:record"
 	assigned, unassigned := true, false
@@ -364,7 +363,7 @@ func TestRoleKeywordPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	roles := role.New(store, limits, action.New(store, limits, false, localizer), false)
+	roles := role.New(store, limits, action.New(store, limits, localizer))
 	size, one, two, four := int32(100), int32(1), int32(2), int32(4)
 	cases := []struct {
 		name  string
@@ -419,7 +418,7 @@ func TestActionKeywordPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
 	size, one, two, five := int32(100), int32(1), int32(2), int32(5)
 	group := "admin:keyword:record"
 	cases := []struct {
@@ -475,8 +474,8 @@ func TestUserKeywordPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	users := user.New(store, limits, nil, nil, actions, role.New(store, limits, actions, false), auth.Switches{})
+	actions := action.New(store, limits, localizer)
+	users := user.New(store, limits, nil, nil, actions, role.New(store, limits, actions))
 	size, one, two, four := int32(100), int32(1), int32(2), int32(4)
 	cases := []struct {
 		name  string
@@ -523,7 +522,7 @@ func TestActionLocalizedCatalogPostgres(t *testing.T) {
 	localizer := testLocalization(t, store)
 	_ = localizer
 	limits, _ := pagination.New(100, 100)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +530,7 @@ func TestActionLocalizedCatalogPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(localizer.Reset)
-	actions := action.New(store, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
 	english := i18n.WithLocale(t.Context(), "en-US")
 	chinese := i18n.WithLocale(t.Context(), "zh-CN")
 	group := "admin:system:msg"
@@ -603,11 +602,11 @@ func TestActionBindingNameFallbackPostgres(t *testing.T) {
 	store := permissionDatabase(t)
 	localizer := testLocalization(t, store)
 	limits, _ := pagination.New(100, 100)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	actions := action.New(store, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
 	actions.SetDefinitionCatalog(dictionaries)
 	ctx := i18n.WithLocale(t.Context(), "en-US")
 	value, err := actions.Create(ctx, action.CreateActionInput{

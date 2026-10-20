@@ -162,10 +162,6 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusForbidden, err)
 		return
 	}
-	if errors.Is(err, apperror.FeatureDisabled) {
-		server.WriteError(w, r, http.StatusForbidden, err)
-		return
-	}
 	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) {
 		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
@@ -212,10 +208,6 @@ func (m *Module) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	err := m.Delete(r.Context(), ids...)
 	if errors.Is(err, authn.ErrPermissionAdministrationRequired) || errors.Is(err, authn.ErrPermissionGrantRequired) {
-		server.WriteError(w, r, http.StatusForbidden, err)
-		return
-	}
-	if errors.Is(err, apperror.FeatureDisabled) {
 		server.WriteError(w, r, http.StatusForbidden, err)
 		return
 	}

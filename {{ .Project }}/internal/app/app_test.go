@@ -32,7 +32,7 @@ func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Application{localization: localization.New(), db: &db.Store{DB: database}, pagination: limits, authenticator: testAuthenticator(t)}
-	a.dictionaryModule, err = dictionarymodule.New(a.db, dictionarymodule.NewMemoryValueCache(), dictionarymodule.CacheTTL, limits, false, a.localization)
+	a.dictionaryModule, err = dictionarymodule.New(a.db, dictionarymodule.NewMemoryValueCache(), dictionarymodule.CacheTTL, limits, a.localization)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,18 +64,6 @@ func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
 				t.Errorf("%s registered a different instance: got %p, want %p", name, module, want[name])
 			}
 		}
-	}
-}
-
-func TestAuthSwitchesFromConfig(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Auth.Switches.PasswordResetRequired = true
-	cfg.Auth.Switches.ProtectSuper = true
-	cfg.Auth.Switches.ProtectCaptchaDictionaries = true
-	cfg.Auth.Switches.EnableE2ETest = true
-	switches := authSwitchesFromConfig(cfg)
-	if !switches.PasswordResetRequired || !switches.ProtectSuper || !switches.ProtectCaptchaDictionaries || !switches.EnableE2ETest {
-		t.Fatalf("auth switches = %#v", switches)
 	}
 }
 

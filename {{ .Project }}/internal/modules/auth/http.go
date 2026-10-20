@@ -385,10 +385,6 @@ func (m *Module) passwordChangeChallenge(w http.ResponseWriter, r *http.Request)
 		server.WriteError(w, r, http.StatusConflict, err)
 		return
 	}
-	if errors.Is(err, apperror.FeatureDisabled) {
-		server.WriteError(w, r, http.StatusForbidden, err)
-		return
-	}
 	if errors.Is(err, ErrUnauthorized) {
 		server.WriteError(w, r, http.StatusUnauthorized, ErrUnauthorized)
 		return
@@ -420,10 +416,6 @@ func (m *Module) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input, err := m.OpenPasswordChange(r.Context(), encrypted)
-	if errors.Is(err, apperror.FeatureDisabled) {
-		server.WriteError(w, r, http.StatusForbidden, err)
-		return
-	}
 	if errors.Is(err, ErrUnauthorized) {
 		server.WriteError(w, r, http.StatusUnauthorized, ErrUnauthorized)
 		return
@@ -438,10 +430,6 @@ func (m *Module) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	changeErr := m.ChangePassword(r.Context(), input)
-	if errors.Is(changeErr, apperror.FeatureDisabled) {
-		server.WriteError(w, r, http.StatusForbidden, changeErr)
-		return
-	}
 	if errors.Is(changeErr, ErrUnauthorized) {
 		server.WriteError(w, r, http.StatusUnauthorized, ErrUnauthorized)
 		return

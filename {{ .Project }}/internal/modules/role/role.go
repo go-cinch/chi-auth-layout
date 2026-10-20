@@ -27,8 +27,6 @@ var (
 	ErrConflict       = apperror.New("ROLE_CONFLICT", "role word already exists")
 )
 
-const SuperRoleID int64 = 1
-
 type Role struct {
 	ActionSummaries *[]actionmodule.Summary `json:"action_summaries,omitempty"`
 	selectedFields  report.Fields
@@ -94,19 +92,17 @@ type Module struct {
 	store          *db.Store
 	limits         pagination.Limits
 	actions        Actions
-	protectSuper   bool
 }
 
 type Actions interface {
 	LookupSummaries(context.Context, db.SQLExecutor, []string) (map[string]actionmodule.Summary, error)
 	SplitCodes(string) []string
-	LookupByID(context.Context, db.SQLExecutor, int64) (*actionmodule.Action, error)
 	Lookup(context.Context, db.SQLExecutor, []string) ([]actionmodule.Action, error)
 	ValidateCodes(context.Context, db.SQLExecutor, []string) ([]string, error)
 }
 
-func New(store *db.Store, limits pagination.Limits, actions Actions, protectSuper bool) *Module {
-	return &Module{store: store, limits: limits, actions: actions, protectSuper: protectSuper}
+func New(store *db.Store, limits pagination.Limits, actions Actions) *Module {
+	return &Module{store: store, limits: limits, actions: actions}
 }
 
 func (m *Module) Get(ctx context.Context, id int64) (*Role, error) {
@@ -305,18 +301,6 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateRoleInput) (*
 			if err != nil {
 				return err
 			}
-			if m.protectSuper && id == SuperRoleID {
-				allPermissions, err := m.actions.LookupByID(ctx, m.store.SQL(ctx), actionmodule.AllPermissionsActionID)
-				if errors.Is(err, actionmodule.ErrNotFound) {
-					return apperror.FeatureDisabled
-				}
-				if err != nil {
-					return err
-				}
-				if !containsCode(codes, allPermissions.Code) {
-					return apperror.FeatureDisabled
-				}
-			}
 			add("action", strings.Join(codes, ","))
 		}
 		add("updated_at", time.Now().UnixMilli())
@@ -337,7 +321,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateRoleInput) (*
 		return err
 	})
 	if err != nil {
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrActionNotFound) || errors.Is(err, ErrConflict) || errors.Is(err, apperror.FeatureDisabled) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrActionNotFound) || errors.Is(err, ErrConflict) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("update role: %w", err)
@@ -349,13 +333,6 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 	ids, err := normalizeIDs(ids)
 	if err != nil {
 		return err
-	}
-	if m.protectSuper {
-		for _, id := range ids {
-			if id == SuperRoleID {
-				return apperror.FeatureDisabled
-			}
-		}
 	}
 
 	operation := func(ctx context.Context) error {
@@ -397,15 +374,6 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 		return nil
 	}
 	return m.store.Tx(ctx, operation)
-}
-
-func containsCode(codes []string, target string) bool {
-	for _, code := range codes {
-		if code == target {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *Module) List(ctx context.Context, input ListRolesInput) (*ListRolesResult, error) {

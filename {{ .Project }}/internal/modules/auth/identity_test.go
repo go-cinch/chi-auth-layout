@@ -69,7 +69,7 @@ func TestIdentityValidator(t *testing.T) {
 						query.WillReturnRows(sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow(username, code, status, version, count))
 					}
 				}
-				manager, err := authn.New("test", authTestKey, time.Hour, NewIdentityValidator(m.store, m.sessions, Switches{PasswordResetRequired: true}))
+				manager, err := authn.New("test", authTestKey, time.Hour, NewIdentityValidator(m.store, m.sessions))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -121,7 +121,7 @@ func (s identityReadFailureStore) Get(context.Context, string) (string, error) {
 	return "", s.err
 }
 
-func TestIdentityValidatorDisablesPasswordResetRequirement(t *testing.T) {
+func TestIdentityValidatorRequiresFirstLoginPasswordReset(t *testing.T) {
 	m, _, mock := newAuthTestModule(t)
 	identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
 	issued, err := m.sessions.Issue(t.Context(), identity, false)
@@ -132,9 +132,9 @@ func TestIdentityValidatorDisablesPasswordResetRequirement(t *testing.T) {
 	mock.ExpectQuery("SELECT username, code, status, credential_version").WithArgs(int64(3), "EXP78RGH").WillReturnRows(
 		sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow("readonly", "EXP78RGH", userStatusActive, int64(1), int64(0)),
 	)
-	validator := NewIdentityValidator(m.store, m.sessions, Switches{})
+	validator := NewIdentityValidator(m.store, m.sessions)
 	resolved, err := validator.ResolveIdentity(t.Context(), identity)
-	if err != nil || resolved.PasswordResetRequired {
+	if err != nil || !resolved.PasswordResetRequired {
 		t.Fatalf("resolved identity: %#v %v", resolved, err)
 	}
 }
@@ -155,7 +155,7 @@ func TestIdentityValidatorPreservesStorageErrors(t *testing.T) {
 				} else {
 					mock.ExpectQuery("SELECT username, code, status, credential_version").WithArgs(int64(3), "EXP78RGH").WillReturnError(failure)
 				}
-				validator := NewIdentityValidator(m.store, m.sessions, Switches{})
+				validator := NewIdentityValidator(m.store, m.sessions)
 				if _, err := validator.ResolveIdentity(t.Context(), identity); !errors.Is(err, failure) || errors.Is(err, authn.ErrUnauthorized) {
 					t.Fatalf("identity error = %v, want underlying %v", err, failure)
 				}

@@ -55,12 +55,6 @@ func TestRoleHTTP(t *testing.T) {
 	mock.ExpectCommit()
 	request(http.MethodPatch, "/1", `{"name":"Updated"}`, http.StatusOK)
 	request(http.MethodDelete, "/bad", "", http.StatusBadRequest)
-	m.protectSuper = true
-	disabledBody := request(http.MethodDelete, "/1", "", http.StatusForbidden)
-	if !strings.Contains(disabledBody, `"error_code":"SYSTEM_FEATURE_DISABLED"`) {
-		t.Fatalf("disabled Admin deletion: %s", disabledBody)
-	}
-	m.protectSuper = false
 	request(http.MethodGet, "/?p=x", "", http.StatusBadRequest)
 	request(http.MethodGet, "/?s=1&s=2", "", http.StatusBadRequest)
 	mock.ExpectQuery("SELECT COUNT.*FROM t_role").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))

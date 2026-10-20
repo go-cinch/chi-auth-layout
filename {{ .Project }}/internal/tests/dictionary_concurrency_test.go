@@ -18,7 +18,7 @@ func TestDictionaryConditionalUpdatePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	module, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	module, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}

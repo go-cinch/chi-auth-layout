@@ -37,11 +37,11 @@ func TestManagementSummaryPostgres(t *testing.T) {
 	// permissionDatabase gives this test its own schema, never the application's tables.
 	exec(`TRUNCATE t_msg, t_dictionary, t_user, t_user_group, t_role, t_action RESTART IDENTITY CASCADE`)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
+	users := user.New(store, limits, nil, nil, actions, roles)
 	groups := usergroup.New(store, limits, actions, users)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestManagementSummaryPostgres(t *testing.T) {
 			t.Fatalf("empty selected groups: %#v %v", value, err)
 		}
 	}
-	selectedUsers := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+	selectedUsers := user.New(store, limits, nil, nil, actions, roles)
 	for _, fields := range []report.Fields{ {"total"}, {"counts"}, {"trend"}, {"total", "counts"}, {"total", "trend"}} {
 		value, err := selectedUsers.Summary(ctx, user.SummaryInput{Fields: fields})
 		if err != nil || value.Total != 0 {
@@ -219,7 +219,7 @@ func TestManagementSummaryPermissionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := authn.New("summary-test", strings.Repeat("x", 32), time.Hour, auth.NewIdentityValidator(store, sessions, auth.Switches{PasswordResetRequired: true}))
+	manager, err := authn.New("summary-test", strings.Repeat("x", 32), time.Hour, auth.NewIdentityValidator(store, sessions))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,12 +232,12 @@ func TestManagementSummaryPermissionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authentication := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer, nil)
+	authentication := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
+	users := user.New(store, limits, nil, nil, actions, roles)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestRecentLoggedInUsersSummaryPostgres(t *testing.T) {
 			// This test owns an isolated schema created by permissionDatabase.
 			exec(`TRUNCATE t_user CASCADE`)
 			limits, _ := pagination.New(100, 100)
-			users := user.New(store, limits, nil, nil, nil, nil, auth.Switches{})
+			users := user.New(store, limits, nil, nil, nil, nil)
 			fortnight, err := users.Summary(ctx, user.SummaryInput{Days: 14, TimeZone: zone})
 			if err != nil || fortnight.Counts["recent_logged_in_users"] != 0 {
 				t.Fatalf("empty fortnight: %#v %v", fortnight, err)
@@ -434,9 +434,9 @@ func TestUserCalendarDayDrilldownPostgres(t *testing.T) {
 				exec(`INSERT INTO t_user (id,username,code,password,status,created_at,updated_at,last_logged_in_at) VALUES ($1,$2,$3,'hash',$4,$5,42,$6)`, i+1, fmt.Sprintf("calendar%d", i), fmt.Sprintf("CALD%04d", i), status, at, last)
 			}
 			limits, _ := pagination.New(100, 100)
-			actions := action.New(store, limits, false, localizer)
-			roles := role.New(store, limits, actions, false)
-			users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+			actions := action.New(store, limits, localizer)
+			roles := role.New(store, limits, actions)
+			users := user.New(store, limits, nil, nil, actions, roles)
 			size := int32(2)
 			// Both timestamp columns include 23:59:59.999 and exclude the next midnight.
 			for _, kind := range []string{"created", "last-login"} {

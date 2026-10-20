@@ -604,8 +604,8 @@ func TestConfiguredAuthHTTPPath(t *testing.T) {
 			cfg.Auth.Path = prefix
 			cfg.Auth.Authorization.Enabled = true
 			cfg.Idempotency.TTL = time.Minute
-			actions := actionmodule.New(m.store, pagination.Limits{MaxP: 100, MaxS: 100}, false, catalog)
-			roles := rolemodule.New(m.store, pagination.Limits{MaxP: 100, MaxS: 100}, actions, false)
+			actions := actionmodule.New(m.store, pagination.Limits{MaxP: 100, MaxS: 100}, catalog)
+			roles := rolemodule.New(m.store, pagination.Limits{MaxP: 100, MaxS: 100}, actions)
 			handler, err := server.NewRouter(cfg, manager, idempotency.NewMemoryStore(), roles, m)
 			if err != nil {
 				t.Fatal(err)
@@ -660,7 +660,7 @@ func TestConfiguredAuthPathPreservesResetRestriction(t *testing.T) {
 		t.Run(prefix, func(t *testing.T) {
 			m, _, mock := newAuthTestModule(t)
 			m.httpPath = prefix
-			manager, err := authn.New("test", authTestKey, time.Hour, NewIdentityValidator(m.store, m.sessions, Switches{PasswordResetRequired: true}))
+			manager, err := authn.New("test", authTestKey, time.Hour, NewIdentityValidator(m.store, m.sessions))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -56,7 +56,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	}
 	exec(`INSERT INTO t_user (id,username,code,password,status) VALUES (101,'tester','TEST0001',$1,1)`, string(hash))
 	limits, _ := pagination.New(100, 100)
-	dictionaryModule, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	dictionaryModule, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := authn.New("test", strings.Repeat("k", 64), time.Hour, auth.NewIdentityValidator(store, sessions, auth.Switches{PasswordResetRequired: true}))
+	manager, err := authn.New("test", strings.Repeat("k", 64), time.Hour, auth.NewIdentityValidator(store, sessions))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,9 +80,9 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, auth.Switches{PasswordResetRequired: true}, localizer, nil)
-	actions := action.New(store, limits, false, localizer)
-	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions, false), auth.Switches{PasswordResetRequired: true})
+	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, localizer, nil)
+	actions := action.New(store, limits, localizer)
+	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions))
 
 	login := func(password string) *auth.LoginResult {
 		t.Helper()

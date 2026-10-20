@@ -61,7 +61,6 @@ type Application struct {
 	loginCaptcha     *authmodule.PointCaptcha
 	sliderCaptcha    *authmodule.SliderCaptcha
 	passwordGuard    *authmodule.PasswordChangeGuard
-	authSwitches     authmodule.Switches
 	actionModule     *actionmodule.Module
 	authModule       *authmodule.Module
 	dictionaryModule *dictionarymodule.Module
@@ -104,7 +103,6 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	authSwitches := authSwitchesFromConfig(cfg)
 	cleanups := make([]func(), 0, 3)
 	cleanup := func() {
 		for index := len(cleanups) - 1; index >= 0; index-- {
@@ -166,7 +164,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	cleanups = append(cleanups, cleanupDictionaryCache)
 {{- end }}
 	localizer := localization.New(authmodule.AuthHTTPPaths(authPath))
-	dictionaryModule, err := dictionarymodule.New(dbStore, dictionaryCache, dictionarymodule.CacheTTL, limits, authSwitches.ProtectCaptchaDictionaries, localizer)
+	dictionaryModule, err := dictionarymodule.New(dbStore, dictionaryCache, dictionarymodule.CacheTTL, limits, localizer)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("initialize dictionary module: %w", err)
@@ -223,7 +221,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 		cleanup()
 		return nil, fmt.Errorf("initialize login sessions: %w", err)
 	}
-	authenticator, err := authn.New(cfg.Auth.Jwt.Issuer, cfg.Auth.Jwt.Key, cfg.Auth.Jwt.Lifetime, authmodule.NewIdentityValidator(dbStore, loginSessions, authSwitches, authPath))
+	authenticator, err := authn.New(cfg.Auth.Jwt.Issuer, cfg.Auth.Jwt.Key, cfg.Auth.Jwt.Lifetime, authmodule.NewIdentityValidator(dbStore, loginSessions, authPath))
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("initialize authentication: %w", err)
@@ -240,7 +238,6 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 		loginCaptcha:     loginCaptcha,
 		sliderCaptcha:    sliderCaptcha,
 		passwordGuard:    passwordGuard,
-		authSwitches:     authSwitches,
 		dictionaryModule: dictionaryModule, localization: localizer,
 
 		db: dbStore,
@@ -278,20 +275,11 @@ func initializeSliderCaptcha(cfg *config.Config, store authmodule.PointCaptchaSt
 	return sliderCaptcha, nil
 }
 
-func authSwitchesFromConfig(cfg *config.Config) authmodule.Switches {
-	return authmodule.Switches{
-		PasswordResetRequired:      cfg.Auth.Switches.PasswordResetRequired,
-		ProtectSuper:               cfg.Auth.Switches.ProtectSuper,
-		ProtectCaptchaDictionaries: cfg.Auth.Switches.ProtectCaptchaDictionaries,
-		EnableE2ETest:              cfg.Auth.Switches.EnableE2ETest,
-	}
-}
-
 func (a *Application) wireBusinessModules() {
 	// Build in dependency order; generatedModules registers these same instances.
 	// The dictionary is initialized earlier because captcha construction needs it.
-	a.actionModule = actionmodule.New(a.db, a.pagination, a.authSwitches.ProtectSuper, a.localization)
-	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.authSwitches, a.localization, a.actionModule, a.authPath)
+	a.actionModule = actionmodule.New(a.db, a.pagination, a.localization)
+	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.localization, a.actionModule, a.authPath)
 	a.auditModule = auditmodule.New(a.db, a.pagination)
 	a.auditModule.SetAuthHTTPPath(a.authPath)
 	if a.dictionaryModule != nil {
@@ -302,8 +290,8 @@ func (a *Application) wireBusinessModules() {
 		a.dictionaryModule.SetPermissionGroups(a.actionModule)
 		a.dictionaryModule.SetResourcePermissions(a.actionModule)
 	}
-	a.roleModule = rolemodule.New(a.db, a.pagination, a.actionModule, a.authSwitches.ProtectSuper)
-	a.userModule = usermodule.New(a.db, a.pagination, a.credentials, a.passwordGuard, a.actionModule, a.roleModule, a.authSwitches)
+	a.roleModule = rolemodule.New(a.db, a.pagination, a.actionModule)
+	a.userModule = usermodule.New(a.db, a.pagination, a.credentials, a.passwordGuard, a.actionModule, a.roleModule)
 	a.groupModule = groupmodule.New(a.db, a.pagination, a.actionModule, a.userModule)
 	a.actionModule.SetPermissionAdministration(a.authModule)
 	if a.dictionaryModule != nil {

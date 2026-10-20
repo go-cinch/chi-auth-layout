@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
-	"{{ .Computed.module_name_final }}/internal/modules/auth"
 	"{{ .Computed.module_name_final }}/internal/modules/role"
 	"{{ .Computed.module_name_final }}/internal/modules/user"
 )
@@ -36,11 +35,11 @@ VALUES (900001,1000,2000,'Reference test','Body','notice','all',1)`)
 				query := "SELECT role_id,created_at,updated_at FROM t_user WHERE id=1"
 				parentID := int64(900001)
 				if target == "role" {
-					err = role.New(store, limits, nil, false).Delete(ctx, parentID)
+					err = role.New(store, limits, nil).Delete(ctx, parentID)
 				} else {
 					parentID = 1
 					query = "SELECT sender_id,created_at,updated_at FROM t_msg WHERE id=900001"
-					err = user.New(store, limits, nil, nil, nil, nil, auth.Switches{}).Delete(ctx, parentID)
+					err = user.New(store, limits, nil, nil, nil, nil).Delete(ctx, parentID)
 				}
 				if (err != nil) != fail {
 					t.Fatalf("delete error=%v, failure expected=%t", err, fail)

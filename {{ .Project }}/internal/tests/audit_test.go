@@ -143,7 +143,7 @@ func TestAuditReadExportPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessions, _ := auth.NewSessions(auth.NewMemorySessionStore(), time.Hour, 24*time.Hour)
-	manager, err := authn.New("test", strings.Repeat("x", 32), time.Hour, auth.NewIdentityValidator(store, sessions, auth.Switches{}))
+	manager, err := authn.New("test", strings.Repeat("x", 32), time.Hour, auth.NewIdentityValidator(store, sessions))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestAuditReadExportPermissions(t *testing.T) {
 	}
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
-	handler, err := server.NewRouter(cfg, manager, nil, auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{}, localizer, nil), audit.New(store, limits))
+	handler, err := server.NewRouter(cfg, manager, nil, auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil), audit.New(store, limits))
 	if err != nil {
 		t.Fatal(err)
 	}

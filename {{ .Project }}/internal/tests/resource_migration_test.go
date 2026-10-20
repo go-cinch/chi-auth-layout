@@ -40,8 +40,8 @@ func TestCatalogResourceMoveCommitsAndRollsBackAcrossModules(t *testing.T) {
 	store := permissionDatabase(t)
 	localizer := testLocalization(t, store)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +102,8 @@ func TestDeveloperPublishRefreshesFiltersAndStoredProjections(t *testing.T) {
 	store := permissionDatabase(t)
 	localizer := testLocalization(t, store)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestDeveloperPublishRefreshesFiltersAndStoredProjections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
 	actions.SetPermissionAdministration(policy)
 	dictionaries.SetPermissionAdministration(policy)
 	var identity authn.Identity
@@ -247,8 +247,8 @@ func TestPublishEmptyResourcesKeepsAssociations(t *testing.T) {
 	store := permissionDatabase(t)
 	localizer := testLocalization(t, store)
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	actions := action.New(store, limits, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		t.Fatal(err)
 	}

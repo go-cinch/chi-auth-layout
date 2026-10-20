@@ -11,18 +11,17 @@ import (
 )
 
 type IdentityValidator struct {
-	httpPath              string
-	store                 *db.Store
-	sessions              *Sessions
-	passwordResetRequired bool
+	httpPath string
+	store    *db.Store
+	sessions *Sessions
 }
 
-func NewIdentityValidator(store *db.Store, sessions *Sessions, switches Switches, paths ...string) *IdentityValidator {
+func NewIdentityValidator(store *db.Store, sessions *Sessions, paths ...string) *IdentityValidator {
 	prefix := ""
 	if len(paths) > 0 {
 		prefix = paths[0]
 	}
-	return &IdentityValidator{httpPath: prefix, store: store, sessions: sessions, passwordResetRequired: switches.PasswordResetRequired}
+	return &IdentityValidator{httpPath: prefix, store: store, sessions: sessions}
 }
 
 func (v *IdentityValidator) ValidateIdentity(ctx context.Context, identity authn.Identity) error {
@@ -35,7 +34,7 @@ func (v *IdentityValidator) ResolveIdentity(ctx context.Context, identity authn.
 	if err := v.sessions.ValidateIdentity(ctx, identity); err != nil {
 		return authn.Identity{}, err
 	}
-	current, status, err := currentCredentialIdentity(ctx, v.store, identity, v.passwordResetRequired)
+	current, status, err := currentCredentialIdentity(ctx, v.store, identity)
 	if errors.Is(err, ErrUnauthorized) {
 		return authn.Identity{}, authn.ErrUnauthorized
 	}
@@ -49,7 +48,7 @@ func (v *IdentityValidator) ResolveIdentity(ctx context.Context, identity authn.
 }
 
 // Keep the issued version: refresh must never upgrade an old credential.
-func currentCredentialIdentity(ctx context.Context, store *db.Store, identity authn.Identity, passwordResetRequired bool) (authn.Identity, int16, error) {
+func currentCredentialIdentity(ctx context.Context, store *db.Store, identity authn.Identity) (authn.Identity, int16, error) {
 	if identity.CredentialVersion <= 0 {
 		return authn.Identity{}, 0, ErrUnauthorized
 	}
@@ -69,7 +68,7 @@ func currentCredentialIdentity(ctx context.Context, store *db.Store, identity au
 	if current != identity {
 		return authn.Identity{}, 0, ErrUnauthorized
 	}
-	current.PasswordResetRequired = passwordResetRequired && loginCount == 0
+	current.PasswordResetRequired = loginCount == 0
 	return current, status, nil
 }
 

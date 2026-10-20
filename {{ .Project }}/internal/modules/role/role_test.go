@@ -5,14 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
@@ -38,7 +36,7 @@ func newTestModule(t *testing.T) (*Module, sqlmock.Sqlmock) {
 		t.Fatal(err)
 	}
 	store := &db.Store{DB: database}
-	return New(store, limits, actionmodule.New(store, limits, false, localization.New()), false), mock
+	return New(store, limits, actionmodule.New(store, limits, localization.New())), mock
 }
 
 func TestRoleExists(t *testing.T) {
@@ -194,44 +192,6 @@ func TestRoleActionCodesAndFailures(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT.*FROM t_role").WillReturnError(errors.New("database"))
 	if _, err := m.List(ctx, ListRolesInput{}); err == nil {
 		t.Fatal("expected list error")
-	}
-}
-
-func TestAdminRoleProtection(t *testing.T) {
-	m, mock := newTestModule(t)
-	m.protectSuper = true
-	if err := m.Delete(t.Context(), SuperRoleID, 2); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("delete Admin role: %v", err)
-	}
-	actionRows := func(codes ...string) *sqlmock.Rows {
-		rows := sqlmock.NewRows([]string{"id", "created_at", "updated_at", "code", "action_group", "word", "scope", "config"})
-		for index, code := range codes {
-			rows.AddRow(index+1, roleTestTime, roleTestTime, code, "Demo", "demo."+code, "admin", `{"ui":[],"endpoints":[]}`)
-		}
-		return rows
-	}
-
-	withoutAll := []string{"OTHER001"}
-	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(withoutAll)).WillReturnRows(actionRows(withoutAll...))
-	mock.ExpectQuery("SELECT .* FROM t_action WHERE id").WithArgs(actionmodule.AllPermissionsActionID).WillReturnRows(actionRows("ALLPERM"))
-	mock.ExpectRollback()
-	if _, err := m.Update(t.Context(), SuperRoleID, UpdateRoleInput{ActionCodes: &withoutAll}); !errors.Is(err, apperror.FeatureDisabled) {
-		t.Fatalf("remove All Permissions from Admin: %v", err)
-	}
-
-	for _, codes := range [][]string{[]string{"ALLPERM", "OTHER001"}, []string{"ALLPERM"}} {
-		mock.ExpectBegin()
-		mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(actionRows(codes...))
-		mock.ExpectQuery("SELECT .* FROM t_action WHERE id").WithArgs(actionmodule.AllPermissionsActionID).WillReturnRows(actionRows("ALLPERM"))
-		mock.ExpectExec("UPDATE t_role SET action").WithArgs(strings.Join(codes, ","), sqlmock.AnyArg(), SuperRoleID).WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectQuery("SELECT .* FROM t_role WHERE id").WithArgs(SuperRoleID).WillReturnRows(roleRows(SuperRoleID, "Admin", "admin", strings.Join(codes, ",")))
-		mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(actionRows(codes...))
-		mock.ExpectCommit()
-		value, err := m.Update(t.Context(), SuperRoleID, UpdateRoleInput{ActionCodes: &codes})
-		if err != nil || !containsCode(value.ActionCodes, "ALLPERM") || len(value.ActionCodes) != len(codes) {
-			t.Fatalf("allowed Admin action update %v: %#v %v", codes, value, err)
-		}
 	}
 }
 

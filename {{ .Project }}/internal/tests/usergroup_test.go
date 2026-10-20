@@ -37,9 +37,9 @@ func TestThousandMemberGroup(t *testing.T) {
 		}
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
+	users := user.New(store, limits, nil, nil, actions, roles)
 	groups := usergroup.New(store, limits, actions, users)
 	size, page := int32(20), int32(2)
 	result, err := groups.List(ctx, usergroup.ListUserGroupsInput{Word: "thousand", PageSize: &size, Fields: report.Fields{"actions", "member_count", "member_preview"}})
@@ -133,7 +133,7 @@ func TestGroupMemberPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := authn.New("test", strings.Repeat("x", 32), time.Hour, auth.NewIdentityValidator(store, sessions, auth.Switches{}))
+	manager, err := authn.New("test", strings.Repeat("x", 32), time.Hour, auth.NewIdentityValidator(store, sessions))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,11 +147,11 @@ func TestGroupMemberPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, _ := pagination.New(100, 100)
-	actions := action.New(store, limits, false, localizer)
-	roles := role.New(store, limits, actions, false)
-	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
+	actions := action.New(store, limits, localizer)
+	roles := role.New(store, limits, actions)
+	users := user.New(store, limits, nil, nil, actions, roles)
 	groups := usergroup.New(store, limits, actions, users)
-	authModule := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{}, localizer, nil)
+	authModule := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil)
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute

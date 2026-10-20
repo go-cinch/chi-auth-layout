@@ -2,12 +2,58 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestOverrideLogsUseFinalSensitiveKeys(t *testing.T) {
+	dir := t.TempDir()
+	data := `redact:
+  keys: [previous_field]
+custom:
+  credentials:
+    - {connection_value: original, label: visible}
+`
+	if err := os.WriteFile(filepath.Join(dir, "custom.yml"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SERVICE_REDACT_KEYS_0", "custom.credentials.0.connection_value")
+	t.Setenv("SERVICE_CUSTOM_CREDENTIALS_0_CONNECTION_VALUE", "private-connection-value")
+	t.Setenv("SERVICE_CUSTOM_CREDENTIALS_0_LABEL", "visible")
+	// Repeated loads exercise arbitrary map traversal while keeping final values intact.
+	for range 20 {
+		values, overrides, err := LoadValues(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := values.Strings("redact.keys"); len(got) != 1 || got[0] != "custom.credentials.0.connection_value" {
+			t.Fatalf("final sensitive keys: %v", got)
+		}
+		var output bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+		LogOverrides(overrides)
+		slog.SetDefault(previous)
+		if strings.Contains(output.String(), "private-connection-value") {
+			t.Fatalf("secret leaked: %s", output.String())
+		}
+		decoder := json.NewDecoder(&output)
+		for decoder.More() {
+			var entry map[string]any
+			if err := decoder.Decode(&entry); err != nil {
+				t.Fatal(err)
+			}
+			if entry["config_key"] == "custom.credentials.0.connection_value" &&
+				(entry["value"] != "pri***lue" || entry["msg"] != "load env: SERVICE_CUSTOM_CREDENTIALS_0_CONNECTION_VALUE=pri***lue") {
+				t.Fatalf("redacted values disagree: %v", entry)
+			}
+		}
+	}
+}
 
 func TestIndexedEnvironmentOverrides(t *testing.T) {
 	dir := t.TempDir()

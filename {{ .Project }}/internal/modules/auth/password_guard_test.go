@@ -68,11 +68,11 @@ func TestPasswordChangeGuard(t *testing.T) {
 func TestPasswordChangeGuardValidationAndExpiration(t *testing.T) {
 	captcha := newPointCaptchaTestManager(t, NewMemoryPointCaptchaStore())
 	for name, item := range map[string]struct {
-		store     PasswordFailureStore
-		captcha   *PointCaptcha
-		threshold int64
+		store         PasswordFailureStore
+		captcha       *PointCaptcha
+		threshold     int64
 		lockThreshold int64
-		ttl       time.Duration
+		ttl           time.Duration
 	}{
 		"store":          {nil, captcha, 3, 6, time.Minute},
 		"captcha":        {NewMemoryPasswordFailureStore(), nil, 3, 6, time.Minute},

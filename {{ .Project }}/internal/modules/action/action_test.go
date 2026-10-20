@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -75,7 +76,7 @@ func TestActionCRUD(t *testing.T) {
 		t.Fatalf("get: %#v %v", value, err)
 	}
 	for _, input := range []CreateActionInput{
-		{}, {Word: "demo.read"}, {Word: "admin:all:system:general", Config: Config{Builtin: "all", UI: []UIBinding{}, Endpoints: []Endpoint{}}}} {
+		{}, {Word: "demo.read"}, {Word: "admin:all:system:all", Config: Config{Builtin: "all", UI: []UIBinding{}, Endpoints: []Endpoint{}}}} {
 		if _, err := m.Create(ctx, input); !errors.Is(err, ErrInvalid) {
 			t.Fatal(err)
 		}
@@ -129,11 +130,11 @@ func TestActionCRUD(t *testing.T) {
 	if err := m.Delete(ctx); !errors.Is(err, ErrIDs) {
 		t.Fatal(err)
 	}
-	mock.ExpectExec("DELETE FROM t_action").WithArgs(pq.Array([]int64{1, 2})).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectQuery(regexp.QuoteMeta(deleteAssignedActionsSQL)).WithArgs(pq.Array([]int64{1, 2}), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 	if err := m.Delete(ctx, 1, 2, 1); err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectExec("DELETE FROM t_action").WithArgs(pq.Array([]int64{99})).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta(deleteAssignedActionsSQL)).WithArgs(pq.Array([]int64{99}), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	if err := m.Delete(ctx, 99); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
@@ -344,7 +345,8 @@ func TestDelegatedDeletionProtectsAllAndDefaultDefinitions(t *testing.T) {
 		name                           string
 		all, defaults, publish, denied bool
 	}{
-		{"all stays protected", true, false, true, true},
+		{"all requires publisher", true, false, false, true},
+		{"publisher may delete all", true, false, true, false},
 		{"default requires publisher", false, true, false, true},
 		{"publisher may delete default", false, true, true, false},
 		{"ordinary action permits grant manager", false, false, false, false},
@@ -357,7 +359,7 @@ func TestDelegatedDeletionProtectsAllAndDefaultDefinitions(t *testing.T) {
 			if test.denied {
 				mock.ExpectRollback()
 			} else {
-				mock.ExpectExec("DELETE FROM t_action").WithArgs(pq.Array([]int64{9})).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectQuery(regexp.QuoteMeta(deleteAssignedActionsSQL)).WithArgs(pq.Array([]int64{9}), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 				mock.ExpectCommit()
 			}
 			err := m.Delete(t.Context(), 9)
@@ -390,6 +392,7 @@ func (p actionPolicy) RequireAllPermissions(context.Context) error {
 	}
 	return nil
 }
+
 func TestActionDefinitionPolicyRollsBackBeforeWrites(t *testing.T) {
 	m, mock := newTestModule(t)
 	m.SetPermissionAdministration(actionPolicy{})
@@ -413,7 +416,7 @@ func TestActionDefinitionPolicyRollsBackBeforeWrites(t *testing.T) {
 	}
 	m.SetPermissionAdministration(actionPolicy{allowed: true})
 	mock.ExpectBegin()
-	mock.ExpectExec("DELETE FROM t_action").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta(deleteAssignedActionsSQL)).WithArgs(pq.Array([]int64{2}), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectCommit()
 	if err := m.Delete(t.Context(), 2); err != nil {
 		t.Fatal(err)
@@ -443,4 +446,20 @@ type testDefinitionCatalog struct{ source *localization.Module }
 
 func (s testDefinitionCatalog) ActionCatalog(context.Context) (localization.Catalog, error) {
 	return s.source.Current(), nil
+}
+
+func (delegatedActionPolicy) RequirePermissionEndpoint(ctx context.Context, method, path string) error {
+	return delegatedActionPolicy{}.RequirePermissionGrant(ctx)
+}
+
+func (p actionPolicy) RequirePermissionEndpoint(ctx context.Context, method, path string) error {
+	return p.RequireAllPermissions(ctx)
+}
+
+func (delegatedActionPolicy) RequirePermissionOperation(ctx context.Context, resource, operation string) error {
+	return delegatedActionPolicy{}.RequirePermissionGrant(ctx)
+}
+
+func (p actionPolicy) RequirePermissionOperation(ctx context.Context, resource, operation string) error {
+	return p.RequireAllPermissions(ctx)
 }

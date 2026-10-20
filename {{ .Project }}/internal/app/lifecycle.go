@@ -96,26 +96,29 @@ func (a *Application) Run(ctx context.Context) error {
 		}()
 		defer func() { stopWorker(); <-workerDone }()
 	}
- if a.dictionaryModule != nil {
-  workerCtx, stopWorker := context.WithCancel(ctx)
-  workerDone := make(chan struct{})
-  go func() {
-   defer close(workerDone)
-   ticker := time.NewTicker(5 * time.Second)
-   defer ticker.Stop()
-   for {
-    select {
-    case <-workerCtx.Done(): return
-    case <-ticker.C:
-     refreshCtx, cancel := context.WithTimeout(workerCtx, 4*time.Second)
-     err := a.dictionaryModule.RefreshLocalization(refreshCtx)
-     cancel()
-     if err != nil && workerCtx.Err() == nil { slog.ErrorContext(workerCtx, "refresh localization failed: "+err.Error(), "operation", "refresh_localization", "outcome", "failure", "error", err) }
-    }
-   }
-  }()
-  defer func() { stopWorker(); <-workerDone }()
- }
+	if a.dictionaryModule != nil {
+		workerCtx, stopWorker := context.WithCancel(ctx)
+		workerDone := make(chan struct{})
+		go func() {
+			defer close(workerDone)
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+					refreshCtx, cancel := context.WithTimeout(workerCtx, 4*time.Second)
+					err := a.dictionaryModule.RefreshLocalization(refreshCtx)
+					cancel()
+					if err != nil && workerCtx.Err() == nil {
+						slog.ErrorContext(workerCtx, "refresh localization failed: "+err.Error(), "operation", "refresh_localization", "outcome", "failure", "error", err)
+					}
+				}
+			}
+		}()
+		defer func() { stopWorker(); <-workerDone }()
+	}
 	results := make(chan error, len(endpoints))
 	for index, item := range endpoints {
 		listener := listeners[index]
@@ -123,7 +126,7 @@ func (a *Application) Run(ctx context.Context) error {
 		slog.InfoContext(ctx, item.name+" server running at "+address, slog.String("operation", "server_start"), slog.String("outcome", "success"), slog.String("server", item.name), slog.String("address", address))
 		go func() {
 			err := item.serve(listener)
-			if err != nil && !errors.Is(err, http.ErrServerClosed){{ if .Computed.enable_grpc_final }} && !errors.Is(err, grpc.ErrServerStopped){{ end }} {
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {{ if .Computed.enable_grpc_final }} && !errors.Is(err, grpc.ErrServerStopped){{ end }} {
 				err = fmt.Errorf("%s server: %w", item.name, err)
 			} else {
 				err = nil

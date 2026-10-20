@@ -102,12 +102,13 @@ type UserRole struct {
 }
 
 type UserInfo struct {
-	Scope      string     `json:"scope"`
-	ID         int64      `json:"id"`
-	Username   string     `json:"username"`
-	Code       string     `json:"code"`
-	Role       *UserRole  `json:"role,omitempty"`
-	Permission Permission `json:"permission"`
+	selectedFields []string
+	Scope          string     `json:"scope"`
+	ID             int64      `json:"id"`
+	Username       string     `json:"username"`
+	Code           string     `json:"code"`
+	Role           *UserRole  `json:"role,omitempty"`
+	Permission     Permission `json:"permission"`
 }
 
 type loginUser struct {
@@ -157,26 +158,29 @@ type CatalogSource interface {
 }
 
 type Module struct {
-	httpPath         string
-	catalogSource    CatalogSource
-	permissionRoutes []modules.HTTPPermissionRoute
-	store            *db.Store
-	authenticator    *authn.Manager
-	credentials      *Credentials
-	sessions         *Sessions
-	captcha          *PointCaptcha
-	sliderCaptcha    *SliderCaptcha
-	passwordGuard    *PasswordChangeGuard
-	switches         Switches
+	httpPath               string
+	defaultUserPermissions DefaultUserPermissions
+	catalogSource          CatalogSource
+	permissionRoutes       []modules.HTTPPermissionRoute
+	store                  *db.Store
+	authenticator          *authn.Manager
+	credentials            *Credentials
+	sessions               *Sessions
+	captcha                *PointCaptcha
+	sliderCaptcha          *SliderCaptcha
+	passwordGuard          *PasswordChangeGuard
+	switches               Switches
 }
 
-func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, switches Switches, catalog CatalogSource, paths ...string) *Module {
+func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, switches Switches, catalog CatalogSource, defaults DefaultUserPermissions, paths ...string) *Module {
 	prefix := ""
 	if len(paths) > 0 {
 		prefix = paths[0]
 	}
-	if prefix == "/" { prefix = "" }
-	return &Module{httpPath: prefix, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, switches: switches}
+	if prefix == "/" {
+		prefix = ""
+	}
+	return &Module{httpPath: prefix, defaultUserPermissions: defaults, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, switches: switches}
 }
 
 func (m *Module) Register(ctx context.Context, input RegisterInput) error {
@@ -189,34 +193,43 @@ func (m *Module) Register(ctx context.Context, input RegisterInput) error {
 	if err != nil {
 		return fmt.Errorf("hash registration password: %w", err)
 	}
-	var id int64
-	if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT nextval('t_user_id_seq')`).Scan(&id); err != nil {
-		return fmt.Errorf("allocate registered user id: %w", err)
+	if m.defaultUserPermissions == nil {
+		return errors.New("default user permission provider is unavailable")
 	}
-	// Broadcast eligibility compares this timestamp with database publication time.
-	for range 5 {
-		userCode, err := code.Generate()
+	return m.store.Tx(ctx, func(ctx context.Context) error {
+		codes, err := m.defaultUserPermissions.DefaultUserCodes(ctx, nil)
 		if err != nil {
-			return fmt.Errorf("create registered user code: %w", err)
+			return err
 		}
-		result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_user (id, created_at, updated_at, role_id, action, username, code, password, status, wrong) VALUES ($1, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, NULL, '', $2, $3, $4, 0, 0) ON CONFLICT ON CONSTRAINT uk_user_code DO NOTHING`,
-			id, input.Username, userCode, string(passwordHash))
-		if err != nil {
-			var postgresError *pq.Error
-			if errors.As(err, &postgresError) && postgresError.Code == "23505" && postgresError.Constraint == "uk_user_username" {
-				return ErrUsernameExists
+		var id int64
+		if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT nextval('t_user_id_seq')`).Scan(&id); err != nil {
+			return fmt.Errorf("allocate registered user id: %w", err)
+		}
+		// Broadcast eligibility compares this timestamp with database publication time.
+		for range 5 {
+			userCode, err := code.Generate()
+			if err != nil {
+				return fmt.Errorf("create registered user code: %w", err)
 			}
-			return fmt.Errorf("create registered user: %w", err)
+			result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_user (id, created_at, updated_at, role_id, action, username, code, password, status, wrong) VALUES ($1, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, NULL, $5, $2, $3, $4, 0, 0) ON CONFLICT ON CONSTRAINT uk_user_code DO NOTHING`,
+				id, input.Username, userCode, string(passwordHash), strings.Join(codes, ","))
+			if err != nil {
+				var postgresError *pq.Error
+				if errors.As(err, &postgresError) && postgresError.Code == "23505" && postgresError.Constraint == "uk_user_username" {
+					return ErrUsernameExists
+				}
+				return fmt.Errorf("create registered user: %w", err)
+			}
+			inserted, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("create registered user result: %w", err)
+			}
+			if inserted == 1 {
+				return nil
+			}
 		}
-		inserted, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("create registered user result: %w", err)
-		}
-		if inserted == 1 {
-			return nil
-		}
-	}
-	return errors.New("create registered user: generate unique code")
+		return errors.New("create registered user: generate unique code")
+	})
 }
 
 func (m *Module) UsernameAvailability(ctx context.Context, username string) (*UsernameAvailability, error) {
@@ -386,7 +399,7 @@ func (m *Module) ChangePassword(ctx context.Context, input PasswordChangeInput) 
 		return err
 	}
 	if err := m.passwordGuard.Clear(ctx, identity.UserID); err != nil {
-		slog.WarnContext(ctx, "clear password change failures failed: "+err.Error(), "operation", "clear_password_change_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
+		slog.WarnContext(ctx, fmt.Sprintf("clear password change failures for user %d failed: %v", identity.UserID, err), "operation", "clear_password_change_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
 	}
 	return nil
 }
@@ -423,7 +436,7 @@ func (m *Module) persistPasswordChangeLock(ctx context.Context, identity authn.I
 		return ErrUnauthorized
 	}
 	if err := m.passwordGuard.Clear(ctx, identity.UserID); err != nil {
-		slog.WarnContext(ctx, "clear locked password change failures failed: "+err.Error(), "operation", "clear_locked_password_change_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
+		slog.WarnContext(ctx, fmt.Sprintf("clear locked password change failures for user %d failed: %v", identity.UserID, err), "operation", "clear_locked_password_change_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
 	}
 	return nil
 }

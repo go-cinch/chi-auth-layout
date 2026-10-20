@@ -6,18 +6,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 )
 
 var dictionaryTestTime = time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC).UnixMilli()

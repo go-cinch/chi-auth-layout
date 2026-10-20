@@ -103,3 +103,21 @@ Empty arrays remove this restriction, while an empty string selects ungrouped ac
 Names retain spaces, commas and wildcard characters literally. Non-arrays, null
 values, non-string elements and repeated parameters return HTTP 400. Both count
 and paginated rows use the same predicate.
+
+## Detail projections
+
+`GET /user/{id}` and `GET /role/{id}` accept the same field selectors as their
+list endpoints, including `role_summary` and `action_summaries` respectively.
+Unselected permission and role associations are not loaded. User detail selections
+retain the detail endpoint's stored status and metadata semantics; list projections
+continue to reflect expired locks at their captured request time.
+
+The auth module's `/info` endpoint accepts `f=id,username,code,role,scope,permission`.
+Selecting basic identity fields skips role joins and permission/navigation queries.
+Selecting `permission` resolves the complete permission object from one catalog
+snapshot. Authentication and authorization still run independently of selection.
+
+All three endpoints preserve their complete responses when `f` is omitted.
+Explicit selections return only the requested keys, with zero values, empty arrays
+and meaningful nulls preserved. Empty, unknown or duplicate selectors, repeated
+`f`, and malformed query strings return HTTP 400 before business SQL.

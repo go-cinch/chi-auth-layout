@@ -77,7 +77,7 @@ func TestDetailSelectionMatchesFullResponseAndLoadsOnlyDependencies(t *testing.T
 				rows = sqlmock.NewRows([]string{"word"}).AddRow("admin:read:demo:record")
 				wantedCatalog = []string{"frontend_messages", "locales"}
 			}
-			mock.ExpectQuery(regexp.QuoteMeta("SELECT "+columns+" FROM t_action WHERE id = $1")).WithArgs(int64(4)).WillReturnRows(rows)
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT " + columns + " FROM t_action WHERE id = $1")).WithArgs(int64(4)).WillReturnRows(rows)
 			spy.selections = nil
 			value, err := m.GetSelected(t.Context(), 4, report.Fields{field})
 			if err != nil {

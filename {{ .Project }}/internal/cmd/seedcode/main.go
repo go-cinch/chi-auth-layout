@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/pmezard/go-difflib/difflib"
 	"os"
 	"regexp"
 	"strings"
@@ -101,6 +102,15 @@ func rewriteSeedFiles(paths []string, generate func() (string, error)) (int, err
 			}
 			return replacer.Replace(literal)
 		})
+		if rewritten == string(file.content) {
+			fmt.Printf("%s unchanged\n", file.path)
+			continue
+		}
+		diff, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{A: difflib.SplitLines(string(file.content)), B: difflib.SplitLines(rewritten), FromFile: file.path, ToFile: file.path, Context: 3})
+		if err != nil {
+			return 0, fmt.Errorf("diff %s: %w", file.path, err)
+		}
+		fmt.Print(diff)
 		if err := os.WriteFile(file.path, []byte(rewritten), file.mode); err != nil {
 			return 0, fmt.Errorf("write %s: %w", file.path, err)
 		}

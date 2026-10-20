@@ -28,7 +28,7 @@ var (
 	ErrNotFound       = apperror.New("USER_NOT_FOUND", "user not found")
 	ErrRoleNotFound   = apperror.New("USER_ROLE_NOT_FOUND", "user role not found")
 	ErrActionNotFound = apperror.New("USER_ACTION_NOT_FOUND", "user action not found")
-	ErrIDs            = apperror.New("USER_IDS", "provide 1-100 positive user ids")
+	ErrIDs            = apperror.New("USER_INVALID_IDS", "provide 1-100 positive user ids")
 	ErrInvalid        = apperror.New("USER_INVALID", "invalid user")
 	ErrConflict       = apperror.New("USER_CONFLICT", "username already exists")
 )
@@ -90,20 +90,22 @@ type Summary struct {
 }
 
 type CreateUserInput struct {
-	Username    string         `json:"username" example:"operator"`
-	Password    string         `json:"password" example:"change-me"`
-	RoleID      *int64         `json:"role_id,omitempty"`
-	ActionCodes []string       `json:"action_codes,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	ActionBindings *[]actionmodule.ResourceBinding `json:"action_bindings,omitempty"`
+	Username       string                          `json:"username" example:"operator"`
+	Password       string                          `json:"password" example:"change-me"`
+	RoleID         *int64                          `json:"role_id,omitempty"`
+	ActionCodes    []string                        `json:"action_codes,omitempty"`
+	Metadata       map[string]any                  `json:"metadata,omitempty"`
 }
 
 type UpdateUserInput struct {
-	Username    *string         `json:"username,omitempty"`
-	Password    *string         `json:"password,omitempty"`
-	RoleID      *int64          `json:"role_id,omitempty"`
-	ActionCodes *[]string       `json:"action_codes,omitempty"`
-	Status      *int16          `json:"status,omitempty"`
-	Metadata    *map[string]any `json:"metadata,omitempty"`
+	ActionBindings *[]actionmodule.ResourceBinding `json:"action_bindings,omitempty"`
+	Username       *string                         `json:"username,omitempty"`
+	Password       *string                         `json:"password,omitempty"`
+	RoleID         *int64                          `json:"role_id,omitempty"`
+	ActionCodes    *[]string                       `json:"action_codes,omitempty"`
+	Status         *int16                          `json:"status,omitempty"`
+	Metadata       *map[string]any                 `json:"metadata,omitempty"`
 }
 
 type ListUsersInput struct {
@@ -148,6 +150,7 @@ type PasswordFailureClearer interface {
 }
 
 type Actions interface {
+	DefaultUserCodes(context.Context, []string) ([]string, error)
 	SplitCodes(string) []string
 	Lookup(context.Context, db.SQLExecutor, []string) ([]actionmodule.Action, error)
 	ValidateCodes(context.Context, db.SQLExecutor, []string) ([]string, error)
@@ -234,6 +237,9 @@ func (m *Module) scan(row interface{ Scan(...any) error }) (*User, error) {
 }
 
 func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, error) {
+	if input.ActionBindings != nil && len(input.ActionCodes) > 0 {
+		return nil, ErrInvalid
+	}
 	username := strings.TrimSpace(input.Username)
 	if !validUsername(username) || !validPassword(input.Password) {
 		return nil, ErrInvalid
@@ -245,8 +251,19 @@ func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, erro
 	}
 	var value *User
 	err = m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.ActionBindings != nil {
+			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "user", "create", *input.ActionBindings)
+			if errors.Is(err, actionmodule.ErrInvalid) {
+				return ErrInvalid
+			}
+			if err != nil {
+				return err
+			}
+			input.ActionCodes = codes
+		}
+
 		if input.RoleID != nil || len(input.ActionCodes) > 0 {
-			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+			if err := authn.RequirePermissionOperation(ctx, m.administration, "user", "create"); err != nil {
 				return err
 			}
 		}
@@ -257,6 +274,10 @@ func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, erro
 		if errors.Is(err, actionmodule.ErrNotFound) {
 			return ErrActionNotFound
 		}
+		if err != nil {
+			return err
+		}
+		codes, err = m.actions.DefaultUserCodes(ctx, codes)
 		if err != nil {
 			return err
 		}
@@ -305,6 +326,9 @@ func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, erro
 }
 
 func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*User, error) {
+	if input.ActionBindings != nil && input.ActionCodes != nil {
+		return nil, ErrInvalid
+	}
 	if id <= 0 || allNil(input) {
 		return nil, ErrInvalid
 	}
@@ -358,13 +382,24 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 	}
 	var value *User
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.ActionBindings != nil {
+			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "user", "update", *input.ActionBindings)
+			if errors.Is(err, actionmodule.ErrInvalid) {
+				return ErrInvalid
+			}
+			if err != nil {
+				return err
+			}
+			input.ActionCodes = &codes
+		}
+
 		if input.RoleID != nil || input.ActionCodes != nil {
-			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+			if err := authn.RequirePermissionOperation(ctx, m.administration, "user", "update"); err != nil {
 				return err
 			}
 		}
 		if input.Username != nil || input.Password != nil {
-			if err := authn.RequireAdministrationGrant(ctx, m.administration); err != nil {
+			if err := authn.RequirePermissionOperation(ctx, m.administration, "user", "update"); err != nil {
 				return err
 			}
 		}
@@ -449,7 +484,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 	}
 	if resetPasswordFailures && m.passwordFailures != nil {
 		if err := m.passwordFailures.Clear(ctx, id); err != nil {
-			slog.WarnContext(ctx, "clear updated user password failures failed: "+err.Error(), "operation", "clear_updated_user_password_failures", "outcome", "failure", "error", err, "user_id", id)
+			slog.WarnContext(ctx, "clear updated user "+strconv.FormatInt(id, 10)+" password failures failed: "+err.Error(), "operation", "clear_updated_user_password_failures", "outcome", "failure", "error", err, "user_id", id)
 		}
 	}
 	return value, nil
@@ -472,6 +507,14 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 		if err := authn.LockPermissionMutation(ctx, m.administration); err != nil {
 			return err
 		}
+		// Keep sender detachment and its timestamp in the same transaction as
+		// account deletion; parent locks also block concurrent message creation.
+		if _, err := m.store.SQL(ctx).ExecContext(ctx, `SELECT id FROM t_user WHERE id = ANY($1) ORDER BY id FOR UPDATE`, pq.Array(ids)); err != nil {
+			return fmt.Errorf("lock deleted users: %w", err)
+		}
+		if _, err := m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_msg SET sender_id = NULL, updated_at = $2 WHERE sender_id = ANY($1)`, pq.Array(ids), time.Now().UnixMilli()); err != nil {
+			return fmt.Errorf("detach deleted senders: %w", err)
+		}
 		result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_user WHERE id = ANY($1)`, pq.Array(ids))
 		if err != nil {
 			return fmt.Errorf("delete user: %w", err)
@@ -485,10 +528,7 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 		}
 		return nil
 	}
-	if m.administration != nil {
-		return m.store.Tx(ctx, operation)
-	}
-	return operation(ctx)
+	return m.store.Tx(ctx, operation)
 }
 
 // Time filters preserve optional bounds and use JavaScript-safe Unix milliseconds.
@@ -766,7 +806,7 @@ func validPassword(value string) bool { return strings.TrimSpace(value) != "" }
 func validStatus(value int16) bool { return value >= StatusPending && value <= StatusLocked }
 
 func allNil(input UpdateUserInput) bool {
-	return input.Username == nil && input.Password == nil && input.RoleID == nil && input.ActionCodes == nil && input.Status == nil && input.Metadata == nil
+	return input.Username == nil && input.Password == nil && input.RoleID == nil && input.ActionCodes == nil && input.ActionBindings == nil && input.Status == nil && input.Metadata == nil
 }
 
 func withoutLockMetadata(value map[string]any) map[string]any {
@@ -933,7 +973,7 @@ func orderedActions(codes []string, byCode map[string]ActionView) []ActionView {
 
 type PermissionAdministration interface {
 	RequireAllPermissions(context.Context) error
-	RequirePermissionGrant(context.Context) error
+	RequirePermissionOperation(context.Context, string, string) error
 	LockPermissionMutation(context.Context) error
 }
 

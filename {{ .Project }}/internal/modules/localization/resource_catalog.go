@@ -15,9 +15,8 @@ var FixedOperations = []string{"read", "create", "update", "delete"}
 var catalogSegment = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 type ResourceCatalog struct {
-	Resources map[string]Resource      `json:"resources"`
-	Buttons   map[string]Feature       `json:"buttons"`
-	Defaults  map[string]ResourceGrant `json:"defaults"`
+	Resources map[string]Resource `json:"resources"`
+	Buttons   map[string]Feature  `json:"buttons"`
 }
 
 type ResourceChildOrder struct {
@@ -26,15 +25,18 @@ type ResourceChildOrder struct {
 }
 
 type Resource struct {
-	FrontendVisible *bool                        `json:"frontend_visible,omitempty"`
-	ChildOrder      []ResourceChildOrder         `json:"child_order,omitempty"`
-	Kind            string                       `json:"kind"`
-	Parent          string                       `json:"parent,omitempty"`
-	Collection      string                       `json:"collection,omitempty"`
-	References      []string                     `json:"references,omitempty"`
-	Sort            int                          `json:"sort"`
-	Entries         map[string]ResourceEntry     `json:"entries,omitempty"`
-	Operations      map[string]ResourceOperation `json:"operations,omitempty"`
+	// Organizational associations do not grant authorization by themselves.
+	PermissionGroup     string                       `json:"permission_group,omitempty"`
+	PermissionScope     string                       `json:"permission_scope,omitempty"`
+	FrontendVisible     *bool                        `json:"frontend_visible,omitempty"`
+	ChildOrder          []ResourceChildOrder         `json:"child_order,omitempty"`
+	Kind                string                       `json:"kind"`
+	Parent              string                       `json:"parent,omitempty"`
+	References          []string                     `json:"references,omitempty"`
+	ReferenceOperations map[string][]string          `json:"reference_operations,omitempty"`
+	Sort                int                          `json:"sort"`
+	Entries             map[string]ResourceEntry     `json:"entries,omitempty"`
+	Operations          map[string]ResourceOperation `json:"operations,omitempty"`
 }
 
 type ResourceEntry struct {
@@ -53,9 +55,11 @@ type HTTPPath struct {
 }
 
 type Feature struct {
-	Btn  []string   `json:"btn"`
-	HTTP []HTTPPath `json:"http"`
-	GRPC []string   `json:"grpc"`
+	PermissionResource string     `json:"permission_resource,omitempty"`
+	EntryKeys          []string   `json:"entry_keys,omitempty"`
+	Btn                []string   `json:"btn"`
+	HTTP               []HTTPPath `json:"http"`
+	GRPC               []string   `json:"grpc"`
 }
 
 type ResourceUI struct {
@@ -77,8 +81,10 @@ func (e ResourceEndpoint) Display() string {
 }
 
 type ResourceGrant struct {
-	UI        []ResourceUI       `json:"ui"`
-	Endpoints []ResourceEndpoint `json:"endpoints"`
+	PermissionScopes []string           `json:"permission_scopes,omitempty"`
+	PermissionScope  string             `json:"permission_scope,omitempty"`
+	UI               []ResourceUI       `json:"ui"`
+	Endpoints        []ResourceEndpoint `json:"endpoints"`
 }
 
 func catalogKey(key string, min, max int) bool {
@@ -120,19 +126,18 @@ func (c ResourceCatalog) Validate(scopes, operations []string) error {
 		}
 		seenScopes[scope] = true
 	}
-	if len(scopes) == 0 || c.Resources == nil || c.Buttons == nil || c.Defaults == nil {
+	if len(scopes) == 0 || c.Resources == nil || c.Buttons == nil {
 		return errors.New("missing resource catalog")
 	}
 	featureOwners := map[string]string{}
 	entryOwners := map[string]string{}
-	collections := map[string]bool{}
 	edges := map[string][]string{}
 	for key, r := range c.Resources {
 		parts := strings.Split(key, ":")
 		if !catalogKey(key, 2, 128) || len(key)+7 > 128 || !seenScopes[parts[0]] || (r.Kind != "directory" && r.Kind != "resource") || r.Sort < 0 {
 			return fmt.Errorf("invalid resource %s", key)
 		}
-		if r.Kind == "resource" && (len(parts) < 3 || len(r.Operations) == 0) {
+		if r.Kind == "resource" && len(parts) < 3 {
 			return fmt.Errorf("resource needs module and resource: %s", key)
 		}
 		if r.Kind == "directory" && (len(r.Entries) > 0 || len(r.Operations) > 0) {
@@ -141,11 +146,11 @@ func (c ResourceCatalog) Validate(scopes, operations []string) error {
 		if r.FrontendVisible != nil && (r.Kind != "directory" || r.Parent != "") {
 			return fmt.Errorf("frontend visibility requires a root directory: %s", key)
 		}
-		if r.Collection != "" {
-			if r.Kind != "directory" || r.Collection != "default_permissions" || collections[parts[0]] {
-				return fmt.Errorf("invalid or duplicate resource collection: %s", key)
-			}
-			collections[parts[0]] = true
+		if r.PermissionGroup != "" && (r.Kind != "directory" || r.Parent != "" || len(r.PermissionGroup) > 128 || !catalogKey(r.PermissionGroup, 3, 128) || strings.Split(r.PermissionGroup, ":")[0] != parts[0]) {
+			return fmt.Errorf("invalid directory permission group: %s", key)
+		}
+		if r.PermissionScope != "" && (r.Kind != "resource" || r.PermissionScope != "*") {
+			return fmt.Errorf("invalid resource permission scope: %s", key)
 		}
 		ordered := map[string]bool{}
 		for _, item := range r.ChildOrder {
@@ -169,6 +174,18 @@ func (c ResourceCatalog) Validate(scopes, operations []string) error {
 			}
 			seenReferences[target] = true
 			edges[key] = append(edges[key], target)
+		}
+		for target, selected := range r.ReferenceOperations {
+			if !seenReferences[target] || len(selected) == 0 {
+				return fmt.Errorf("invalid reference operations: %s -> %s", key, target)
+			}
+			seenOperations := map[string]bool{}
+			for _, operation := range selected {
+				if !slices.Contains(operations, operation) || seenOperations[operation] || !c.supportsReferencedOperation(target, operation, map[string]bool{}) {
+					return fmt.Errorf("unsupported reference operation: %s -> %s:%s", key, target, operation)
+				}
+				seenOperations[operation] = true
+			}
 		}
 		visited := map[string]bool{key: true}
 		for parent := r.Parent; parent != ""; {
@@ -236,10 +253,16 @@ func (c ResourceCatalog) Validate(scopes, operations []string) error {
 		if !catalogKey(key, 4, 128) || featureOwners[key] == "" || feature.Btn == nil || feature.HTTP == nil || feature.GRPC == nil {
 			return fmt.Errorf("invalid or unused feature %s", key)
 		}
+		if feature.PermissionResource != "" && !catalogSegment.MatchString(feature.PermissionResource) {
+			return fmt.Errorf("invalid permission management resource %s", key)
+		}
 		owner := featureOwners[key]
 		// Menu/button keys are stable frontend bindings, independent of resource ownership.
 		validButton := func(button string) bool {
-			for entry := range c.Resources[owner].Entries {
+			for entry, entryOwner := range entryOwners {
+				if strings.Split(entryOwner, ":")[0] != strings.Split(owner, ":")[0] {
+					continue
+				}
 				prefix := strings.Replace(entry, ":menu:", ":btn:", 1) + ":"
 				if strings.HasPrefix(button, prefix) && !strings.Contains(strings.TrimPrefix(button, prefix), ":") {
 					return true
@@ -247,8 +270,12 @@ func (c ResourceCatalog) Validate(scopes, operations []string) error {
 			}
 			return false
 		}
-		if len(feature.Btn) > 0 && len(c.Resources[owner].Entries) == 0 {
-			return fmt.Errorf("button needs a resource entry %s", key)
+		seenEntries := map[string]bool{}
+		for _, entry := range feature.EntryKeys {
+			if entryOwners[entry] == "" || strings.Split(entry, ":")[0] != strings.Split(owner, ":")[0] || seenEntries[entry] {
+				return fmt.Errorf("invalid feature page entry %s", key)
+			}
+			seenEntries[entry] = true
 		}
 		seen := map[string]bool{}
 		for _, btn := range feature.Btn {
@@ -268,41 +295,37 @@ func (c ResourceCatalog) Validate(scopes, operations []string) error {
 			}
 		}
 	}
-	for scope, grant := range c.Defaults {
-		if !seenScopes[scope] {
-			return fmt.Errorf("unknown default scope %s", scope)
-		}
-		for _, ui := range grant.UI {
-			if !strings.HasPrefix(ui.MenuKey, scope+":menu:") || !catalogKey(ui.MenuKey, 3, 128) || !CatalogPath(ui.MenuPath, false) {
-				return errors.New("invalid default entry")
-			}
-			for _, key := range ui.ButtonKeys {
-				if !strings.HasPrefix(key, scope+":btn:") || !catalogKey(key, 5, 128) {
-					return errors.New("invalid default button")
-				}
-			}
-		}
-		for _, endpoint := range grant.Endpoints {
-			if endpoint.Protocol == "http" {
-				if !slices.Contains([]string{"GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"}, endpoint.Method) || !CatalogPath(endpoint.Path, true) {
-					return errors.New("invalid default http endpoint")
-				}
-			} else if endpoint.Protocol != "grpc" || endpoint.Method != "GRPC" || !CatalogPath(endpoint.Path, false) || len(strings.Split(endpoint.Path, "/")) != 3 {
-				return errors.New("invalid default endpoint")
-			}
-		}
-	}
 	return nil
 }
 
-// Resolve expands only registered feature references. Caller-supplied transport
-// paths are never used as authority. Nil selects all configured features; [] none.
-func (c ResourceCatalog) Resolve(word string, selected []string) (ResourceGrant, error) {
-	parts := strings.Split(word, ":")
-	if len(parts) < 4 {
-		return ResourceGrant{}, errors.New("invalid permission word")
+// supportsReferencedOperation follows the same operation intersections as the
+// reference picker. References remain catalog organization, not action grants.
+func (c ResourceCatalog) supportsReferencedOperation(key, operation string, path map[string]bool) bool {
+	node, exists := c.Resources[key]
+	if !exists || path[key] {
+		return false
 	}
-	return c.ResolveBinding(parts[0], parts[0]+":"+strings.Join(parts[2:], ":"), parts[1], selected)
+	if node.Kind == "resource" {
+		_, supported := node.Operations[operation]
+		return supported
+	}
+	path[key] = true
+	defer delete(path, key)
+	for child, resource := range c.Resources {
+		if resource.Parent == key && c.supportsReferencedOperation(child, operation, path) {
+			return true
+		}
+	}
+	for _, target := range node.References {
+		selected, explicit := node.ReferenceOperations[target]
+		if explicit && !slices.Contains(selected, operation) {
+			continue
+		}
+		if c.supportsReferencedOperation(target, operation, path) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolveBinding expands the resource association explicitly stored on an action.
@@ -313,6 +336,12 @@ func (c ResourceCatalog) ResolveBinding(scope, key, operation string, selected [
 		return result, errors.New("cross-scope resource binding")
 	}
 	resource, ok := c.Resources[key]
+	if ok && resource.Kind == "resource" && operation == "*" && resource.PermissionScope == "*" {
+		if len(selected) > 0 {
+			return result, errors.New("wildcard scope does not select features")
+		}
+		return c.ResolveAll(scope, fields)
+	}
 	binding, supported := resource.Operations[operation]
 	if !ok || !supported {
 		return result, errors.New("unregistered resource operation")
@@ -322,6 +351,7 @@ func (c ResourceCatalog) ResolveBinding(scope, key, operation string, selected [
 	}
 	seen := map[string]bool{}
 	buttons := []string{}
+	pageEntries := map[string]bool{}
 	endpoints := map[ResourceEndpoint]bool{}
 	for _, featureKey := range selected {
 		feature, exists := c.Buttons[featureKey]
@@ -329,8 +359,14 @@ func (c ResourceCatalog) ResolveBinding(scope, key, operation string, selected [
 			return result, errors.New("feature outside resource operation")
 		}
 		seen[featureKey] = true
+		if feature.PermissionResource != "" {
+			result.PermissionScopes = append(result.PermissionScopes, feature.PermissionResource+":"+operation)
+		}
 		if hasField(fields, "ui") {
 			buttons = append(buttons, feature.Btn...)
+			for _, entry := range feature.EntryKeys {
+				pageEntries[entry] = true
+			}
 		}
 		if hasField(fields, "http") {
 			for _, http := range feature.HTTP {
@@ -344,14 +380,33 @@ func (c ResourceCatalog) ResolveBinding(scope, key, operation string, selected [
 		}
 	}
 	if hasField(fields, "ui") {
-		entryKeys := make([]string, 0, len(resource.Entries))
-		for entry := range resource.Entries {
+		uiEntries := map[string]ResourceEntry{}
+		for key, entry := range resource.Entries {
+			uiEntries[key] = entry
+		}
+		for _, entry := range binding.EntryKeys {
+			pageEntries[entry] = true
+		}
+		for _, owner := range c.Resources {
+			for key, entry := range owner.Entries {
+				prefix := strings.Replace(key, ":menu:", ":btn:", 1) + ":"
+				referenced := pageEntries[key]
+				for _, button := range buttons {
+					referenced = referenced || strings.HasPrefix(button, prefix)
+				}
+				if referenced {
+					uiEntries[key] = entry
+				}
+			}
+		}
+		entryKeys := make([]string, 0, len(uiEntries))
+		for entry := range uiEntries {
 			entryKeys = append(entryKeys, entry)
 		}
 		sort.Strings(entryKeys)
 		for _, entryKey := range entryKeys {
-			entry := resource.Entries[entryKey]
-			result.UI = append(result.UI, ResourceUI{MenuKey: entryKey, ParentMenuKey: entry.ParentMenuKey, MenuPath: entry.Path, PageEntry: slices.Contains(binding.EntryKeys, entryKey), ButtonKeys: func() []string {
+			entry := uiEntries[entryKey]
+			result.UI = append(result.UI, ResourceUI{MenuKey: entryKey, ParentMenuKey: entry.ParentMenuKey, MenuPath: entry.Path, PageEntry: pageEntries[entryKey], ButtonKeys: func() []string {
 				keys := []string{}
 				for _, button := range buttons {
 					if strings.HasPrefix(button, strings.Replace(entryKey, ":menu:", ":btn:", 1)+":") {
@@ -383,6 +438,52 @@ func (c Catalog) ResolvePermission(word string, selected []string, builtin strin
 	return c.ResolveSelectedPermission(word, selected, builtin, nil, resourceSelections...)
 }
 
+func (c ResourceCatalog) ResolveAll(scope string, fields []string) (ResourceGrant, error) {
+	result := ResourceGrant{PermissionScope: "*", UI: []ResourceUI{}, Endpoints: []ResourceEndpoint{}}
+	keys := []string{}
+	for key := range c.Resources {
+		if strings.HasPrefix(key, scope+":") {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		for _, operation := range FixedOperations {
+			if _, exists := c.Resources[key].Operations[operation]; !exists {
+				continue
+			}
+			grant, err := c.ResolveBinding(scope, key, operation, nil, fields)
+			if err != nil {
+				return result, err
+			}
+			result.UI = append(result.UI, grant.UI...)
+			result.Endpoints = append(result.Endpoints, grant.Endpoints...)
+		}
+	}
+	if hasField(fields, "ui") {
+		present := map[string]bool{}
+		for i := range result.UI {
+			result.UI[i].PageEntry = true
+			present[result.UI[i].MenuKey] = true
+		}
+		for _, key := range keys {
+			entryKeys := []string{}
+			for entry := range c.Resources[key].Entries {
+				entryKeys = append(entryKeys, entry)
+			}
+			sort.Strings(entryKeys)
+			for _, entryKey := range entryKeys {
+				if !present[entryKey] {
+					entry := c.Resources[key].Entries[entryKey]
+					result.UI = append(result.UI, ResourceUI{MenuKey: entryKey, MenuPath: entry.Path, ParentMenuKey: entry.ParentMenuKey, PageEntry: true, ButtonKeys: []string{}})
+					present[entryKey] = true
+				}
+			}
+		}
+	}
+	return result, nil
+}
+
 func (c Catalog) ResolveSelectedPermission(word string, selected []string, builtin string, fields []string, resourceSelections ...[]string) (ResourceGrant, error) {
 	result := ResourceGrant{UI: []ResourceUI{}, Endpoints: []ResourceEndpoint{}}
 	parts := strings.Split(word, ":")
@@ -390,55 +491,16 @@ func (c Catalog) ResolveSelectedPermission(word string, selected []string, built
 		return result, errors.New("invalid permission word")
 	}
 	catalog := c.ResourceCatalog
-	appendDefault := func() {
-		grant := catalog.Defaults[parts[0]]
-		if hasField(fields, "ui") {
-			for _, ui := range grant.UI {
-				ui.ButtonKeys = slices.Clone(ui.ButtonKeys)
-				result.UI = append(result.UI, ui)
-			}
-		}
-		for _, endpoint := range grant.Endpoints {
-			if hasField(fields, endpoint.Protocol) {
-				result.Endpoints = append(result.Endpoints, endpoint)
-			}
-		}
-	}
 	switch builtin {
 	case "default":
 		if len(resourceSelections) > 0 {
 			return catalog.ResolveResources(parts[0], resourceSelections[0], selected, fields)
 		}
-		appendDefault()
-		return result, nil
+		return result, errors.New("default permissions require explicit resource selections")
 	case "all":
-		appendDefault()
-		keys := []string{}
-		for key := range catalog.Resources {
-			if strings.HasPrefix(key, parts[0]+":") {
-				keys = append(keys, key)
-			}
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			resource := catalog.Resources[key]
-			for _, operation := range FixedOperations {
-				if _, ok := resource.Operations[operation]; !ok {
-					continue
-				}
-				grant, err := catalog.ResolveBinding(parts[0], key, operation, nil, fields)
-				if err != nil {
-					return result, err
-				}
-				result.UI = append(result.UI, grant.UI...)
-				result.Endpoints = append(result.Endpoints, grant.Endpoints...)
-			}
-		}
-		return result, nil
+		// Read compatibility for pre-migration records with an explicit marker.
+		return catalog.ResolveAll(parts[0], fields)
 	case "":
-		if word == parts[0]+":grant:system:permission-admin" {
-			return result, nil
-		}
 		return result, errors.New("ordinary permissions require an explicit resource binding")
 	default:
 		return result, errors.New("unknown builtin permission")
@@ -482,6 +544,7 @@ func (c ResourceCatalog) ResolveResources(scope string, keys, selected []string,
 		if err != nil {
 			return result, err
 		}
+		result.PermissionScopes = append(result.PermissionScopes, grant.PermissionScopes...)
 		result.UI = append(result.UI, grant.UI...)
 		result.Endpoints = append(result.Endpoints, grant.Endpoints...)
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,5 +195,29 @@ func TestRedisNamespaceCacheClientDeadlines(t *testing.T) {
 	}
 	if time.Since(start) > 500*time.Millisecond {
 		t.Fatal("redis ignored independent deadline")
+	}
+}
+
+func TestRedisNamespaceCacheRejectsMalformedDSNWithoutCredentials(t *testing.T) {
+	const secret = "review-secret"
+	for name, dsn := range map[string]string{
+		"password slash": "redis://default:" + secret + "/fragment@127.0.0.1:6379/0",
+		"invalid port":   "redis://default:" + secret + "@127.0.0.1:invalid/0",
+		"invalid escape": "redis://default:" + secret + "%zz@127.0.0.1:6379/0",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cache, cleanup, err := NewRedisNamespaceCache(dsn, "test:auth:", "dictionary:cache")
+			if cleanup != nil {
+				cleanup()
+			}
+			if cache != nil || cleanup != nil || err == nil || !strings.Contains(err.Error(), "parse cache redis dsn") {
+				t.Fatalf("invalid DSN result = %v, cleanup present = %v, error = %v", cache, cleanup != nil, err)
+			}
+			for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+				if strings.Contains(cause.Error(), secret) {
+					t.Fatalf("cache DSN parse error exposes credentials: %v", cause)
+				}
+			}
+		})
 	}
 }

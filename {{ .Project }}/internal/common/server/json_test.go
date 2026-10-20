@@ -15,9 +15,9 @@ func TestJSONHelpers(t *testing.T) {
 		t.Fatalf("empty response = %d %q", recorder.Code, recorder.Body.String())
 	}
 	recorder = httptest.NewRecorder()
-	WriteError(recorder, httptest.NewRequest("GET", "/", nil), http.StatusBadRequest, apperror.BadRequest)
+	WriteError(recorder, httptest.NewRequest("GET", "/", nil), http.StatusBadRequest, apperror.InvalidBody)
 	var body ErrorResponse
-	if recorder.Code != http.StatusBadRequest || json.Unmarshal(recorder.Body.Bytes(), &body) != nil || body.Msg != "Bad Request" {
+	if recorder.Code != http.StatusBadRequest || json.Unmarshal(recorder.Body.Bytes(), &body) != nil || body.Msg != "invalid request body" {
 		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
 	}
 	recorder = httptest.NewRecorder()

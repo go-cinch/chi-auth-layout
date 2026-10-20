@@ -2,11 +2,11 @@
 package server
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,11 +38,11 @@ func Recoverer() gin.HandlerFunc {
 package server
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 )
 
 func Recoverer() func(http.Handler) http.Handler {

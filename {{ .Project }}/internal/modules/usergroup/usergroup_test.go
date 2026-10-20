@@ -4,19 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
 	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
 	usermodule "{{ .Computed.module_name_final }}/internal/modules/user"
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 )
 
 var userGroupTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
@@ -254,6 +254,7 @@ func (p groupPermissionPolicy) RequirePermissionGrant(context.Context) error {
 }
 
 func (groupPermissionPolicy) LockPermissionMutation(context.Context) error { return nil }
+
 func TestGroupGrantPolicyIncludesMembership(t *testing.T) {
 	m, mock := newTestModule(t)
 	m.SetPermissionAdministration(groupPermissionPolicy{})
@@ -300,4 +301,12 @@ func TestGroupGrantPolicyIncludesMembership(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func (p groupPermissionPolicy) RequirePermissionEndpoint(ctx context.Context, method, path string) error {
+	return p.RequirePermissionGrant(ctx)
+}
+
+func (p groupPermissionPolicy) RequirePermissionOperation(ctx context.Context, resource, operation string) error {
+	return p.RequirePermissionGrant(ctx)
 }

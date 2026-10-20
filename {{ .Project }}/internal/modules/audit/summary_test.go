@@ -33,7 +33,7 @@ func TestSummary(t *testing.T) {
 	for _, span := range []int64{3600000, 7 * 86400000} {
 		m, mock := setup(t)
 		expectSummary(mock, -1)
-		s, err := m.Summary(t.Context(), Filter{Kind: "login", From: 1, To: span, Timezone: "Asia/Shanghai"})
+		s, err := m.Summary(t.Context(), Filter{Kind: "login", From: auditTime(1), To: auditTime(span), Timezone: "Asia/Shanghai"})
 		if err != nil || s.Total != 10 || s.Failed != 3 || s.SuccessRate != 70 || len(s.Heatmap) == 0 || s.Heatmap[0].StartedAt != 1 || s.Heatmap[len(s.Heatmap)-1].EndedAt != span || s.Heatmap[0].Count != 10 || len(s.Modules) != 1 || len(s.RepeatedFailures) != 1 {
 			t.Fatal(s, err)
 		}
@@ -56,7 +56,7 @@ func TestBreakdownRejectsIdentifiers(t *testing.T) {
 
 func TestSummarySelectionSkipsUnrequestedQueries(t *testing.T) {
 	for _, fields := range [][]string{
-{"metrics", "trend", "modules"}, {"metrics"}, {"trend"}, {"heatmap"}, {"accounts"}, {"sources"}, {"repeated_failures"}, {"modules"}} {
+		{"metrics", "trend", "modules"}, {"metrics"}, {"trend"}, {"heatmap"}, {"accounts"}, {"sources"}, {"repeated_failures"}, {"modules"}} {
 		t.Run(strings.Join(fields, ","), func(t *testing.T) {
 			m, mock := setup(t)
 			has := func(field string) bool { return slices.Contains(fields, field) }
@@ -70,12 +70,12 @@ func TestSummarySelectionSkipsUnrequestedQueries(t *testing.T) {
 				mock.ExpectQuery("SELECT width_bucket").WillReturnRows(sqlmock.NewRows([]string{"index", "count", "failed"}))
 			}
 			for _, item := range []struct{ field, column string }{
-{"modules", "module"}, {"repeated_failures", "username"}, {"accounts", "username"}, {"sources", "ip"}} {
+				{"modules", "module"}, {"repeated_failures", "username"}, {"accounts", "username"}, {"sources", "ip"}} {
 				if has(item.field) {
 					mock.ExpectQuery("SELECT " + item.column).WillReturnRows(sqlmock.NewRows([]string{"name", "total", "failed"}))
 				}
 			}
-			value, err := m.Summary(t.Context(), Filter{Kind: "operation", From: 1, To: 3600000}, fields...)
+			value, err := m.Summary(t.Context(), Filter{Kind: "operation", From: auditTime(1), To: auditTime(3600000)}, fields...)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"unicode"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
- "{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/common/server"
 	"{{ .Computed.module_name_final }}/internal/modules"
+	"{{ .Computed.module_name_final }}/internal/modules/auth"
 
 {{ if eq .Computed.http_router_final "gin" }}
 	"github.com/gin-gonic/gin"
@@ -87,13 +87,13 @@ func parseQuery(r *http.Request, q url.Values) (Filter, error) {
 	f.Module = q.Get("module")
 	f.Result = q.Get("result")
 	f.Timezone = q.Get("time_zone")
-	for key, target := range map[string]*int64{"from": &f.From, "to": &f.To} {
+	for key, target := range map[string]**int64{"from": &f.From, "to": &f.To} {
 		if v, ok := q[key]; ok {
 			n, e := strconv.ParseInt(v[0], 10, 64)
-			if e != nil || n <= 0 {
+			if e != nil || n < 0 {
 				return f, ErrFilter
 			}
-			*target = n
+			*target = &n
 		}
 	}
 	for key, target := range map[string]**int32{"p": &f.Page, "s": &f.Size, "weekday": &f.Weekday, "hour": &f.Hour} {
@@ -132,13 +132,21 @@ func (m *Module) list(c *gin.Context) {
 func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 
-	f, err := parse(r)
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		replyError(w, r, ErrFilter)
+		return
+	}
+	f, err := parseQuery(r, query)
 	if err != nil {
 		replyError(w, r, err)
 		return
 	}
- f.Fields, err = report.ParseFields(r.URL.Query(), listFields...)
- if err != nil { server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery); return }
+	f.Fields, err = report.ParseFields(query, listFields...)
+	if err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
+		return
+	}
 	result, err := m.List(r.Context(), f)
 	if err != nil {
 		replyError(w, r, err)
@@ -211,7 +219,17 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) {
 		replyError(w, r, ErrFilter)
 		return
 	}
-	result, err := m.Get(r.Context(), kind(r), id)
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		replyError(w, r, ErrFilter)
+		return
+	}
+	fields, err := report.ParseFields(query, detailFields...)
+	if err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	result, err := m.GetSelected(r.Context(), kind(r), id, fields)
 	if err != nil {
 		replyError(w, r, err)
 		return
@@ -256,8 +274,10 @@ func (m *Module) export(w http.ResponseWriter, r *http.Request) {
 
 // AuditTarget keeps business scope and operation semantics in the owning capability.
 func (m *Module) AuditTarget(method, path string) auditctx.Target {
-	relative, authEndpoint := authn.RelativeAuthHTTPPath(path, m.authHTTPPath)
-	if authEndpoint { path = "/auth" + relative }
+	relative, authEndpoint := auth.RelativeAuthHTTPPath(path, m.authHTTPPath)
+	if authEndpoint {
+		path = "/auth" + relative
+	}
 	target := auditctx.Target{}
 	if method != http.MethodPost && method != http.MethodPatch && method != http.MethodPut && method != http.MethodDelete {
 		return target
@@ -267,7 +287,9 @@ func (m *Module) AuditTarget(method, path string) auditctx.Target {
 	case "user", "role", "action", "user-group", "dictionary", "msg":
 		target = auditctx.Target{Kind: "operation", Module: parts[0], ResourceType: parts[0]}
 	case "auth":
-		if !authEndpoint { return target }
+		if !authEndpoint {
+			return target
+		}
 		switch path {
 		case "/auth/pub/login":
 			if method == http.MethodPost {

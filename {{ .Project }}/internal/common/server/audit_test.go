@@ -212,12 +212,18 @@ func TestAuditFailureLogsStructuredContext(t *testing.T) {
 	target := auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_password"}
 	finishAudit(recorder, request, state, target, 500, time.Now(), http.Header{}, &auditBuffer{}, &auditBuffer{}, redact.New(), nil)
 	var entry map[string]any
-	if err := json.Unmarshal(output.Bytes(), &entry); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
 	for key, want := range map[string]any{
 		"operation": "persist_http_audit", "outcome": "failure", "audit_kind": "operation",
 		"audit_operation": "reset_password", "module": "auth", "method": "POST", "status": float64(500), "error": "offline",
 	} {
-		if entry[key] != want { t.Errorf("%s = %v, want %v", key, entry[key], want) }
+		if entry[key] != want {
+			t.Errorf("%s = %v, want %v", key, entry[key], want)
+		}
 	}
-	if strings.Contains(output.String(), "never-log-") { t.Fatalf("request secret leaked: %s", output.String()) }
+	if strings.Contains(output.String(), "never-log-") {
+		t.Fatalf("request secret leaked: %s", output.String())
+	}
 }

@@ -110,7 +110,7 @@ func TestRecordAndRead(t *testing.T) {
 
 func TestFilters(t *testing.T) {
 	for _, f := range []Filter{
-		{Kind: "login", From: 253402300799999, To: 253402300800000}, {Kind: "login", Timezone: "Local"}, {Kind: "bad"}, {Kind: "login", From: -1}, {Kind: "login", From: 2, To: 1}, {Kind: "login", From: 1, To: 1000000000000}, {Kind: "login", Result: "bad"}, {Kind: "login", Timezone: "missing/zone"}, {Kind: "login", Query: strings.Repeat("x", 257)}} {
+		{Kind: "login", From: auditTime(253402300799999), To: auditTime(253402300800000)}, {Kind: "login", Timezone: "Local"}, {Kind: "bad"}, {Kind: "login", From: auditTime(-1)}, {Kind: "login", From: auditTime(2), To: auditTime(1)}, {Kind: "login", From: auditTime(1), To: auditTime(1000000000000)}, {Kind: "login", Result: "bad"}, {Kind: "login", Timezone: "missing/zone"}, {Kind: "login", Query: strings.Repeat("x", 257)}} {
 		if _, err := normalize(f); !errors.Is(err, ErrFilter) {
 			t.Fatal(f, err)
 		}
@@ -180,5 +180,32 @@ func TestInvestigationFilters(t *testing.T) {
 	hour = 24
 	if _, err := normalize(f); err == nil {
 		t.Fatal("invalid hour")
+	}
+}
+
+func auditTime(value int64) *int64 { return &value }
+
+func TestOptionalTimeBoundsAndBlankKeyword(t *testing.T) {
+	for _, input := range []Filter{ {Kind: "login", From: auditTime(123), Query: "   "}, {Kind: "login", To: auditTime(456), Query: "  alice  "}} {
+		value, err := normalize(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (input.From == nil) != (value.From == nil) || (input.To == nil) != (value.To == nil) {
+			t.Fatal("missing boundary synthesized", value)
+		}
+		clause, args := where(value)
+		if input.From == nil && strings.Contains(clause, ">=") {
+			t.Fatal(clause)
+		}
+		if input.To == nil && strings.Contains(clause, "occurred_at <") {
+			t.Fatal(clause)
+		}
+		if value.Query == "" && strings.Contains(clause, "ILIKE") {
+			t.Fatal(clause)
+		}
+		if value.Query != "" && (value.Query != "alice" || args[len(args)-1] != "%alice%" || !strings.Contains(clause, "ILIKE $3")) {
+			t.Fatal(value.Query, clause, args)
+		}
 	}
 }

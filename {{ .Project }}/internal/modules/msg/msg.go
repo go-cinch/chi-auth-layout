@@ -223,25 +223,8 @@ func (m *Module) GetSent(ctx context.Context, id int64) (*Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	if value.Scope == "targeted" {
-		rows, err := m.store.SQL(ctx).QueryContext(ctx, `SELECT r.user_id, COALESCE(u.username, ''), COALESCE(u.code, '') FROM t_msg_recipient r LEFT JOIN t_user u ON u.id = r.user_id WHERE r.msg_id = $1 ORDER BY r.user_id`, id)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		value.RecipientIDs = make([]int64, 0)
-		value.Recipients = make([]Recipient, 0)
-		for rows.Next() {
-			var recipient Recipient
-			if err := rows.Scan(&recipient.ID, &recipient.Username, &recipient.Code); err != nil {
-				return nil, err
-			}
-			value.RecipientIDs = append(value.RecipientIDs, recipient.ID)
-			value.Recipients = append(value.Recipients, recipient)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
+	if err := m.loadRecipients(ctx, &value, nil); err != nil {
+		return nil, err
 	}
 	return &value, nil
 }

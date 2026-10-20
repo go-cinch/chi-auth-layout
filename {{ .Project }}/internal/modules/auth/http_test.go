@@ -1,12 +1,6 @@
 package auth
 
 import (
- rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
- actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
- "{{ .Computed.module_name_final }}/internal/common/idempotency"
- "{{ .Computed.module_name_final }}/internal/common/pagination"
- "{{ .Computed.module_name_final }}/internal/common/authn"
- "{{ .Computed.module_name_final }}/internal/modules/localization"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -14,11 +8,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/common/idempotency"
+	"{{ .Computed.module_name_final }}/internal/common/pagination"
+	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
+	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
 {{ if eq .Computed.http_router_final "gin" }}
- "github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"
 {{ end }}
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/server"
@@ -109,9 +109,9 @@ func TestGatewayAnonymousTargets(t *testing.T) {
 }
 
 func TestAuthHTTP(t *testing.T) {
- localizer := localization.New()
+	localizer := localization.New()
 	m, authenticator, mock := newAuthTestModule(t)
- localizer = m.catalogSource.(*localization.Module)
+	localizer = m.catalogSource.(*localization.Module)
 	if m.Name() != "" {
 		t.Fatal(m.Name())
 	}
@@ -193,11 +193,15 @@ func TestAuthHTTP(t *testing.T) {
 	}
 	request(http.MethodPost, "/pub/register", string(missingRegisterProof), "", http.StatusBadRequest)
 	request(http.MethodPost, "/pub/register", registerBody("new-user", "   "), "", http.StatusBadRequest)
+	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(36)))
 	mock.ExpectExec("INSERT INTO t_user").WillReturnError(&pq.Error{Code: "23505", Constraint: "uk_user_username"})
+	mock.ExpectRollback()
 	request(http.MethodPost, "/pub/register", registerBody("new-user", "secret1"), "", http.StatusConflict)
+	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(37)))
 	mock.ExpectExec("INSERT INTO t_user").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	request(http.MethodPost, "/pub/register", registerBody("new-user", "secret1"), "", http.StatusOK)
 	challengeResponse := request(http.MethodPost, "/pub/challenge", `{"purpose":"login"}`, "", http.StatusOK)
 	if challengeResponse.Header().Get("Cache-Control") != "no-store" {
@@ -352,7 +356,7 @@ func TestAuthHTTP(t *testing.T) {
 		return recorder
 	}
 	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(
- permissionRows().AddRow("admin:read:system:info",permissionConfig(localizer, "GET","/info")),
+		permissionRows().AddRow("admin:read:system:info", permissionConfig(localizer, "GET", "/info")),
 	)
 	permissionRecorder := permissionRequest(http.MethodGet, "/info", http.StatusOK)
 	if code := permissionRecorder.Header().Get(permissionResponseCode); code != "EXP78RGH" {
@@ -362,7 +366,7 @@ func TestAuthHTTP(t *testing.T) {
 		t.Fatalf("permission response exposed username: %q", value)
 	}
 	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(
- permissionRows().AddRow("admin:read:system:info",permissionConfig(localizer, "GET","/info")),
+		permissionRows().AddRow("admin:read:system:info", permissionConfig(localizer, "GET", "/info")),
 	)
 	permissionRequest(http.MethodGet, "/missing", http.StatusForbidden)
 	request(http.MethodPost, "/challenge", `{`, login.AccessToken, http.StatusBadRequest)
@@ -471,7 +475,7 @@ func TestAuthHTTP(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "code", "role_id", "role_name", "role_word"}).
 			AddRow(3, "readonly", "EXP78RGH", 2, "Reader", "reader"))
 	mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(
- permissionRows().AddRow("admin:read:system:user",userReadPermissionConfig),
+		permissionRows().AddRow("admin:read:system:user", userReadPermissionConfig),
 	)
 	infoRecorder := request(http.MethodGet, "/info", "", refreshed.AccessToken, http.StatusOK)
 	var info UserInfo
@@ -532,135 +536,195 @@ func TestLocalizedAuthFailures(t *testing.T) {
 }
 
 func TestInfoUsesHeaderScopeAndIgnoresLegacyQuery(t *testing.T) {
- m,manager,mock:=newAuthTestModule(t)
- ctx:=authenticatedContext(t,manager,m.sessions)
+	m, manager, mock := newAuthTestModule(t)
+	ctx := authenticatedContext(t, manager, m.sessions)
 {{ if eq .Computed.http_router_final "gin" }}
- router:=gin.New();m.HTTP(router.Group(""));handler:=http.Handler(router)
+	router := gin.New()
+	m.HTTP(router.Group(""))
+	handler := http.Handler(router)
 {{ else }}
- handler:=m.HTTP()
+	handler := m.HTTP()
 {{ end }}
- for _,test:=range []struct {query,header,want string;status int}{
-  {"","","admin",200}, {"","mini","mini",200},
-  {"?scope=mini","admin","admin",200}, {"?scope=admin","mini","mini",200},
-  {"?scope=","","admin",200}, {"?scope=admin&scope=mini","admin","admin",200},
-  {"?scope=Admin","admin","admin",200}, {"?scope=%zz","admin","",400},
- } {
-  request:=httptest.NewRequest(http.MethodGet,"/info"+test.query,nil).WithContext(ctx)
-  if test.header!="" {request.Header.Set(authn.PermissionScopeHeader,test.header)}
-  scoped,err:=authn.ScopeRequest(request);if err!=nil {t.Fatal(err)}
-  if test.status==200 {
-   mock.ExpectQuery("SELECT u.id, u.username, u.code").WithArgs(int64(3),"EXP78RGH").WillReturnRows(sqlmock.NewRows([]string{"id","username","code","role_id","role_name","role_word"}).AddRow(3,"readonly","EXP78RGH",nil,nil,nil))
-   mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3),test.want).WillReturnRows(permissionRows())
-  }
-  response:=httptest.NewRecorder();handler.ServeHTTP(response,scoped)
-  if response.Code!=test.status {t.Fatalf("query=%s header=%s status=%d: %s",test.query,test.header,response.Code,response.Body.String())}
-  if test.status==200 {
-   var value UserInfo
-   if err:=json.Unmarshal(response.Body.Bytes(),&value);err!=nil {t.Fatal(err)}
-   if value.Scope!=test.want {t.Fatalf("scope=%s want=%s",value.Scope,test.want)}
-  }
- }
+	for _, test := range []struct {
+		query, header, want string
+		status              int
+	}{
+		{"", "", "admin", 200}, {"", "mini", "mini", 200},
+		{"?scope=mini", "admin", "admin", 200}, {"?scope=admin", "mini", "mini", 200},
+		{"?scope=", "", "admin", 200}, {"?scope=admin&scope=mini", "admin", "admin", 200},
+		{"?scope=Admin", "admin", "admin", 200}, {"?scope=%zz", "admin", "", 400},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/info"+test.query, nil).WithContext(ctx)
+		if test.header != "" {
+			request.Header.Set(authn.PermissionScopeHeader, test.header)
+		}
+		scoped, err := authn.ScopeRequest(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if test.status == 200 {
+			mock.ExpectQuery("SELECT u.id, u.username, u.code").WithArgs(int64(3), "EXP78RGH").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "code", "role_id", "role_name", "role_word"}).AddRow(3, "readonly", "EXP78RGH", nil, nil, nil))
+			mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), test.want).WillReturnRows(permissionRows())
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, scoped)
+		if response.Code != test.status {
+			t.Fatalf("query=%s header=%s status=%d: %s", test.query, test.header, response.Code, response.Body.String())
+		}
+		if test.status == 200 {
+			var value UserInfo
+			if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+				t.Fatal(err)
+			}
+			if value.Scope != test.want {
+				t.Fatalf("scope=%s want=%s", value.Scope, test.want)
+			}
+		}
+	}
 }
 
-
 func TestConfiguredAuthHTTPPath(t *testing.T) {
-    for _, prefix := range []string{"", "/auth", "/identity/v2"} {
-        t.Run(prefix, func(t *testing.T) {
-            m, manager, mock := newAuthTestModule(t)
-            raw, err := json.Marshal(m.catalogSource.Current())
-            if err != nil { t.Fatal(err) }
-            canonical, err := localization.New(authn.AuthHTTPPaths("")).CanonicalCatalog(raw)
-            if err != nil { t.Fatal(err) }
-            catalog := localization.New(authn.AuthHTTPPaths(prefix))
-            if err := catalog.Install(canonical); err != nil { t.Fatal(err) }
-            m.httpPath, m.catalogSource = prefix, catalog
-            cfg := &config.Config{}
-            cfg.Auth.Path = prefix
-            cfg.Auth.Authorization.Enabled = true
-            cfg.Idempotency.TTL = time.Minute
-            actions := actionmodule.New(m.store, pagination.Limits{MaxP:100,MaxS:100}, false, catalog)
-            roles := rolemodule.New(m.store, pagination.Limits{MaxP:100,MaxS:100}, actions, false)
-            handler, err := server.NewRouter(cfg, manager, idempotency.NewMemoryStore(), roles, m)
-            if err != nil { t.Fatal(err) }
-            request := func(method, path, body, token string, want int) {
-                t.Helper()
-                r := httptest.NewRequest(method, path, strings.NewReader(body))
-                if token != "" { r.Header.Set("Authorization", "Bearer "+token) }
-                response := httptest.NewRecorder()
-                handler.ServeHTTP(response, r)
-                if response.Code != want { t.Fatalf("%s %s: got %d want %d: %s", method, path, response.Code, want, response.Body.String()) }
-            }
-            request("POST", prefix+"/pub/challenge", `{"purpose":"login"}`, "", 200)
-            request("GET", prefix+"/info", "", "", 401)
-            request("GET", "/role", "", "", 401)
-            request("GET", "/missing", "", "", 404)
-            if prefix == "" { request("GET", "/auth/info", "", "", 404) } else { request("GET", "/info", "", "", 404) }
-            identity := authn.Identity{UserID:3,Username:"readonly",Code:"EXP78RGH",CredentialVersion:1}
-            session, err := m.sessions.Issue(t.Context(), identity, false)
-            if err != nil { t.Fatal(err) }
-            identity.SessionID = session.SessionID
-            token, _, err := manager.Issue(identity)
-            if err != nil { t.Fatal(err) }
-            mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(permissionRows().AddRow("admin:update:account:profile", `{"bindings":[{"resource_key":"admin:account:profile","operation":"update","feature_keys":["admin:account:profile:modify"]}],"ui":[],"endpoints":[]}`))
-            request("POST", prefix+"/challenge", `{"purpose":"password_change"}`, token, 200)
-            r := httptest.NewRequest("GET", prefix+"/permission", nil)
-            r.Header.Set(permissionHeaderMethod,"GET")
-            r.Header.Set(permissionHeaderPath,"/order/pub/item")
-            response := httptest.NewRecorder()
-            handler.ServeHTTP(response,r)
-            if response.Code != 200 { t.Fatal(response.Code,response.Body.String()) }
-        })
-    }
+	for _, prefix := range []string{"", "/auth", "/identity/v2"} {
+		t.Run(prefix, func(t *testing.T) {
+			m, manager, mock := newAuthTestModule(t)
+			raw, err := json.Marshal(m.catalogSource.Current())
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonical, err := localization.New(AuthHTTPPaths("")).CanonicalCatalog(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalog := localization.New(AuthHTTPPaths(prefix))
+			if err := catalog.Install(canonical); err != nil {
+				t.Fatal(err)
+			}
+			m.httpPath, m.catalogSource = prefix, catalog
+			cfg := &config.Config{}
+			cfg.Auth.Path = prefix
+			cfg.Auth.Authorization.Enabled = true
+			cfg.Idempotency.TTL = time.Minute
+			actions := actionmodule.New(m.store, pagination.Limits{MaxP: 100, MaxS: 100}, false, catalog)
+			roles := rolemodule.New(m.store, pagination.Limits{MaxP: 100, MaxS: 100}, actions, false)
+			handler, err := server.NewRouter(cfg, manager, idempotency.NewMemoryStore(), roles, m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := func(method, path, body, token string, want int) {
+				t.Helper()
+				r := httptest.NewRequest(method, path, strings.NewReader(body))
+				if token != "" {
+					r.Header.Set("Authorization", "Bearer "+token)
+				}
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, r)
+				if response.Code != want {
+					t.Fatalf("%s %s: got %d want %d: %s", method, path, response.Code, want, response.Body.String())
+				}
+			}
+			request("POST", prefix+"/pub/challenge", `{"purpose":"login"}`, "", 200)
+			request("GET", prefix+"/info", "", "", 401)
+			request("GET", "/role", "", "", 401)
+			request("GET", "/missing", "", "", 404)
+			if prefix == "" {
+				request("GET", "/auth/info", "", "", 404)
+			} else {
+				request("GET", "/info", "", "", 404)
+			}
+			identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+			session, err := m.sessions.Issue(t.Context(), identity, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity.SessionID = session.SessionID
+			token, _, err := manager.Issue(identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(permissionRows().AddRow("admin:update:account:profile", `{"bindings":[{"resource_key":"admin:account:profile","operation":"update","feature_keys":["admin:account:profile:modify"]}],"ui":[],"endpoints":[]}`))
+			request("POST", prefix+"/challenge", `{"purpose":"password_change"}`, token, 200)
+			r := httptest.NewRequest("GET", prefix+"/permission", nil)
+			r.Header.Set(permissionHeaderMethod, "GET")
+			r.Header.Set(permissionHeaderPath, "/order/pub/item")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, r)
+			if response.Code != 200 {
+				t.Fatal(response.Code, response.Body.String())
+			}
+		})
+	}
 }
 
 func TestConfiguredAuthPathPreservesResetRestriction(t *testing.T) {
-    for _, prefix := range []string{"", "/auth"} {
-        t.Run(prefix,func(t *testing.T) {
-            m,_,mock := newAuthTestModule(t)
-            m.httpPath=prefix
-            manager,err:=authn.New("test",authTestKey,time.Hour,NewIdentityValidator(m.store,m.sessions,Switches{PasswordResetRequired:true}))
-            if err!=nil {t.Fatal(err)}
-            identity:=authn.Identity{UserID:3,Username:"readonly",Code:"EXP78RGH",CredentialVersion:1}
-            session,err:=m.sessions.Issue(t.Context(),identity,false)
-            if err!=nil {t.Fatal(err)}
-            identity.SessionID=session.SessionID
-            token,_,err:=manager.Issue(identity)
-            if err!=nil {t.Fatal(err)}
-            cfg:=&config.Config{}
-            cfg.Auth.Path=prefix
-            handler,err:=server.NewRouter(cfg,manager,nil,m)
-            if err!=nil {t.Fatal(err)}
-            for _,test:=range []struct{method,path,body string;want int}{
-                {"GET","/info","",403},
-                {"PATCH","/change/pwd","{}",403},
-                {"POST","/challenge",`{"purpose":"password_change"}`,403},
-                {"POST","/challenge",`{"purpose":"password_reset"}`,200},
-                {"PATCH","/reset/pwd","{}",400},
-            } {
-                mock.ExpectQuery("SELECT username, code, status, credential_version, login_count").WithArgs(int64(3),"EXP78RGH").WillReturnRows(sqlmock.NewRows([]string{"username","code","status","credential_version","login_count"}).AddRow("readonly","EXP78RGH",1,1,0))
-                r:=httptest.NewRequest(test.method,prefix+test.path,strings.NewReader(test.body))
-                r.Header.Set("Authorization","Bearer "+token)
-                response:=httptest.NewRecorder()
-                handler.ServeHTTP(response,r)
-                if response.Code!=test.want {t.Fatalf("%s %s: %d want %d: %s",test.method,prefix+test.path,response.Code,test.want,response.Body.String())}
-            }
-        })
-    }
+	for _, prefix := range []string{"", "/auth"} {
+		t.Run(prefix, func(t *testing.T) {
+			m, _, mock := newAuthTestModule(t)
+			m.httpPath = prefix
+			manager, err := authn.New("test", authTestKey, time.Hour, NewIdentityValidator(m.store, m.sessions, Switches{PasswordResetRequired: true}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+			session, err := m.sessions.Issue(t.Context(), identity, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity.SessionID = session.SessionID
+			token, _, err := manager.Issue(identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{}
+			cfg.Auth.Path = prefix
+			handler, err := server.NewRouter(cfg, manager, nil, m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, test := range []struct {
+				method, path, body string
+				want               int
+			}{
+				{"GET", "/info", "", 403},
+				{"PATCH", "/change/pwd", "{}", 403},
+				{"POST", "/challenge", `{"purpose":"password_change"}`, 403},
+				{"POST", "/challenge", `{"purpose":"password_reset"}`, 200},
+				{"PATCH", "/reset/pwd", "{}", 400},
+			} {
+				mock.ExpectQuery("SELECT username, code, status, credential_version, login_count").WithArgs(int64(3), "EXP78RGH").WillReturnRows(sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow("readonly", "EXP78RGH", 1, 1, 0))
+				r := httptest.NewRequest(test.method, prefix+test.path, strings.NewReader(test.body))
+				r.Header.Set("Authorization", "Bearer "+token)
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, r)
+				if response.Code != test.want {
+					t.Fatalf("%s %s: %d want %d: %s", test.method, prefix+test.path, response.Code, test.want, response.Body.String())
+				}
+			}
+		})
+	}
 }
 
-
 func TestAuthHTTPPathMappingsCoverRegisteredRoutes(t *testing.T) {
-    for _,prefix:=range []string{"","/auth"} {
-        m,manager,_:=newAuthTestModule(t)
-        m.httpPath=prefix
-        if _,err:=server.NewRouter(&config.Config{},manager,nil,m);err!=nil {t.Fatal(err)}
-        mapped:=map[string]bool{}
-        for _,actual:=range authn.AuthHTTPPaths(prefix) {mapped[actual]=true}
-        registered:=map[string]bool{}
-        for _,route:=range m.permissionRoutes {
-            if !mapped[route.Path] {t.Fatalf("registered auth route %s has no configured-path mapping",route.Path)}
-            registered[route.Path]=true
-        }
-        for path:=range mapped {if !registered[path] {t.Fatalf("mapped path %s is not registered",path)}}
-    }
+	for _, prefix := range []string{"", "/auth"} {
+		m, manager, _ := newAuthTestModule(t)
+		m.httpPath = prefix
+		if _, err := server.NewRouter(&config.Config{}, manager, nil, m); err != nil {
+			t.Fatal(err)
+		}
+		mapped := map[string]bool{}
+		for _, actual := range AuthHTTPPaths(prefix) {
+			mapped[actual] = true
+		}
+		registered := map[string]bool{}
+		for _, route := range m.permissionRoutes {
+			if !mapped[route.Path] {
+				t.Fatalf("registered auth route %s has no configured-path mapping", route.Path)
+			}
+			registered[route.Path] = true
+		}
+		for path := range mapped {
+			if !registered[path] {
+				t.Fatalf("mapped path %s is not registered", path)
+			}
+		}
+	}
 }

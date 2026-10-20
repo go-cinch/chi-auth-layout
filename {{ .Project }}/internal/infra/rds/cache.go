@@ -30,7 +30,8 @@ type NamespaceCache struct {
 func NewRedisNamespaceCache(dsn, keyPrefix, namespace string) (*NamespaceCache, func(), error) {
 	options, err := redis.ParseURL(strings.TrimSpace(dsn))
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse cache redis dsn: %w", err)
+		// Malformed URLs may expose credentials even in the unwrapped cause.
+		return nil, nil, errors.New("parse cache redis dsn: invalid url")
 	}
 	options.MaxRetries = -1 // The dictionary service owns the retry budget.
 	options.ContextTimeoutEnabled = true

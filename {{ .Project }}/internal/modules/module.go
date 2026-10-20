@@ -1,10 +1,10 @@
 package modules
 
 import (
- "{{ .Computed.module_name_final }}/internal/common/i18n"
 	"context"
- "{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"net/http"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
+	"{{ .Computed.module_name_final }}/internal/common/i18n"
 {{- if eq .Computed.http_router_final "gin" }}
 	"github.com/gin-gonic/gin"
 {{- end }}
@@ -14,11 +14,11 @@ import (
 )
 
 type HTTPModule interface {
- Name() string
+	Name() string
 {{- if eq .Computed.http_router_final "gin" }}
- HTTP(*gin.RouterGroup)
+	HTTP(*gin.RouterGroup)
 {{- else }}
- HTTP() http.Handler
+	HTTP() http.Handler
 {{- end }}
 }
 
@@ -58,8 +58,11 @@ type HTTPPermissionAuthorizer interface {
 
 // HTTPPermissionRouteCatalog receives registered routes before serving requests.
 // Authorizers use this to distinguish static routes from sibling parameters.
-type HTTPPermissionRoute struct { Method string; Path string }
-type HTTPPermissionRouteCatalog interface { SetHTTPPermissionRoutes([]HTTPPermissionRoute) }
+type HTTPPermissionRoute struct {
+	Method string
+	Path   string
+}
+type HTTPPermissionRouteCatalog interface{ SetHTTPPermissionRoutes([]HTTPPermissionRoute) }
 
 // AnonymousHTTPModule handles explicit exceptions at its HTTP boundary.
 type AnonymousHTTPModule interface {
@@ -70,15 +73,25 @@ type AnonymousHTTPModule interface {
 {{ if .Computed.enable_grpc_final -}}
 // GRPCModule exposes RPC services without requiring an HTTP route or Name.
 type GRPCModule interface {
- GRPC(grpc.ServiceRegistrar)
+	GRPC(grpc.ServiceRegistrar)
 }
 {{ end -}}
 
 // HTTPAuditRecorder classifies business targets and persists sanitized audit events.
 type HTTPAuditRecorder interface {
- AuditTarget(method, path string) auditctx.Target
- RecordHTTP(context.Context, auditctx.Event) error
+	AuditTarget(method, path string) auditctx.Target
+	RecordHTTP(context.Context, auditctx.Event) error
 }
 
 // HTTPLocalizer supplies runtime translations without coupling HTTP to a business package.
-type HTTPLocalizer interface { HTTPModule; Translator() i18n.Translator }
+type HTTPLocalizer interface {
+	HTTPModule
+	Translator() i18n.Translator
+}
+
+// HTTPAuthenticationPolicy describes requests allowed during account recovery.
+// The capability owns its paths; shared authentication only enforces the policy.
+type HTTPAuthenticationPolicy interface {
+	HTTPModule
+	AllowRestrictedHTTP(method, path string) bool
+}

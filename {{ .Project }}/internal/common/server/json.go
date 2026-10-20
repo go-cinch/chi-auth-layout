@@ -2,11 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
+	"net/http"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/i18n"
-	"log/slog"
-	"net/http"
 )
 
 type ErrorResponse struct {

@@ -15,7 +15,7 @@ seed_file='./internal/infra/db/migrations/YYYYMMDDHH-02-auth-default-data.sql'
 action_seed_file='./internal/infra/db/migrations/YYYYMMDDHH-03-action-default-data.sql'
 if [ -f "$seed_file" ]; then
   printf '\nRandomizing default seed codes...\n'
-  go run ./internal/cmd/seedcode -file "$seed_file" -file "$action_seed_file"
+  go run -mod=mod ./internal/cmd/seedcode -file "$seed_file" -file "$action_seed_file"
   rm -r './internal/cmd/seedcode'
 fi
 

@@ -2,10 +2,10 @@
 package server
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"context"
 	"net/http"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,10 +30,10 @@ func RequestTimeout(timeout time.Duration) gin.HandlerFunc {
 package server
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"context"
 	"net/http"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 )
 
 func RequestTimeout(timeout time.Duration) func(http.Handler) http.Handler {

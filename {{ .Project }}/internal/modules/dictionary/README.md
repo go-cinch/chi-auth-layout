@@ -7,7 +7,7 @@
 - `operations`: exactly `["read", "create", "update", "delete"]` in that order.
 - `resource_catalog.resources`: a flat resource map, keyed by `scope:module` for directories and `scope:module:resource` for resources. Each node has `kind`, optional `parent`, and ascending sibling `sort`. Directory nodes grant nothing. Resource nodes own `entries` and `operations`.
 - `resource_catalog.buttons`: logical feature mappings keyed by `scope:module:resource:control`, with explicit `btn`, `http`, and `grpc` arrays. `http` entries contain `method,path`; gRPC paths identify full methods. A logical feature belongs to one resource operation. Several features may intentionally share an endpoint.
-- `resource_catalog.defaults`: required empty compatibility object. Default actions explicitly select `config.resource_keys` and `config.feature_keys`.
+- Default actions explicitly select `config.resource_keys` and `config.feature_keys`. The resource catalog contains only `resources` and `buttons`; the old `defaults` object is retired.
 
 Resource `entries` map menu identifiers to `{path,parent_menu_key?}`. Scope defines the application boundary; entries have no legacy type. Each resource operation defines explicit `entry_keys` and `button_keys` arrays. Supported operations are a subset of the four top-level operations. Page-entry grants are independent of selected features. Feature selection expands only the selected features' frontend controls and exact HTTP/RPC rules. Empty arrays grant no feature access; HTTP methods do not determine business operation categories.
 
@@ -17,7 +17,7 @@ Dictionary writes validate the entire resource graph and all references before c
 
 The application installs this dictionary after migrations. Dictionary mutations synchronously replace the local immutable snapshot; a five-second worker detects changes from other replicas. Request authorization resolves from that same snapshot without reloading the dictionary from SQL. Configuration changes therefore affect subsequent requests without renewing tokens. The full catalog is returned as detached data to prevent callers mutating the active snapshot.
 
-`GET /dictionary/pub/i18n` supports `f=default_locale,locales,scopes,operations,group_order,messages,frontend_messages` with `Cache-Control: no-cache`. Omitted `f` returns only `schema_version`, `default_locale`, and `locales`. `schema_version` is always present. `frontend_messages` returns `messages.<locale>.frontend`, including projected menu labels, without backend/shared messages; it cannot be combined with `messages`, which selects every message namespace. Unselected fields are omitted and selected empty collections remain arrays or objects. Metadata-only reads do not copy or transform messages or resource mappings. Vben requests `default_locale,locales,group_order,frontend_messages`. The public response omits `resource_catalog`. Authenticated administrators read mappings through `GET /action/catalog?f=scopes,operations,resource_catalog,defined_actions`. `GET /action/effective?scope=admin&f=btn,http,grpc` reports the signed-in user's effective access, including direct, role, group and built-in grants. The `scope` query selects the inspected scope; the request's own authorization scope remains unchanged.
+`GET /dictionary/pub/i18n` supports `f=default_locale,locales,scopes,operations,group_order,messages,frontend_messages` with `Cache-Control: no-cache`. Omitted `f` returns only `schema_version`, `default_locale`, and `locales`. `schema_version` is always present. `frontend_messages` returns `messages.<locale>.frontend`, including projected menu labels, without backend/shared messages; it cannot be combined with `messages`, which selects every message namespace. Unselected fields are omitted and selected empty collections remain arrays or objects. Metadata-only reads do not copy or transform messages or resource mappings. Vben requests `default_locale,locales,group_order,frontend_messages`. The public response omits `resource_catalog`. Authenticated administrators read mappings through `GET /action/catalog?f=scopes,operations,resource_catalog,defined_actions`. `GET /action/effective?scope=admin&f=btn,http,grpc` reports the signed-in user's effective access, including direct and role/group assignments, with assigned default/wildcard actions. The `scope` query selects the inspected scope; the request's own authorization scope remains unchanged.
 
 Full mutations of `I18N_CATALOG`, including rename, disable, and deletion in a mixed batch, require the explicit developer publish capability or scoped all authority and join the permission-mutation transaction lock. Ordinary dictionary edits do not require that authority. Resource features are developer-maintained configuration. The permission editor submits feature references; the server generates actual rules and never treats submitted paths as authority. Backend errors and labels use the request language, then the configured default, then bootstrap messages or stable identifiers.
 
@@ -35,7 +35,7 @@ default resource/feature selections, and rejects dangling final references.
 Published catalogs keep no resource or feature aliases. The four-file initial
 baseline stores only canonical resource and feature identifiers.
 
-Optimistic updates limited to `group_order` and `frontend.groups` may be made by permission-grant managers. The expected JSON value is rechecked under the row lock; resource, feature, language and other message edits require developer publication authority.
+Optimistic updates limited to `group_order` and `frontend.groups` require the selected action update capability or catalog publishing authority. The expected JSON value is rechecked under the row lock; resource, feature, language and other message edits require developer publication authority.
 
 The application owns one `localization.Module` and injects its catalog into auth,
 action and dictionary modules. Permission rules and resource graphs live in that
@@ -48,3 +48,22 @@ resource-permission interface with the transaction callback context, so catalog,
 action references and group changes commit or roll back together. Action obtains
 authoritative definition catalogs through the dictionary interface in the same
 transaction rather than querying dictionary storage directly.
+
+`group_defaults` is an optional object mapping registered permission-group words
+to Boolean values. It controls creation-time user assignments, not resource
+mapping or effective permissions. Invalid/unregistered groups and non-Boolean
+values are rejected. Changes require developer publication authority or scoped
+all permissions; the group-name/order-only permission path does not allow them.
+The developer workbench reads this field from the authenticated full dictionary.
+
+The current catalog protocol retires `resource_catalog.defaults` and resource `collection`.
+New writes reject both fields. Existing hidden navigation and read references are
+preserved through explicit `frontend_visible` and `reference_operations` values.
+Default actions require explicit `resource_keys`; nonempty legacy default maps
+are rejected rather than silently changing authorization. Vben upgrades old
+browser drafts containing the empty map and legacy collection marker before save.
+
+Default-group switches use a sparse representation: store only `true` entries.
+A missing key means non-default; omit `group_defaults` when no groups are enabled.
+Dictionary create/update validates Boolean inputs before removing `false` entries.
+The baseline and dictionary writes use this representation without changing permission grants.

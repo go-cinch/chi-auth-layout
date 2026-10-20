@@ -8,16 +8,22 @@ import (
 )
 
 func resourceFixture() ResourceCatalog {
-	return ResourceCatalog{Defaults: map[string]ResourceGrant{}, Resources: map[string]Resource{
+	return ResourceCatalog{Resources: map[string]Resource{
 		"admin:system": {Kind: "directory", Sort: 10},
 		"admin:system:user": {Kind: "resource", Parent: "admin:system", Sort: 10, Entries: map[string]ResourceEntry{"admin:menu:system:user": {Path: "/system/user"}}, Operations: map[string]ResourceOperation{
 			"read":   {EntryKeys: []string{"admin:menu:system:user"}, ButtonKeys: []string{"admin:system:user:query", "admin:system:user:detail"}},
 			"update": {EntryKeys: []string{}, ButtonKeys: []string{"admin:system:user:edit"}},
 		}},
 	}, Buttons: map[string]Feature{
-		"admin:system:user:query":  {Btn: []string{"admin:btn:system:user:query"}, HTTP: []HTTPPath{ {Method: "GET", Path: "/user"}}, GRPC: []string{}},
-		"admin:system:user:detail": {Btn: []string{"admin:btn:system:user:view-detail"}, HTTP: []HTTPPath{ {Method: "GET", Path: "/user/{id}"}}, GRPC: []string{"/auth.v1.User/GetUser"}},
-		"admin:system:user:edit":   {Btn: []string{"admin:btn:system:user:edit"}, HTTP: []HTTPPath{ {Method: "PATCH", Path: "/user/{id}"}}, GRPC: []string{}},
+		"admin:system:user:query": {Btn: []string{"admin:btn:system:user:query"}, HTTP: []HTTPPath{
+			{Method: "GET", Path: "/user"},
+		}, GRPC: []string{}},
+		"admin:system:user:detail": {Btn: []string{"admin:btn:system:user:view-detail"}, HTTP: []HTTPPath{
+			{Method: "GET", Path: "/user/{id}"},
+		}, GRPC: []string{"/auth.v1.User/GetUser"}},
+		"admin:system:user:edit": {Btn: []string{"admin:btn:system:user:edit"}, HTTP: []HTTPPath{
+			{Method: "PATCH", Path: "/user/{id}"},
+		}, GRPC: []string{}},
 	}}
 }
 
@@ -88,7 +94,6 @@ func TestResourceCatalogValidation(t *testing.T) {
 			r.Operations = map[string]ResourceOperation{"read": {}}
 			c.Resources["admin:system"] = r
 		}},
-		{"unknown default scope", func(c *ResourceCatalog) { c.Defaults["unknown"] = ResourceGrant{} }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := resourceFixture()
@@ -107,15 +112,15 @@ func TestResolveResourceFeaturesAndPublicProjection(t *testing.T) {
 	localizer := New()
 	_ = localizer
 	c := resourceFixture()
-	read, err := c.Resolve("admin:read:system:user", []string{"admin:system:user:query"})
+	read, err := c.ResolveBinding("admin", "admin:system:user", "read", []string{"admin:system:user:query"})
 	if err != nil || len(read.Endpoints) != 1 || read.Endpoints[0].Path != "/user" || !read.UI[0].PageEntry {
 		t.Fatalf("%+v %v", read, err)
 	}
-	empty, err := c.Resolve("admin:read:system:user", []string{})
+	empty, err := c.ResolveBinding("admin", "admin:system:user", "read", []string{})
 	if err != nil || len(empty.Endpoints) != 0 || empty.UI[0].ButtonKeys == nil {
 		t.Fatalf("%+v %v", empty, err)
 	}
-	all, err := c.Resolve("admin:read:system:user", nil)
+	all, err := c.ResolveBinding("admin", "admin:system:user", "read", nil)
 	if err != nil || len(all.Endpoints) != 3 {
 		t.Fatalf("%+v %v", all, err)
 	}
@@ -132,27 +137,18 @@ func TestResolveResourceFeaturesAndPublicProjection(t *testing.T) {
 	if !foundGRPC {
 		t.Fatalf("missing explicit GRPC method: %+v", all.Endpoints)
 	}
-	c.Defaults["admin"] = ResourceGrant{UI: []ResourceUI{}, Endpoints: []ResourceEndpoint{grpc}}
-	if err := c.Validate([]string{"admin"}, FixedOperations); err != nil {
-		t.Fatal(err)
-	}
-	for _, method := range []string{"", "GET", "grpc"} {
-		invalid := grpc
-		invalid.Method = method
-		c.Defaults["admin"] = ResourceGrant{UI: []ResourceUI{}, Endpoints: []ResourceEndpoint{invalid}}
-		if err := c.Validate([]string{"admin"}, FixedOperations); err == nil {
-			t.Fatalf("accepted invalid gRPC method %q", method)
-		}
-	}
-	delete(c.Defaults, "admin")
-	for _, keys := range [][]string{ {"admin:system:user:edit"}, {"admin:system:user:query", "admin:system:user:query"}, {"mini:system:user:query"}} {
-		if _, err := c.Resolve("admin:read:system:user", keys); err == nil {
+	for _, keys := range [][]string{
+		{"admin:system:user:edit"}, {"admin:system:user:query", "admin:system:user:query"}, {"mini:system:user:query"},
+	} {
+		if _, err := c.ResolveBinding("admin", "admin:system:user", "read", keys); err == nil {
 			t.Fatal(keys)
 		}
 	}
-	for _, word := range []string{"bad", "admin:read:missing:resource", "admin:export:system:user"} {
-		if _, err := c.Resolve(word, nil); err == nil {
-			t.Fatal(word)
+	for _, invalid := range []struct{ key, operation string }{
+		{"bad", "read"}, {"admin:missing:resource", "read"}, {"admin:system:user", "export"},
+	} {
+		if _, err := c.ResolveBinding("admin", invalid.key, invalid.operation, nil); err == nil {
+			t.Fatal(invalid)
 		}
 	}
 	t.Cleanup(localizer.Reset)
@@ -283,7 +279,7 @@ func TestScopedBuiltinsAndExplicitDefaultFeatures(t *testing.T) {
 		{"duplicate feature", []string{"admin:system:user"}, []string{"admin:system:user:query", "admin:system:user:query"}, 0, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			grant, err := catalog.ResolvePermission("admin:default:system:general", test.features, "default", test.resources)
+			grant, err := catalog.ResolvePermission("admin:default:system:default", test.features, "default", test.resources)
 			if test.invalid {
 				if err == nil {
 					t.Fatal("invalid default accepted")
@@ -295,7 +291,7 @@ func TestScopedBuiltinsAndExplicitDefaultFeatures(t *testing.T) {
 			}
 		})
 	}
-	all, err := catalog.ResolvePermission("admin:all:system:general", nil, "all")
+	all, err := catalog.ResolvePermission("admin:all:system:all", nil, "all")
 	if err != nil || len(all.Endpoints) != 4 {
 		t.Fatalf("scoped all: %+v %v", all, err)
 	}
@@ -303,11 +299,12 @@ func TestScopedBuiltinsAndExplicitDefaultFeatures(t *testing.T) {
 	if err != nil || len(mini.Endpoints) != 0 || len(mini.UI) != 0 {
 		t.Fatalf("cross-scope expansion: %+v %v", mini, err)
 	}
-	grant, err := catalog.ResolvePermission("admin:grant:system:permission-admin", nil, "")
-	if err != nil || len(grant.Endpoints) != 0 || len(grant.UI) != 0 {
-		t.Fatal(grant, err)
+	if _, err := catalog.ResolvePermission("admin:grant:system:permission-admin", nil, ""); err == nil {
+		t.Fatal("an action word conferred authority without bindings")
 	}
-	for _, test := range []struct{ word, builtin string }{ {"bad", "all"}, {"admin:read:system:user", ""}, {"admin:all:system:general", "unknown"}} {
+	for _, test := range []struct{ word, builtin string }{
+		{"bad", "all"}, {"admin:read:system:user", ""}, {"admin:all:system:all", "unknown"},
+	} {
 		if _, err := catalog.ResolvePermission(test.word, nil, test.builtin); err == nil {
 			t.Fatal(test)
 		}
@@ -335,5 +332,67 @@ func TestSelectedResourceExpansion(t *testing.T) {
 				t.Fatalf("unselected endpoint: %s %+v", field, endpoint)
 			}
 		}
+	}
+}
+
+func TestEmptyResourcesAndOrganizationalAssociations(t *testing.T) {
+	hidden := false
+	graph := ResourceCatalog{
+		Buttons: map[string]Feature{},
+		Resources: map[string]Resource{
+			"admin:high-risk":                  {Kind: "directory", FrontendVisible: &hidden, PermissionGroup: "admin:system:high-risk"},
+			"admin:high-risk:all":              {Kind: "resource", Parent: "admin:high-risk", PermissionScope: "*", Operations: map[string]ResourceOperation{}},
+			"admin:high-risk:permission-admin": {Kind: "resource", Parent: "admin:high-risk"},
+		},
+	}
+	catalog := Catalog{SchemaVersion: 2, DefaultLocale: "en-US", Scopes: []string{"admin"}, Operations: FixedOperations,
+		Locales: []Language{
+			{Tag: "en-US", Name: "English", Enabled: true},
+		},
+		Messages: map[string]Messages{"en-US": {Frontend: map[string]any{}}}, ResourceCatalog: graph}
+	raw, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := New().CanonicalCatalog(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(normalized)
+	if err != nil {
+		t.Fatalf("empty resources rejected: %v", err)
+	}
+	roundtrip, err := json.Marshal(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := Parse(roundtrip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ResourceCatalog.Resources["admin:high-risk"].PermissionGroup != "admin:system:high-risk" || persisted.ResourceCatalog.Resources["admin:high-risk:all"].PermissionScope != "*" {
+		t.Fatal("organizational associations were lost")
+	}
+	if _, err := graph.ResolveBinding("admin", "admin:high-risk:all", "read", nil); err == nil {
+		t.Fatal("an unconfigured resource granted an operation")
+	}
+	for _, test := range []struct {
+		name, key string
+		value     Resource
+	}{
+		{"cross scope group", "admin:high-risk", Resource{Kind: "directory", PermissionGroup: "mini:system:high-risk"}},
+		{"group on resource", "admin:high-risk:all", Resource{Kind: "resource", Parent: "admin:high-risk", PermissionGroup: "admin:system:high-risk"}},
+		{"cross scope action", "admin:high-risk:all", Resource{Kind: "resource", Parent: "admin:high-risk", PermissionScope: "mini:*"}},
+		{"action on directory", "admin:high-risk", Resource{Kind: "directory", PermissionScope: "*"}},
+		{"invalid action", "admin:high-risk:all", Resource{Kind: "resource", Parent: "admin:high-risk", PermissionScope: "invalid"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			original := graph.Resources[test.key]
+			graph.Resources[test.key] = test.value
+			defer func() { graph.Resources[test.key] = original }()
+			if err := graph.Validate([]string{"admin", "mini"}, FixedOperations); err == nil {
+				t.Fatal("invalid association accepted")
+			}
+		})
 	}
 }

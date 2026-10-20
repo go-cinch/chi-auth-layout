@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
@@ -17,8 +19,6 @@ import (
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
 	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 )
 
 var userTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
@@ -92,6 +92,7 @@ func TestUserCRUD(t *testing.T) {
 		t.Fatalf("blank username: %v", err)
 	}
 	mock.ExpectBegin()
+	expectDefaultUserPermissions(mock)
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(6))
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(int64(6), nil, "", "operator", sqlmock.AnyArg(), sqlmock.AnyArg(), StatusActive, "{}").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(int64(6), nil, "", "operator", sqlmock.AnyArg(), sqlmock.AnyArg(), StatusActive, "{}").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -169,11 +170,19 @@ func TestUserCRUD(t *testing.T) {
 		t.Fatalf("delete super user: %v", err)
 	}
 	m.switches.ProtectSuper = false
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT id FROM t_user .* FOR UPDATE").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE t_msg SET sender_id = NULL, updated_at").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM t_user").WithArgs(pq.Array([]int64{1, 2})).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
 	if err := m.Delete(ctx, 1, 2, 1); err != nil {
 		t.Fatal(err)
 	}
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT id FROM t_user .* FOR UPDATE").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE t_msg SET sender_id = NULL, updated_at").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM t_user").WithArgs(pq.Array([]int64{99})).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
 	if err := m.Delete(ctx, 99); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
@@ -281,6 +290,7 @@ func TestUserRelationsAndFullUpdate(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT EXISTS").WithArgs(roleID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE code").WithArgs(pq.Array(codes)).WillReturnRows(actionRows())
+	expectDefaultUserPermissions(mock)
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
 	mock.ExpectExec("INSERT INTO t_user").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(7)).WillReturnRows(
@@ -414,7 +424,9 @@ func TestLastLoggedInTimeRanges(t *testing.T) {
 			t.Fatalf("single/paired bounds: %#v %v", value, err)
 		}
 	}
-	for _, bounds := range [][2]int64{ {-1, 1}, {1, -1}, {2, 1}, {1, 1}, {9007199254740992, 9007199254740993}} {
+	for _, bounds := range [][2]int64{
+		{-1, 1}, {1, -1}, {2, 1}, {1, 1}, {9007199254740992, 9007199254740993},
+	} {
 		if _, err := m.List(t.Context(), ListUsersInput{LastLoggedInFrom: &bounds[0], LastLoggedInTo: &bounds[1]}); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("accepted invalid last-login range %v: %v", bounds, err)
 		}
@@ -445,6 +457,7 @@ func (userPermissionPolicy) RequirePermissionGrant(context.Context) error {
 }
 
 func (userPermissionPolicy) LockPermissionMutation(context.Context) error { return nil }
+
 func TestUserAssignmentAndCredentialPolicies(t *testing.T) {
 	m, mock := newTestModule(t)
 	m.SetPermissionAdministration(userPermissionPolicy{})
@@ -471,9 +484,46 @@ func TestUserAssignmentAndCredentialPolicies(t *testing.T) {
 		}
 	}
 	mock.ExpectBegin()
+	mock.ExpectExec("SELECT id FROM t_user .* FOR UPDATE").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE t_msg SET sender_id = NULL, updated_at").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM t_user").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := m.Delete(t.Context(), 2); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func (userPermissionPolicy) RequirePermissionEndpoint(ctx context.Context, method, path string) error {
+	return userPermissionPolicy{}.RequirePermissionGrant(ctx)
+}
+
+func (userPermissionPolicy) RequirePermissionOperation(ctx context.Context, resource, operation string) error {
+	return userPermissionPolicy{}.RequirePermissionGrant(ctx)
+}
+
+func expectDefaultUserPermissions(mock sqlmock.Sqlmock) {
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT a.code FROM t_action AS a").WillReturnRows(sqlmock.NewRows([]string{"code"}))
+}
+
+func TestDeleteReferenceFailuresRollBack(t *testing.T) {
+    for _, stage := range []string{"lock", "detach", "delete", "commit"} {
+        t.Run(stage, func(t *testing.T) {
+            m, mock := newTestModule(t)
+            failure := errors.New("injected failure")
+            mock.ExpectBegin()
+            steps := []string{"SELECT id FROM t_user .* FOR UPDATE", "UPDATE t_msg SET sender_id = NULL, updated_at", "DELETE FROM t_user"}
+            for index, statement := range steps {
+                query := mock.ExpectExec(statement)
+                if stage == []string{"lock", "detach", "delete"}[index] {
+                    query.WillReturnError(failure)
+                    break
+                }
+                query.WillReturnResult(sqlmock.NewResult(0, 1))
+            }
+            if stage == "commit" { mock.ExpectCommit().WillReturnError(failure) } else { mock.ExpectRollback() }
+            if err := m.Delete(t.Context(), 9); !errors.Is(err, failure) { t.Fatalf("error=%v", err) }
+            if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+        })
+    }
 }

@@ -3,6 +3,10 @@ package tests
 import (
 	"encoding/json"
 	"errors"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/config"
@@ -10,10 +14,6 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/server"
 	"{{ .Computed.module_name_final }}/internal/modules/audit"
 	"{{ .Computed.module_name_final }}/internal/modules/auth"
-	"net/http/httptest"
-	"strings"
-	"testing"
-	"time"
 )
 
 func TestAuditAggregationsAndIsolation(t *testing.T) {
@@ -36,7 +36,7 @@ func TestAuditAggregationsAndIsolation(t *testing.T) {
 	if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "operation", Username: "audit_test", Module: "user", Method: "PATCH", Path: "/user/1", Status: 200, OccurredAt: at}); err != nil {
 		t.Fatal(err)
 	}
-	f := audit.Filter{Kind: "login", From: at - 1, To: at + 1000, Timezone: "Asia/Shanghai"}
+	f := audit.Filter{Kind: "login", From: auditTime(at - 1), To: auditTime(at + 1000), Timezone: "Asia/Shanghai"}
 	s, err := m.Summary(ctx, f)
 	if err != nil || s.Total != 8 || s.Success != 3 || s.SuccessRate != 37.5 || s.Heatmap[0].Count != 8 || len(s.RepeatedFailures) != 1 {
 		t.Fatal(s, err)
@@ -90,7 +90,7 @@ func TestAuditSelectedCellAndSort(t *testing.T) {
 		}
 	}
 	day, hour, size := int32(0), int32(8), int32(10)
-	f := audit.Filter{Kind: "login", From: at - 1, To: at + 7200000, Timezone: "Asia/Shanghai", Weekday: &day, Hour: &hour, Username: "alice", Size: &size, Sort: "failure"}
+	f := audit.Filter{Kind: "login", From: auditTime(at - 1), To: auditTime(at + 7200000), Timezone: "Asia/Shanghai", Weekday: &day, Hour: &hour, Username: "alice", Size: &size, Sort: "failure"}
 	p, err := m.List(ctx, f)
 	if err != nil || p.Total != 2 || p.Items[0].Status != 401 {
 		t.Fatal(p, err)
@@ -118,7 +118,7 @@ func TestAuditSelectedCellAndSort(t *testing.T) {
 	}
 	day = 6
 	hour = 1
-	f = audit.Filter{Kind: "login", From: fold - 3600000, To: fold + 7200000, Timezone: "America/New_York", Weekday: &day, Hour: &hour, Size: &size}
+	f = audit.Filter{Kind: "login", From: auditTime(fold - 3600000), To: auditTime(fold + 7200000), Timezone: "America/New_York", Weekday: &day, Hour: &hour, Size: &size}
 	p, err = m.List(ctx, f)
 	if err != nil || p.Total != 2 {
 		t.Fatal("DST fold selection", p, err)
@@ -158,7 +158,7 @@ func TestAuditReadExportPermissions(t *testing.T) {
 	}
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
-	handler, err := server.NewRouter(cfg, manager, nil, auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{}, localizer), audit.New(store, limits))
+	handler, err := server.NewRouter(cfg, manager, nil, auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{}, localizer, nil), audit.New(store, limits))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestAuditHeatmapCalendarBuckets(t *testing.T) {
 		}
 	}
 	from := time.Date(2026, 9, 13, 0, 0, 0, 0, location)
-	f := audit.Filter{Kind: "login", From: from.UnixMilli(), To: now.UnixMilli(), Timezone: location.String()}
+	f := audit.Filter{Kind: "login", From: auditTime(from.UnixMilli()), To: auditTime(now.UnixMilli()), Timezone: location.String()}
 	s, err := m.Summary(t.Context(), f)
 	if err != nil || len(s.Heatmap) != 30 || s.HeatmapGranularity != "day" {
 		t.Fatal(s, err)
@@ -209,8 +209,8 @@ func TestAuditHeatmapCalendarBuckets(t *testing.T) {
 		}
 		populated++
 		selected := f
-		selected.From = cell.StartedAt
-		selected.To = cell.EndedAt
+		selected.From = auditTime(cell.StartedAt)
+		selected.To = auditTime(cell.EndedAt)
 		page, err := m.List(t.Context(), selected)
 		if err != nil || cell.Count != 1 || page.Total != cell.Count {
 			t.Fatal(cell, page, err)
@@ -219,7 +219,7 @@ func TestAuditHeatmapCalendarBuckets(t *testing.T) {
 	if populated != 3 {
 		t.Fatal("same weekday from different dates was merged", populated)
 	}
-	f.From = now.Add(-24 * time.Hour).UnixMilli()
+	f.From = auditTime(now.Add(-24 * time.Hour).UnixMilli())
 	s, err = m.Summary(t.Context(), f)
 	if err != nil || len(s.Heatmap) != 24 || s.Heatmap[23].Count != 1 {
 		t.Fatal(s, err)
@@ -271,7 +271,7 @@ func TestAuditPayloadPersistenceAndHistory(t *testing.T) {
 	if err := m.RecordHTTP(t.Context(), auditctx.Event{Kind: "operation", Module: "user", UserID: 2, Username: "guest", Operation: "create", ResourceType: "user", Method: "POST", Path: "/user", Status: 200, OccurredAt: at, RequestParams: request, ResponseParams: response}); err != nil {
 		t.Fatal(err)
 	}
-	page, err := m.List(t.Context(), audit.Filter{Kind: "operation", From: at, To: at + 1000})
+	page, err := m.List(t.Context(), audit.Filter{Kind: "operation", From: auditTime(at), To: auditTime(at + 1000)})
 	if err != nil || page.Total != 1 {
 		t.Fatal(page, err)
 	}
@@ -304,7 +304,7 @@ func TestAuditHeaderPersistenceAndHistory(t *testing.T) {
 		if err := m.RecordHTTP(t.Context(), auditctx.Event{Kind: kind, Module: "auth", Method: "POST", Path: "/pub/login", Status: 401, OccurredAt: at, Header: header}); err != nil {
 			t.Fatal(err)
 		}
-		page, err := m.List(t.Context(), audit.Filter{Kind: kind, From: at, To: at + 1000})
+		page, err := m.List(t.Context(), audit.Filter{Kind: kind, From: auditTime(at), To: auditTime(at + 1000)})
 		if err != nil || page.Total != 1 || string(page.Items[0].Header) != "null" {
 			t.Fatalf("list must not load headers: %+v, %v", page, err)
 		}
@@ -331,5 +331,42 @@ func TestAuditHeaderPersistenceAndHistory(t *testing.T) {
 	legacy, err := m.Get(t.Context(), "login", legacyID)
 	if err != nil || string(legacy.Header) != "null" {
 		t.Fatalf("legacy header default: %+v, %v", legacy, err)
+	}
+}
+
+func auditTime(value int64) *int64 { return &value }
+
+func TestAuditOneSidedBoundsAndSelectedPayloadsPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	limits, _ := pagination.New(100, 100)
+	m := audit.New(store, limits)
+	ctx := t.Context()
+	for _, at := range []int64{1000, 2000, 3000} {
+		if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "login", Username: "alice", Module: "auth", Method: "POST", Path: "/pub/login", Status: 200, OccurredAt: at, Header: json.RawMessage(`{"user_agent":"test"}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		from, to *int64
+		want     int64
+	}{ {auditTime(1500), nil, 2}, {nil, auditTime(2500), 2}, {auditTime(1500), auditTime(3000), 1}} {
+		f := audit.Filter{Kind: "login", From: c.from, To: c.to, Query: "   "}
+		page, err := m.List(ctx, f)
+		if err != nil || page.Total != c.want {
+			t.Fatal(page, err)
+		}
+		summary, err := m.Summary(ctx, f, "metrics", "trend", "heatmap")
+		if err != nil || summary.Total != c.want || (summary.From == nil) != (c.from == nil) || (summary.To == nil) != (c.to == nil) {
+			t.Fatal(summary, err)
+		}
+		detail, err := m.GetSelected(ctx, "login", page.Items[0].ID, []string{"id", "header"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, _ := json.Marshal(detail)
+		var fields map[string]any
+		if json.Unmarshal(encoded, &fields) != nil || len(fields) != 2 || fields["header"] == nil {
+			t.Fatal(string(encoded))
+		}
 	}
 }

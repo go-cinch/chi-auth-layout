@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
-	"{{ .Computed.module_name_final }}/internal/common/i18n"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -22,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/i18n"
 
 {{- if .Computed.enable_redis_final }}
 	"github.com/redis/go-redis/v9"
@@ -78,14 +78,14 @@ type pointCaptchaAnswer struct {
 }
 
 type PointCaptcha struct {
-	store      PointCaptchaStore
-	dictionary PointCaptchaDictionary
-	threshold  int64
-	ttl        time.Duration
-	width      int
-	height     int
-	tolerance  int
-	random     io.Reader
+	store         PointCaptchaStore
+	dictionary    PointCaptchaDictionary
+	threshold     int64
+	ttl           time.Duration
+	width         int
+	height        int
+	tolerance     int
+	random        io.Reader
 	enableE2ETest func() bool
 }
 

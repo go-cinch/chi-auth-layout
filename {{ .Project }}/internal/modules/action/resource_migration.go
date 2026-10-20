@@ -46,11 +46,15 @@ func (m *Module) ReconcileResourcePermissions(ctx context.Context, before, after
 		if err := rows.Scan(&current.id, &current.word, &current.group, &current.config); err != nil {
 			return false, err
 		}
+		converted, changed, err := MigrateConvertedResourceConfig(previous.ResourceCatalog, rc, current.config, resources, featureRenames)
+		if err != nil {
+			return false, err
+		}
+		current.config = converted
 		var config map[string]json.RawMessage
 		if err := json.Unmarshal(current.config, &config); err != nil {
 			return false, err
 		}
-		changed := false
 		if raw, exists := config["bindings"]; exists {
 			var bindings []map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &bindings); err != nil {
@@ -161,7 +165,23 @@ func (m *Module) ReconcileResourcePermissions(ctx context.Context, before, after
 		if err := resolveStoredConfig(*catalog, current.word, &projected); err != nil {
 			return false, nil
 		}
-		if !reflect.DeepEqual(stored.UI, projected.UI) || !reflect.DeepEqual(stored.Endpoints, projected.Endpoints) {
+		if !reflect.DeepEqual(stored.UI, projected.UI) || !reflect.DeepEqual(stored.Endpoints, projected.Endpoints) || stored.PermissionScope != projected.PermissionScope || !reflect.DeepEqual(stored.PermissionScopes, projected.PermissionScopes) {
+			if len(projected.PermissionScopes) == 0 {
+				delete(config, "permission_scopes")
+			} else {
+				config["permission_scopes"], err = json.Marshal(projected.PermissionScopes)
+				if err != nil {
+					return false, err
+				}
+			}
+			if projected.PermissionScope == "" {
+				delete(config, "permission_scope")
+			} else {
+				config["permission_scope"], err = json.Marshal(projected.PermissionScope)
+				if err != nil {
+					return false, err
+				}
+			}
 			config["ui"], err = json.Marshal(projected.UI)
 			if err != nil {
 				return false, err

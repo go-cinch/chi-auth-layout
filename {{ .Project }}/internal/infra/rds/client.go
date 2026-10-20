@@ -30,7 +30,11 @@ func newClient(options *redis.Options, prefix string) (*Client, error) {
 			}
 		}
 	}
-	return &Client{client: redis.NewClient(options), prefix: prefix + ":"}, nil
+	// Apply request deadlines to socket I/O for every client, including sessions
+	// and idempotency. Keep caller-owned options unchanged.
+	configured := *options
+	configured.ContextTimeoutEnabled = true
+	return &Client{client: redis.NewClient(&configured), prefix: prefix + ":"}, nil
 }
 
 func (c *Client) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.StatusCmd {

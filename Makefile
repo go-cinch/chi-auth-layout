@@ -1,10 +1,11 @@
-.PHONY: lint test full local
+.PHONY: lint test test-local full local
 
 SCAFFOLD ?= scaffold
 PROJECT ?= auth-service
 OUTPUT_DIR ?= ..
 HTTP_ROUTER ?= chi
 ENABLE_GRPC ?= true
+DELETE_OLD_SQL ?= true
 
 ifneq ($(ENABLE_GRPC),true)
 ifneq ($(ENABLE_GRPC),false)
@@ -21,18 +22,25 @@ endif
 lint:
 	$(SCAFFOLD) lint scaffold.yml
 
-test: lint
+test: lint test-local
 	./scripts/test-template.sh
+
+test-local:
+	sh ./scripts/test-local.sh
 
 full:
 	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(OUTPUT_DIR)" --run-hooks=always --no-prompt --preset=full "Project=$(PROJECT)" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)"
 
-# Set delete_old_sql to true below when this update must replace the demo SQL.
+# Use DELETE_OLD_SQL=false when retaining an initialized local database.
+# Generate SQL separately from the immutable backup. In preserve mode, match
+# regenerated migrations by NN-description and append only new migrations.
 local:
 	@set -eu; \
-	delete_old_sql=true; \
+	delete_old_sql='$(DELETE_OLD_SQL)'; \
+	case "$$delete_old_sql" in true|false) ;; *) printf 'DELETE_OLD_SQL must be true or false\n' >&2; exit 2 ;; esac; \
 	migrations_dir="$(CURDIR)/../demos/auth/internal/infra/db/migrations"; \
 	auth_config="$(CURDIR)/../demos/auth/conf/auth.yml"; \
+	app_binary="$(CURDIR)/../demos/auth/bin/auth"; \
 	test -d "$$migrations_dir"; \
 	test -f "$$auth_config"; \
 	if [ "$$delete_old_sql" = false ]; then \
@@ -46,6 +54,7 @@ local:
 	fi; \
 	backup_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/chi-auth-layout-state.XXXXXX"); \
 	mkdir "$$backup_dir/sql"; \
+	if [ -f "$$app_binary" ]; then cp -p "$$app_binary" "$$backup_dir/original-binary"; fi; \
 	awk ' \
 		$$0 == "  jwt:" { in_jwt = 1; next } \
 		in_jwt && /^  [^ ]/ { in_jwt = 0 } \
@@ -59,22 +68,32 @@ local:
 		trap - EXIT INT TERM; \
 		if [ "$$delete_old_sql" = false ] || [ "$$status" -ne 0 ]; then \
 			if [ "$$status" -eq 0 ]; then \
+				mkdir "$$backup_dir/new-sql"; \
+				latest=$$(find "$$backup_dir/sql" -maxdepth 1 -type f -name '*.sql' -exec basename {} \; | LC_ALL=C sort | tail -n 1); \
 				for migration in "$$migrations_dir"/*.sql; do \
-					suffix=$$(basename "$$migration" | cut -c12-); \
-					case "$$suffix" in \
-						03-action-default-data.sql|04-dictionary-default-data.sql) \
-							previous=$$(find "$$backup_dir/sql" -name "*-$$suffix" -print -quit); \
-							if [ -n "$$previous" ]; then \
-								if [ "$$suffix" = 03-action-default-data.sql ]; then \
-									python3 "$(CURDIR)/scripts/refresh-action-seed.py" "$$previous" "$$migration"; \
-								else cp -p "$$migration" "$$previous"; fi; \
-							fi ;; \
-					esac; \
-					if ! find "$$backup_dir/sql" -name "*-$$suffix" | grep -q .; then cp -p "$$migration" "$$backup_dir/sql/"; fi; \
+					[ -f "$$migration" ] || continue; \
+					name=$${migration##*/}; \
+					suffix=$${name#*-}; \
+					known=false; \
+					for previous in "$$backup_dir/sql"/*.sql; do \
+						[ -f "$$previous" ] || continue; \
+						previous_name=$${previous##*/}; \
+						if [ "$${previous_name#*-}" = "$$suffix" ]; then known=true; break; fi; \
+					done; \
+					[ "$$known" = false ] || continue; \
+					first=$$(printf '%s\n%s\n' "$$latest" "$$name" | LC_ALL=C sort | head -n 1); \
+					if [ -n "$$latest" ] && [ "$$first" != "$$latest" ]; then \
+						printf 'new migration %s must sort after existing migration %s\n' "$$name" "$$latest" >&2; \
+						status=1; break; \
+					fi; \
+					if ! cp -p "$$migration" "$$backup_dir/new-sql/"; then status=1; break; fi; \
 				done; \
 			fi; \
 			find "$$migrations_dir" -maxdepth 1 -type f -name '*.sql' -exec rm -f {} +; \
 			find "$$backup_dir/sql" -maxdepth 1 -type f -name '*.sql' -exec cp -p {} "$$migrations_dir/" \;; \
+			if [ "$$status" -eq 0 ]; then \
+				find "$$backup_dir/new-sql" -maxdepth 1 -type f -name '*.sql' -exec cp -p {} "$$migrations_dir/" \;; \
+			fi; \
 		fi; \
 		awk -v replacement_file="$$backup_dir/jwt-key-line" ' \
 			BEGIN { \
@@ -88,15 +107,23 @@ local:
 			END { if (replaced != 1) exit 1 } \
 		' "$$auth_config" > "$$backup_dir/auth.yml"; \
 		mv "$$backup_dir/auth.yml" "$$auth_config"; \
+		if [ "$$status" -eq 0 ] && [ "$$delete_old_sql" = false ]; then \
+			if make -C "$(CURDIR)/../demos/auth" build; then :; else \
+				status=$$?; \
+				find "$$migrations_dir" -maxdepth 1 -type f -name '*.sql' -exec rm -f {} +; \
+				find "$$backup_dir/sql" -maxdepth 1 -type f -name '*.sql' -exec cp -p {} "$$migrations_dir/" \;; \
+			fi; \
+		fi; \
+		if [ "$$status" -ne 0 ]; then \
+			if [ -f "$$backup_dir/original-binary" ]; then \
+				cp -p "$$backup_dir/original-binary" "$$app_binary"; \
+			else rm -f "$$app_binary"; fi; \
+		fi; \
 		rm -r "$$backup_dir"; \
 		exit "$$status"; \
 	}; \
 	trap restore_state EXIT; \
 	trap 'exit 130' INT; \
 	trap 'exit 143' TERM; \
-	if [ "$$delete_old_sql" = true ]; then \
-		find "$$migrations_dir" -maxdepth 1 -type f -name '*.sql' -exec rm -f {} +; \
-	else \
-		find "$$migrations_dir" -maxdepth 1 -type f \( -name '*-01-auth-schema.sql' -o -name '*-02-auth-default-data.sql' -o -name '*-03-action-default-data.sql' -o -name '*-04-dictionary-default-data.sql' \) -exec rm -f {} +; \
-	fi; \
+	find "$$migrations_dir" -maxdepth 1 -type f -name '*.sql' -exec rm -f {} +; \
 	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full --overwrite --force "Project=auth" "http_port=8081" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)"

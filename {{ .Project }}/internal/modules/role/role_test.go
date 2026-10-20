@@ -4,19 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/lib/pq"
 )
 
 var roleTestTime = time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC).UnixMilli()
@@ -115,11 +115,19 @@ func TestRoleCRUD(t *testing.T) {
 	if err := m.Delete(ctx, -1); !errors.Is(err, ErrIDs) {
 		t.Fatal(err)
 	}
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT id FROM t_role .* FOR UPDATE").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE t_user SET role_id = NULL, updated_at").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM t_role").WithArgs(pq.Array([]int64{1, 2})).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
 	if err := m.Delete(ctx, 1, 2, 1); err != nil {
 		t.Fatal(err)
 	}
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT id FROM t_role .* FOR UPDATE").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE t_user SET role_id = NULL, updated_at").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM t_role").WithArgs(pq.Array([]int64{99})).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
 	if err := m.Delete(ctx, 99); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
@@ -335,6 +343,7 @@ func (p rolePermissionPolicy) RequirePermissionGrant(context.Context) error {
 }
 
 func (rolePermissionPolicy) LockPermissionMutation(context.Context) error { return nil }
+
 func TestRoleGrantPolicyAndEmptyDeletion(t *testing.T) {
 	m, mock := newTestModule(t)
 	m.SetPermissionAdministration(rolePermissionPolicy{})
@@ -364,10 +373,42 @@ func TestRoleGrantPolicyAndEmptyDeletion(t *testing.T) {
 		}
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT EXISTS.*FROM t_role").WillReturnRows(sqlmock.NewRows([]string{"assigned"}).AddRow(assigned))
+		mock.ExpectExec("SELECT id FROM t_role .* FOR UPDATE").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("UPDATE t_user SET role_id = NULL, updated_at").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec("DELETE FROM t_role").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 		if err := m.Delete(t.Context(), 2); err != nil {
 			t.Fatal(err)
 		}
 	}
+}
+
+func (p rolePermissionPolicy) RequirePermissionEndpoint(ctx context.Context, method, path string) error {
+	return p.RequirePermissionGrant(ctx)
+}
+
+func (p rolePermissionPolicy) RequirePermissionOperation(ctx context.Context, resource, operation string) error {
+	return p.RequirePermissionGrant(ctx)
+}
+
+func TestDeleteReferenceFailuresRollBack(t *testing.T) {
+    for _, stage := range []string{"lock", "detach", "delete", "commit"} {
+        t.Run(stage, func(t *testing.T) {
+            m, mock := newTestModule(t)
+            failure := errors.New("injected failure")
+            mock.ExpectBegin()
+            steps := []string{"SELECT id FROM t_role .* FOR UPDATE", "UPDATE t_user SET role_id = NULL, updated_at", "DELETE FROM t_role"}
+            for index, statement := range steps {
+                query := mock.ExpectExec(statement)
+                if stage == []string{"lock", "detach", "delete"}[index] {
+                    query.WillReturnError(failure)
+                    break
+                }
+                query.WillReturnResult(sqlmock.NewResult(0, 1))
+            }
+            if stage == "commit" { mock.ExpectCommit().WillReturnError(failure) } else { mock.ExpectRollback() }
+            if err := m.Delete(t.Context(), 9); !errors.Is(err, failure) { t.Fatalf("error=%v", err) }
+            if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+        })
+    }
 }

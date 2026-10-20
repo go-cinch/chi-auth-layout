@@ -3,7 +3,10 @@ package auth
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/common/report"
+	"{{ .Computed.module_name_final }}/internal/modules/action"
 )
 
 // The transaction lock serializes changes which can affect a caller's current
@@ -20,58 +23,113 @@ func (m *Module) LockPermissionMutation(ctx context.Context) error {
 	return nil
 }
 
-func (m *Module) permissionAdministration(ctx context.Context) (bool, bool, error) {
+func (m *Module) RequireAllPermissions(ctx context.Context) error {
 	if err := m.LockPermissionMutation(ctx); err != nil {
-		return false, false, err
+		return err
 	}
 	identity, _ := authn.FromContext(ctx)
-	const query = `WITH assigned AS (
- SELECT BTRIM(value) AS code FROM t_user u CROSS JOIN LATERAL UNNEST(STRING_TO_ARRAY(u.action,',')) value WHERE u.id=$1
- UNION
- SELECT BTRIM(value) FROM t_user u JOIN t_role r ON r.id=u.role_id CROSS JOIN LATERAL UNNEST(STRING_TO_ARRAY(r.action,',')) value WHERE u.id=$1
- UNION
- SELECT BTRIM(value) FROM t_user_user_group_relation relation JOIN t_user_group g ON g.id=relation.user_group_id CROSS JOIN LATERAL UNNEST(STRING_TO_ARRAY(g.action,',')) value WHERE relation.user_id=$1
- ) SELECT COALESCE(BOOL_OR(a.config->>'builtin'='all'),false),COALESCE(BOOL_OR(a.word=$2||':grant:system:permission-admin'),false)
- FROM t_action a JOIN assigned ON assigned.code=a.code WHERE a.scope=$2`
-	var all, grant bool
-	if err := m.store.SQL(ctx).QueryRowContext(ctx, query, identity.UserID, authn.PermissionScope(ctx)).Scan(&all, &grant); err != nil {
-		return false, false, fmt.Errorf("load permission administration capability: %w", err)
-	}
-	return all, grant, nil
-}
-
-func (m *Module) RequireAllPermissions(ctx context.Context) error {
-	all, _, err := m.permissionAdministration(ctx)
+	permission, err := m.permissionsFor(ctx, identity.UserID, authn.PermissionScope(ctx), report.Fields{"http"})
 	if err != nil {
 		return err
 	}
-	if !all {
+	if permission.PermissionScope != "*" {
 		return authn.ErrPermissionAdministrationRequired
 	}
 	return nil
 }
 
-func (m *Module) RequirePermissionGrant(ctx context.Context) error {
-	all, grant, err := m.permissionAdministration(ctx)
+func (m *Module) RequirePermissionEndpoint(ctx context.Context, method, path string) error {
+	if err := m.LockPermissionMutation(ctx); err != nil {
+		return err
+	}
+	_, allowed, err := m.CheckPermission(ctx, PermissionTarget{Method: method, Path: path})
 	if err != nil {
 		return err
 	}
-	if !all && !grant {
+	if !allowed {
 		return authn.ErrPermissionGrantRequired
 	}
 	return nil
 }
 
-// Publishing the resource graph is delegated by its explicit developer feature.
-// Merely receiving ordinary dictionary or permission-group endpoints is insufficient.
 func (m *Module) RequireCatalogAdministration(ctx context.Context) error {
-    all, _, err := m.permissionAdministration(ctx)
-    if err != nil { return err }
-    if all { return nil }
-    identity, ok := authn.FromContext(ctx)
-    if !ok { return authn.ErrPermissionAdministrationRequired }
-    permission, err := m.permissions(ctx, identity.UserID, authn.PermissionScope(ctx))
-    if err != nil { return err }
-    if !permission.buttonGrants[authn.PermissionScope(ctx)+":btn:system:developer:publish"] { return authn.ErrPermissionAdministrationRequired }
-    return nil
+	if err := m.LockPermissionMutation(ctx); err != nil {
+		return err
+	}
+	identity, _ := authn.FromContext(ctx)
+	permission, err := m.permissionsFor(ctx, identity.UserID, authn.PermissionScope(ctx), report.Fields{"btn"})
+	if err != nil {
+		return err
+	}
+	if permission.PermissionScope == "*" || permission.buttonGrants[authn.PermissionScope(ctx)+":btn:system:developer:publish"] {
+		return nil
+	}
+	return authn.ErrPermissionAdministrationRequired
+}
+
+// RequirePermissionOperation rechecks the selected CRUD binding and its concrete
+// HTTP resource after taking the transaction lock. Directory references are
+// expanded into those bindings when the action is saved, never on authorization.
+func (m *Module) RequirePermissionOperation(ctx context.Context, resource, operation string) error {
+	method, path, valid := permissionOperationTarget(resource, operation)
+	if !valid {
+		return authn.ErrPermissionGrantRequired
+	}
+	if err := m.LockPermissionMutation(ctx); err != nil {
+		return err
+	}
+	identity, _ := authn.FromContext(ctx)
+	catalog := m.catalogSource.Select([]string{"resource_catalog"})
+	permission, err := m.permissionsFromCatalog(ctx, identity.UserID, authn.PermissionScope(ctx), report.Fields{"http"}, catalog, operation)
+	if err != nil {
+		return err
+	}
+	if permission.PermissionScope == "*" {
+		return nil
+	}
+	for _, endpoint := range permission.endpoints {
+		if endpoint.Protocol == "http" && endpoint.Method == method && canonicalRoute(endpoint.Path) == canonicalRoute(path) {
+			return nil
+		}
+	}
+	return authn.ErrPermissionGrantRequired
+}
+
+func permissionOperationTarget(resource, operation string) (string, string, bool) {
+	switch resource {
+	case "user", "role", "action", "user-group":
+	default:
+		return "", "", false
+	}
+	path := "/" + resource
+	switch operation {
+	case "read":
+		return http.MethodGet, path, true
+	case "create":
+		return http.MethodPost, path, true
+	case "update":
+		return http.MethodPatch, path + "/{id}", true
+	case "delete":
+		return http.MethodDelete, path + "/{id}", true
+	default:
+		return "", "", false
+	}
+}
+
+func permissionOperationConfig(config action.Config, operation string) action.Config {
+	if config.Builtin == "all" || config.Builtin == "default" && operation == "read" {
+		return config
+	}
+	selected := []action.ResourceBinding{}
+	if config.Bindings != nil {
+		for _, binding := range *config.Bindings {
+			if binding.Operation == operation || binding.Operation == "*" {
+				selected = append(selected, binding)
+			}
+		}
+	} else if config.ResourceKey != "" && (config.Operation == operation || config.Operation == "*") {
+		selected = append(selected, action.ResourceBinding{ResourceKey: config.ResourceKey, Operation: config.Operation, FeatureKeys: config.FeatureKeys})
+	}
+	// ResolveConfig regenerates endpoints from the catalog, ignoring stored caches.
+	return action.Config{Bindings: &selected, UI: []action.UIBinding{}, Endpoints: []action.Endpoint{}}
 }

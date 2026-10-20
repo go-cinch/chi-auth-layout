@@ -4,15 +4,13 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"{{ .Computed.module_name_final }}/internal/common/authn"
 )
 
 func TestCatalogHTTPPathsFollowConfiguredMount(t *testing.T) {
-	const raw = `{"schema_version":2,"default_locale":"en-US","scopes":["admin"],"locales":[{"tag":"en-US","name":"English","enabled":true}],"messages":{"en-US":{}},"resource_catalog":{"resources":{"admin:session:access":{"kind":"resource","operations":{"read":{"entry_keys":[],"button_keys":["admin:session:access:info"]}}}},"buttons":{"admin:session:access:info":{"btn":[],"http":[{"method":"GET","path":"/auth/info"},{"method":"GET","path":"/user"}],"grpc":["/auth.v1.Auth/Info"]}},"defaults":{}}}`
+	const raw = `{"schema_version":2,"default_locale":"en-US","scopes":["admin"],"locales":[{"tag":"en-US","name":"English","enabled":true}],"messages":{"en-US":{}},"resource_catalog":{"resources":{"admin:session:access":{"kind":"resource","operations":{"read":{"entry_keys":[],"button_keys":["admin:session:access:info"]}}}},"buttons":{"admin:session:access:info":{"btn":[],"http":[{"method":"GET","path":"/auth/info"},{"method":"GET","path":"/user"}],"grpc":["/auth.v1.Auth/Info"]}}}}`
 	for _, prefix := range []string{"", "/auth", "/identity/v2"} {
 		t.Run(prefix, func(t *testing.T) {
-			m := New(authn.AuthHTTPPaths(prefix))
+			m := New(map[string]string{"/auth/info": prefix + "/info"})
 			if err := m.Install([]byte(raw)); err != nil {
 				t.Fatal(err)
 			}
@@ -35,8 +33,8 @@ func TestCatalogHTTPPathsFollowConfiguredMount(t *testing.T) {
 }
 
 func TestCanonicalHTTPPathsPreserveCatalogExtensions(t *testing.T) {
-	m := New(authn.AuthHTTPPaths(""))
-	input := []byte(`{"extension":123,"resource_catalog":{"extension":{"keep":true},"buttons":{"feature":{"extension":"keep","http":[{"method":"GET","path":"/info","extension":"keep"}],"grpc":["/auth.v1.Auth/Info"]}},"defaults":{"admin":{"endpoints":[{"protocol":"http","method":"POST","path":"/logout"},{"protocol":"grpc","method":"GRPC","path":"/auth.v1.Auth/Info"}]}}}}`)
+	m := New(map[string]string{"/auth/info": "/info"})
+	input := []byte(`{"extension":123,"resource_catalog":{"extension":{"keep":true},"buttons":{"feature":{"extension":"keep","http":[{"method":"GET","path":"/info","extension":"keep"}],"grpc":["/auth.v1.Auth/Info"]}}}}`)
 	canonical, err := m.CanonicalCatalog(input)
 	if err != nil {
 		t.Fatal(err)

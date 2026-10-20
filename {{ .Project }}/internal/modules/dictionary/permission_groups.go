@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
-	"strings"
 )
 
 var ErrGroupNotEmpty = apperror.New("DICTIONARY_GROUP_NOT_EMPTY", "only empty permission groups can be deleted")

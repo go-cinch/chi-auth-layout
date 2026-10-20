@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/i18n"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/i18n"
 )
 
 const (

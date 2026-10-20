@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/lib/pq"
 	"reflect"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
@@ -44,7 +45,14 @@ func (m *Module) guardCatalogMutation(ctx context.Context, ids []int64, nextKey 
 	}
 	if catalog || nextKey == LocalizationKey {
 		if len(groupsOnly) > 0 && groupsOnly[0] {
-			return authn.RequireAdministrationGrant(ctx, m.administration)
+			err := authn.RequirePermissionOperation(ctx, m.administration, "action", "update")
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, authn.ErrPermissionGrantRequired) && !errors.Is(err, authn.ErrPermissionAdministrationRequired) {
+				return err
+			}
+			return authn.RequireCatalogAdministration(ctx, m.administration)
 		}
 		return authn.RequireCatalogAdministration(ctx, m.administration)
 	}

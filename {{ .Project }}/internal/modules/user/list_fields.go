@@ -23,8 +23,13 @@ func listProjection(value *User, fields report.Fields, now string) report.Projec
 	p.Add("role_id", "role_id", &value.RoleID)
 	p.Add("last_logged_in_at", "last_logged_in_at", &value.LastLoggedInAt)
 	p.Add("login_count", "login_count", &value.LoginCount)
-	p.Add("status", "CASE WHEN "+expiredLockSQL(now)+" THEN 1 ELSE status END", &value.Status)
-	p.Add("metadata", "CASE WHEN "+expiredLockSQL(now)+" THEN metadata - 'lock_expired_at' ELSE metadata END", &value.selectedMetadata)
+	status, metadata := "status", "metadata"
+	if now != "" {
+		status = "CASE WHEN " + expiredLockSQL(now) + " THEN 1 ELSE status END"
+		metadata = "CASE WHEN " + expiredLockSQL(now) + " THEN metadata - 'lock_expired_at' ELSE metadata END"
+	}
+	p.Add("status", status, &value.Status)
+	p.Add("metadata", metadata, &value.selectedMetadata)
 	p.Add("wrong", "wrong", &value.Wrong)
 	if fields.Has("action_codes") || fields.Has("actions") {
 		p.Require("action", &value.selectedActions)
@@ -54,6 +59,10 @@ func (m *Module) listSelected(ctx context.Context, fields report.Fields, where s
 	if err != nil {
 		return nil, err
 	}
+	return m.enrichSelected(ctx, items, fields)
+}
+
+func (m *Module) enrichSelected(ctx context.Context, items []User, fields report.Fields) ([]User, error) {
 	for i := range items {
 		item := &items[i]
 		if fields.Has("metadata") {

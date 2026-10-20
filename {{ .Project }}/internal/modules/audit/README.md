@@ -11,7 +11,7 @@ The existing super action grants access, while other roles require explicit gran
 Filters: `q` (literal case-insensitive account/IP/path/trace substring), `module`,
 `result` (`success`/`failure`), `from`/`to` (Unix ms, inclusive/exclusive),
 `time_zone` (IANA timezone); list uses existing `p`/`s` semantics and `{items,t,p,s}`.
-The default range is seven days; maximum is 90 days, and timestamps must not exceed year 9999. CSV exports at most 10,000
+Omitting both bounds selects the last seven days. A supplied `from` or `to` constrains only that side; omitted boundaries remain absent. Paired ranges and chart allocations span at most 90 days, and timestamps must not exceed year 9999. For a single-bound chart, matching event extents determine only the chart allocation; summary `from`/`to` retain null for the omitted bound. Blank `q` values are ignored after trimming; nonblank keywords use case-insensitive literal substring matching. CSV exports at most 10,000
 matching records and rejects larger results rather than silently truncating.
 Untrusted spreadsheet cell prefixes are neutralized.
 
@@ -94,3 +94,12 @@ Business timestamps use BIGINT Unix milliseconds in SQL and int64 in Go/HTTP. Ca
 Operation events include `operation`, `resource_type`, and `resource_id` when known. Request/response parameters describe the HTTP exchange; they are not a database before/after snapshot. Audit records retain actor/account snapshots after account deletion.
 
 Headers and request/response payloads are returned by the detail endpoint only. List and CSV queries load metadata without headers or payloads, keeping large-page memory usage bounded by metadata rather than captured request data.
+
+## Selected detail fields
+
+Both `/audit/login/detail/{id}` and `/audit/operation/detail/{id}` accept `f`.
+The selector includes every list metadata field plus `header`, `request_params`,
+and `response_params`. For example, `f=id,occurred_at,status` omits all payload SQL
+columns. Omitted `f` preserves the full detail response. Explicit selections return
+only selected fields, retaining zero values and nulls. Empty, unknown, duplicate,
+or repeated selectors and malformed query strings return HTTP 400 before SQL.

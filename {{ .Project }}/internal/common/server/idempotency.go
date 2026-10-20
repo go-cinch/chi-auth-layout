@@ -1,11 +1,11 @@
 package server
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
 {{- if eq .Computed.http_router_final "gin" }}
@@ -37,6 +37,7 @@ func GinIdempotency(store idempotency.Store, ttl time.Duration) gin.HandlerFunc 
 		c.Next()
 	}
 }
+
 {{ end -}}
 func claimIdempotency(w http.ResponseWriter, r *http.Request, store idempotency.Store, ttl time.Duration) bool {
 	if r.Method != http.MethodPost {

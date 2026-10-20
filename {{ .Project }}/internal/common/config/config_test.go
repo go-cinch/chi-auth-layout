@@ -105,6 +105,7 @@ func TestRedisPrefixEnvironmentOverride(t *testing.T) {
 		t.Fatalf("redis prefix = %q", cfg.Redis.Prefix)
 	}
 }
+
 {{ end -}}
 func TestLoadDirErrors(t *testing.T) {
 	if _, _, err := LoadDir(filepath.Join(t.TempDir(), "missing")); err == nil {

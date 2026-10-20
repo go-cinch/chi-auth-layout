@@ -98,7 +98,7 @@ func (m *Module) ResetPassword(ctx context.Context, input PasswordResetInput) (*
 		return nil, err
 	}
 	if err := m.passwordGuard.Clear(ctx, identity.UserID); err != nil {
-		slog.WarnContext(ctx, "clear password reset failures failed: "+err.Error(), "operation", "clear_password_reset_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
+		slog.WarnContext(ctx, fmt.Sprintf("clear password reset failures for user %d failed: %v", identity.UserID, err), "operation", "clear_password_reset_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
 	}
 	return result, nil
 }

@@ -11,13 +11,18 @@ import (
 )
 
 type IdentityValidator struct {
+	httpPath              string
 	store                 *db.Store
 	sessions              *Sessions
 	passwordResetRequired bool
 }
 
-func NewIdentityValidator(store *db.Store, sessions *Sessions, switches Switches) *IdentityValidator {
-	return &IdentityValidator{store: store, sessions: sessions, passwordResetRequired: switches.PasswordResetRequired}
+func NewIdentityValidator(store *db.Store, sessions *Sessions, switches Switches, paths ...string) *IdentityValidator {
+	prefix := ""
+	if len(paths) > 0 {
+		prefix = paths[0]
+	}
+	return &IdentityValidator{httpPath: prefix, store: store, sessions: sessions, passwordResetRequired: switches.PasswordResetRequired}
 }
 
 func (v *IdentityValidator) ValidateIdentity(ctx context.Context, identity authn.Identity) error {
@@ -31,11 +36,14 @@ func (v *IdentityValidator) ResolveIdentity(ctx context.Context, identity authn.
 		return authn.Identity{}, err
 	}
 	current, status, err := currentCredentialIdentity(ctx, v.store, identity, v.passwordResetRequired)
+	if errors.Is(err, ErrUnauthorized) {
+		return authn.Identity{}, authn.ErrUnauthorized
+	}
 	if err != nil {
 		return authn.Identity{}, err
 	}
 	if status != userStatusActive {
-		return authn.Identity{}, ErrUnauthorized
+		return authn.Identity{}, authn.ErrUnauthorized
 	}
 	return current, nil
 }
@@ -63,4 +71,8 @@ func currentCredentialIdentity(ctx context.Context, store *db.Store, identity au
 	}
 	current.PasswordResetRequired = passwordResetRequired && loginCount == 0
 	return current, status, nil
+}
+
+func (v *IdentityValidator) AllowRestrictedHTTP(method, path string) bool {
+	return PasswordResetAllowedHTTP(method, path, v.httpPath) || (method == "GET" && path == v.httpPath+"/permission")
 }

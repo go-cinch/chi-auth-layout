@@ -3,6 +3,7 @@ package authn_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/golang-jwt/jwt/v5"
 	"net/http/httptest"
 	"testing"
@@ -17,7 +18,7 @@ type sessionValidator struct {
 
 func (v *sessionValidator) ValidateIdentity(context.Context, authn.Identity) error {
 	if !v.valid {
-		return errors.New("session revoked")
+		return authn.ErrUnauthorized
 	}
 	return nil
 }
@@ -115,8 +116,8 @@ func TestManagerValidatesSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	validator.valid = false
-	if _, err := manager.AuthenticateRequest(request); err == nil {
-		t.Fatal("revoked session was accepted")
+	if _, err := manager.AuthenticateRequest(request); !errors.Is(err, authn.ErrUnauthorized) {
+		t.Fatalf("revoked session error = %v", err)
 	}
 	if _, _, err := manager.Issue(authn.Identity{CredentialVersion: 1, UserID: 7, Username: "operator", Code: "ABCDEFGH"}); err == nil {
 		t.Fatal("sessionless identity was accepted")
@@ -138,6 +139,60 @@ func TestManagerRejectsUnversionedJWT(t *testing.T) {
 		}
 		if _, err := manager.Parse(token); !errors.Is(err, authn.ErrUnauthorized) {
 			t.Fatalf("accepted version %d: %v", version, err)
+		}
+	}
+}
+
+type identityValidatorFunc func(context.Context, authn.Identity) error
+
+func (f identityValidatorFunc) ValidateIdentity(ctx context.Context, identity authn.Identity) error {
+	return f(ctx, identity)
+}
+
+type identityResolver struct{ identityValidatorFunc }
+
+func (v identityResolver) ResolveIdentity(ctx context.Context, identity authn.Identity) (authn.Identity, error) {
+	return identity, v.ValidateIdentity(ctx, identity)
+}
+
+func TestManagerPreservesIdentityErrors(t *testing.T) {
+	storageErr := errors.New("identity storage unavailable")
+	for _, resolve := range []bool{false, true} {
+		for _, want := range []error{nil, authn.ErrUnauthorized, storageErr, context.Canceled, context.DeadlineExceeded} {
+			t.Run(fmt.Sprintf("resolver=%t/error=%v", resolve, want), func(t *testing.T) {
+				ctx := t.Context()
+				identity := authn.Identity{CredentialVersion: 1, UserID: 7, Username: "operator", Code: "ABCDEFGH", SessionID: "session-1"}
+				validate := identityValidatorFunc(func(gotCtx context.Context, got authn.Identity) error {
+					if gotCtx != ctx || got != identity {
+						t.Fatalf("identity validation lost request context or identity")
+					}
+					if want == nil {
+						return nil
+					}
+					return fmt.Errorf("validate stored identity: %w", want)
+				})
+				var validator authn.IdentityValidator = validate
+				if resolve {
+					validator = identityResolver{validate}
+				}
+				manager, err := authn.New("test", testKey, time.Hour, validator)
+				if err != nil {
+					t.Fatal(err)
+				}
+				token, _, err := manager.Issue(identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := httptest.NewRequest("GET", "/user", nil).WithContext(ctx)
+				request.Header.Set("Authorization", "Bearer "+token)
+				result, err := manager.AuthenticateRequest(request)
+				if !errors.Is(err, want) {
+					t.Fatalf("authentication error = %v, want %v", err, want)
+				}
+				if want != nil && result != nil {
+					t.Fatal("failed authentication returned an authenticated request")
+				}
+			})
 		}
 	}
 }

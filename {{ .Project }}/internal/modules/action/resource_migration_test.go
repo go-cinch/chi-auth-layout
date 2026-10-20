@@ -43,7 +43,6 @@ func (want jsonDocumentArg) Match(value driver.Value) bool {
 func resourceMoveCatalog(key string) localization.Catalog {
 	feature := key + ":query"
 	return localization.Catalog{SchemaVersion: 2, DefaultLocale: "en-US", Scopes: []string{"admin"}, Operations: localization.FixedOperations, Locales: []localization.Language{ {Tag: "en-US", Name: "English", Enabled: true}}, Messages: map[string]localization.Messages{"en-US": {}}, ResourceCatalog: localization.ResourceCatalog{
-		Defaults:  map[string]localization.ResourceGrant{},
 		Resources: map[string]localization.Resource{key: {Kind: "resource", Entries: map[string]localization.ResourceEntry{"admin:menu:system:user": {Path: "/system/user"}}, Operations: map[string]localization.ResourceOperation{"read": {EntryKeys: []string{"admin:menu:system:user"}, ButtonKeys: []string{feature}}}}},
 		Buttons:   map[string]localization.Feature{feature: {Btn: []string{"admin:btn:system:user:query"}, HTTP: []localization.HTTPPath{ {Method: "GET", Path: "/user"}}, GRPC: []string{}}},
 	}}
@@ -61,14 +60,14 @@ func TestResourceMovePreservesActionIdentityAndMigratesExplicitSelections(t *tes
 	mock.ExpectQuery("SELECT id, word, action_group, config FROM t_action").WillReturnRows(sqlmock.NewRows([]string{"id", "word", "action_group", "config"}).
 		AddRow(9, "admin:read:business:people", "admin:business:people", []byte(ordinary)).
 		AddRow(10, "admin:read:business:legacy", "admin:business:legacy", []byte(legacy)).
-		AddRow(2, "admin:default:system:general", "admin:system:general", []byte(defaults)))
+		AddRow(2, "admin:default:system:default", "admin:system:general", []byte(defaults)))
 	for _, row := range []struct {
 		id                  int64
 		word, group, config string
 	}{
 		{9, "admin:read:business:people", "admin:business:people", ordinary},
 		{10, "admin:read:business:legacy", "admin:business:legacy", legacy},
-		{2, "admin:default:system:general", "admin:system:general", defaults},
+		{2, "admin:default:system:default", "admin:system:general", defaults},
 	} {
 		mock.ExpectExec("UPDATE t_action SET word").WithArgs(row.word, row.group, jsonDocumentArg(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(row.config, oldKey, newKey), `"ui":[]`, `"ui":[{"menu_key":"admin:menu:system:user","menu_path":"/system/user","page_entry":true,"button_keys":["admin:btn:system:user:query"]}]`), `"endpoints":[]`, `"endpoints":[{"protocol":"http","method":"GET","path":"/user"}]`)), sqlmock.AnyArg(), row.id).WillReturnResult(sqlmock.NewResult(0, 1))
 	}

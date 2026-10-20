@@ -98,9 +98,10 @@ type schema struct {
 }
 
 type generator struct {
-	limits     pagination.Limits
-	components map[string]*schema
-	visiting   map[string]bool
+	limits      pagination.Limits
+	components  map[string]*schema
+	visiting    map[string]bool
+	schemaNames map[*sourcePackage]map[string]string
 }
 
 var routeMethods = map[string]string{
@@ -155,6 +156,7 @@ func run(source, configDir, output, title string) error {
 	}
 	routes := discoverRoutes(packages)
 	gen := &generator{limits: limits, components: make(map[string]*schema), visiting: make(map[string]bool)}
+	gen.registerSchemaNames(packages, source)
 	for index := range routes {
 		gen.describeRoute(&routes[index])
 		gen.describeAuditRoute(&routes[index])
@@ -616,7 +618,7 @@ func (g *generator) typeSchema(pkg *sourcePackage, expression ast.Expr) *schema 
 	case *ast.StructType:
 		return g.structSchema(pkg, value)
 	case *ast.InterfaceType:
-		return &schema{typeName: "object"}
+		return &schema{anyJSON: true}
 	case *ast.Ident:
 		if primitive := primitiveSchema(value.Name); primitive != nil {
 			return primitive
@@ -628,12 +630,16 @@ func (g *generator) typeSchema(pkg *sourcePackage, expression ast.Expr) *schema 
 		if _, ok := declaration.(*ast.StructType); !ok {
 			return g.typeSchema(pkg, declaration)
 		}
-		if !g.visiting[value.Name] {
-			g.visiting[value.Name] = true
-			g.components[value.Name] = g.typeSchema(pkg, declaration)
-			delete(g.visiting, value.Name)
+		name := value.Name
+		if qualified := g.schemaNames[pkg][name]; qualified != "" {
+			name = qualified
 		}
-		return &schema{ref: "#/components/schemas/" + value.Name}
+		if !g.visiting[name] {
+			g.visiting[name] = true
+			g.components[name] = g.typeSchema(pkg, declaration)
+			delete(g.visiting, name)
+		}
+		return &schema{ref: "#/components/schemas/" + name}
 	default:
 		return &schema{typeName: "object"}
 	}
@@ -660,6 +666,9 @@ func (g *generator) structSchema(pkg *sourcePackage, value *ast.StructType) *sch
 			optional = strings.Contains(reflect.StructTag(tag).Get("json"), "omitempty")
 		}
 		properties[name] = g.typeSchema(pkg, field.Type)
+		if _, pointer := field.Type.(*ast.StarExpr); pointer {
+			properties[name].nullable = true
+		}
 		if field.Tag != nil {
 			tag, _ := strconv.Unquote(field.Tag.Value)
 			properties[name].example = reflect.StructTag(tag).Get("example")
@@ -690,7 +699,7 @@ func primitiveSchema(name string) *schema {
 	case "float64":
 		return &schema{typeName: "number", format: "double"}
 	case "any":
-		return &schema{typeName: "object"}
+		return &schema{anyJSON: true}
 	default:
 		return nil
 	}
@@ -918,6 +927,10 @@ func renderSchema(output *strings.Builder, value *schema, indent int) {
 		return
 	}
 	if value.ref != "" {
+		if value.nullable {
+			output.WriteString(spaces + "anyOf:\n" + spaces + "  - $ref: " + strconv.Quote(value.ref) + "\n" + spaces + "  - type: object\n" + spaces + "    nullable: true\n" + spaces + "    enum: [null]\n")
+			return
+		}
 		output.WriteString(spaces + "$ref: " + strconv.Quote(value.ref) + "\n")
 		return
 	}
@@ -1143,4 +1156,33 @@ func upperFirst(value string) string {
 	runes := []rune(value)
 	runes[0] = unicode.ToUpper(runes[0])
 	return string(runes)
+}
+
+// registerSchemaNames disambiguates package-owned contracts before routes are
+// visited, so discovery order cannot change a previously emitted reference.
+func (g *generator) registerSchemaNames(packages []*sourcePackage, root string) {
+	owners := map[string][]*sourcePackage{}
+	for _, pkg := range packages {
+		for name, declaration := range pkg.types {
+			if _, object := declaration.(*ast.StructType); object {
+				owners[name] = append(owners[name], pkg)
+			}
+		}
+	}
+	g.schemaNames = map[*sourcePackage]map[string]string{}
+	for name, packages := range owners {
+		if len(packages) < 2 {
+			continue
+		}
+		for _, pkg := range packages {
+			relative, err := filepath.Rel(root, pkg.directory)
+			if err != nil {
+				relative = pkg.name
+			}
+			if g.schemaNames[pkg] == nil {
+				g.schemaNames[pkg] = map[string]string{}
+			}
+			g.schemaNames[pkg][name] = strings.ReplaceAll(filepath.ToSlash(relative), "/", ".") + "." + name
+		}
+	}
 }

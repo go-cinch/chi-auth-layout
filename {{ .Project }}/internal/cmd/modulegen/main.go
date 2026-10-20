@@ -25,7 +25,7 @@ type moduleSpec struct {
 	Arguments  []string
 	HTTP       bool
 {{- if .Computed.enable_grpc_final }}
-	GRPC       bool
+	GRPC bool
 {{- end }}
 }
 
@@ -196,7 +196,7 @@ func inspectModule(dir, rootImport, moduleImport string, application map[string]
 			return moduleSpec{}, false, fmt.Errorf("module %s matches multiple Application fields", implementation)
 		}
 		if len(fields) == 1 {
-			return moduleSpec{Alias: currentPackage.Name, Instance: "a."+fields[0], HTTP: hasHTTP{{ if .Computed.enable_grpc_final }}, GRPC: hasGRPC{{ end }}}, true, nil
+			return moduleSpec{Alias: currentPackage.Name, Instance: "a." + fields[0], HTTP: hasHTTP{{ if .Computed.enable_grpc_final }}, GRPC: hasGRPC{{ end }}}, true, nil
 		}
 		for _, file := range currentPackage.Files {
 			imports, err := importPaths(file)
@@ -233,7 +233,7 @@ func assertedModules(file *ast.File, imports map[string]string, rootImport strin
 				continue
 			}
 			selector, ok := specification.Type.(*ast.SelectorExpr)
-			if !ok || (selector.Sel.Name != "Module" && selector.Sel.Name != "HTTPModule"{{ if .Computed.enable_grpc_final }} && selector.Sel.Name != "GRPCModule"{{ end }}) {
+			if !ok || (selector.Sel.Name != "Module" && selector.Sel.Name != "HTTPModule" {{ if .Computed.enable_grpc_final }} && selector.Sel.Name != "GRPCModule"{{ end }}) {
 				continue
 			}
 			alias, ok := selector.X.(*ast.Ident)

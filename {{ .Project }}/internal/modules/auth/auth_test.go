@@ -4,17 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"net/http/httptest"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
-	"{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/infra/db"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
 
 const authTestKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -54,7 +54,7 @@ func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) 
 	if sliderErr != nil {
 		t.Fatal(sliderErr)
 	}
-	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, slider, passwordGuard, Switches{PasswordResetRequired: true}, localizer), authenticator, mock
+	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, slider, passwordGuard, Switches{PasswordResetRequired: true}, localizer, defaultPermissionsStub{}), authenticator, mock
 }
 
 func passwordHash(t *testing.T, password string) string {
@@ -226,26 +226,32 @@ func TestRegister(t *testing.T) {
 		t.Fatalf("blank password: %v", err)
 	}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT nextval").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectRollback()
 	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "secret1"}); err == nil || errors.Is(err, ErrInvalidRegistration) {
 		t.Fatalf("sequence error: %v", err)
 	}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(36)))
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(
-		int64(36), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		int64(36), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(), "",
 	).WillReturnError(&pq.Error{Code: "23505", Constraint: "uk_user_username"})
+	mock.ExpectRollback()
 	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "secret1"}); !errors.Is(err, ErrUsernameExists) {
 		t.Fatalf("duplicate username: %v", err)
 	}
 
+	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(37)))
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(
-		int64(37), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		int64(37), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(), "",
 	).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("INSERT INTO t_user").WithArgs(
-		int64(37), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		int64(37), "new-user", sqlmock.AnyArg(), sqlmock.AnyArg(), "",
 	).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	if err := m.Register(ctx, RegisterInput{Username: "new-user", Password: "x"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -568,4 +574,10 @@ func TestRefreshRejectsStaleCredential(t *testing.T) {
 			t.Fatalf("stale session not revoked: %v", err)
 		}
 	}
+}
+
+type defaultPermissionsStub struct{}
+
+func (defaultPermissionsStub) DefaultUserCodes(_ context.Context, selected []string) ([]string, error) {
+	return append([]string{}, selected...), nil
 }

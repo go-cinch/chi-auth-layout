@@ -5,16 +5,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"io/fs"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"{{ .Computed.module_name_final }}/internal/common/i18n"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
-	"github.com/DATA-DOG/go-sqlmock"
 )
 
 const testLocalization = `{"schema_version":2,"default_locale":"fr-FR","locales":[{"tag":"fr-FR","name":"Français","enabled":true}],"messages":{"fr-FR":{"backend":{"TEST":"Bonjour"}}}}`

@@ -16,8 +16,8 @@ import (
 	"github.com/go-jose/go-jose/v4"
 {{- if .Computed.enable_redis_final }}
 	"context"
-	"strconv"
 	"github.com/redis/go-redis/v9"
+	"strconv"
 {{- end }}
 )
 

@@ -22,7 +22,9 @@ func New(ctx context.Context, cfg *config.Config) (*Client, func(), error) {
 	}
 	options, err := redis.ParseURL(dsn)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse redis dsn: %w", err)
+		// Parser errors can contain credentials. Do not retain the cause: startup
+		// logging unwraps errors before reporting them.
+		return nil, nil, errors.New("parse redis dsn: invalid url")
 	}
 	client, err := newClient(options, cfg.Redis.Prefix)
 	if err != nil {

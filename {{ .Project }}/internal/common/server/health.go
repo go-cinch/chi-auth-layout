@@ -1,10 +1,10 @@
 package server
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"context"
 	"log/slog"
 	"net/http"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 {{- if eq .Computed.http_router_final "gin" }}
 	"github.com/gin-gonic/gin"
 {{- end }}

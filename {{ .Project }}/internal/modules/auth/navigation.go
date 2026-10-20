@@ -1,9 +1,9 @@
 package auth
 
 import (
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"sort"
 	"strings"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
 // PermissionNavigation is a display projection; it never grants route access.
@@ -54,7 +54,7 @@ func permissionNavigation(catalog localization.ResourceCatalog, scope string, me
 		for _, key := range children[parent] {
 			resource := catalog.Resources[key]
 			if parent == "" {
-				visible := resource.Collection != "default_permissions"
+				visible := true
 				if resource.FrontendVisible != nil {
 					visible = *resource.FrontendVisible
 				}

@@ -1,10 +1,7 @@
 package auth
 
 import (
- "{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"encoding/json"
- "{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"errors"
 	"io"
 	"log/slog"
@@ -12,6 +9,10 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 
 {{- if eq .Computed.http_router_final "gin" }}
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,7 @@ import (
 	"{{ .Computed.module_name_final }}/internal/modules"
 )
 
+var _ modules.HTTPAuthenticationPolicy = (*Module)(nil)
 var _ modules.HTTPModule = (*Module)(nil)
 var _ modules.ConfigurableHTTPModule = (*Module)(nil)
 var _ modules.HTTPPermissionAuthorizer = (*Module)(nil)
@@ -34,11 +36,11 @@ func (*Module) HTTPPathConfig() string { return "auth.path" }
 func (*Module) PermissionEndpoint() string { return "/permission" }
 
 const (
-	permissionHeaderMethod = "X-Original-Method"
-	permissionHeaderURI = "X-Original-URI"
-	permissionHeaderPath = "X-Permission-URI"
-	permissionHeaderResource = "X-Original-Resource"
-	permissionResponseCode = "X-Code"
+	permissionHeaderMethod         = "X-Original-Method"
+	permissionHeaderURI            = "X-Original-URI"
+	permissionHeaderPath           = "X-Permission-URI"
+	permissionHeaderResource       = "X-Original-Resource"
+	permissionResponseCode         = "X-Code"
 	challengePurposeLogin          = "login"
 	challengePurposeRegister       = "register"
 	challengePurposePasswordChange = "password_change"
@@ -63,8 +65,8 @@ func PermissionTargetFromRequest(r *http.Request) PermissionTarget {
 		requestPath = strings.TrimSpace(r.Header.Get(permissionHeaderURI))
 	}
 	return normalizePermissionTarget(PermissionTarget{
-		Method: r.Header.Get(permissionHeaderMethod),
-		Path: requestPath,
+		Method:   r.Header.Get(permissionHeaderMethod),
+		Path:     requestPath,
 		Resource: r.Header.Get(permissionHeaderResource),
 	})
 }
@@ -105,7 +107,7 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.POST("/captcha", m.refreshPasswordChangeCaptcha)
 	r.POST("/captcha/verify", m.verifyPasswordChangeCaptcha)
 	r.PATCH("/change/pwd", m.changePassword)
- r.PATCH("/reset/pwd", m.resetPassword)
+	r.PATCH("/reset/pwd", m.resetPassword)
 	r.GET("/info", m.info)
 }
 {{ else -}}
@@ -128,7 +130,7 @@ func (m *Module) HTTP() http.Handler {
 	r.Post("/captcha", m.refreshPasswordChangeCaptcha)
 	r.Post("/captcha/verify", m.verifyPasswordChangeCaptcha)
 	r.Patch("/change/pwd", m.changePassword)
- r.Patch("/reset/pwd", m.resetPassword)
+	r.Patch("/reset/pwd", m.resetPassword)
 	r.Get("/info", m.info)
 	return r
 }
@@ -145,10 +147,10 @@ func (m *Module) checkPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	identity, allowed, err := m.CheckPermission(r.Context(), PermissionTargetFromRequest(r))
-    if errors.Is(err, authn.ErrPasswordResetRequired) {
-        server.WriteError(w, r, http.StatusForbidden, err)
-        return
-    }
+	if errors.Is(err, authn.ErrPasswordResetRequired) {
+		server.WriteError(w, r, http.StatusForbidden, err)
+		return
+	}
 	if errors.Is(err, ErrUnauthorized) {
 		server.WriteError(w, r, http.StatusUnauthorized, ErrUnauthorized)
 		return
@@ -172,11 +174,12 @@ func (m *Module) usernameAvailability(c *gin.Context) {
 {{ else -}}
 func (m *Module) usernameAvailability(w http.ResponseWriter, r *http.Request) {
 {{ end }}
-	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
 		return
 	}
-	usernames, provided := r.URL.Query()["username"]
+	usernames, provided := query["username"]
 	if !provided || len(usernames) != 1 {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.UsernameQuery)
 		return
@@ -367,21 +370,21 @@ func (m *Module) passwordChangeChallenge(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var challenge *CredentialChallenge
-    var err error
-    if input.Purpose == "password_reset" {
-        challenge, err = m.PasswordResetChallenge(r.Context())
-    } else {
-        identity, _ := authn.FromContext(r.Context())
-        if identity.PasswordResetRequired {
-            server.WriteError(w, r, http.StatusForbidden, authn.ErrPasswordResetRequired)
-            return
-        }
-        challenge, err = m.PasswordChangeChallenge(r.Context())
-    }
-    if errors.Is(err, ErrPasswordResetNotRequired) {
-        server.WriteError(w, r, http.StatusConflict, err)
-        return
-    }
+	var err error
+	if input.Purpose == "password_reset" {
+		challenge, err = m.PasswordResetChallenge(r.Context())
+	} else {
+		identity, _ := authn.FromContext(r.Context())
+		if identity.PasswordResetRequired {
+			server.WriteError(w, r, http.StatusForbidden, authn.ErrPasswordResetRequired)
+			return
+		}
+		challenge, err = m.PasswordChangeChallenge(r.Context())
+	}
+	if errors.Is(err, ErrPasswordResetNotRequired) {
+		server.WriteError(w, r, http.StatusConflict, err)
+		return
+	}
 	if errors.Is(err, apperror.FeatureDisabled) {
 		server.WriteError(w, r, http.StatusForbidden, err)
 		return
@@ -478,11 +481,12 @@ func (m *Module) loginVerification(c *gin.Context) {
 func (m *Module) loginVerification(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
-	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
 		return
 	}
-	usernames, provided := r.URL.Query()["username"]
+	usernames, provided := query["username"]
 	if !provided || len(usernames) != 1 {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.UsernameQuery)
 		return
@@ -516,15 +520,15 @@ type VerifyLoginPointCaptchaInput struct {
 }
 
 type LoginFailureResponse struct {
-	ErrorCode string `json:"error_code"`
-	Msg string `json:"msg"`
+	ErrorCode       string                 `json:"error_code"`
+	Msg             string                 `json:"msg"`
 	CaptchaRequired bool                   `json:"captcha_required"`
 	Captcha         *PointCaptchaChallenge `json:"captcha,omitempty"`
 }
 
 type PasswordChangeFailureResponse struct {
-	ErrorCode string `json:"error_code"`
-	Msg string `json:"msg"`
+	ErrorCode       string                 `json:"error_code"`
+	Msg             string                 `json:"msg"`
 	CaptchaRequired bool                   `json:"captcha_required"`
 	Captcha         *PointCaptchaChallenge `json:"captcha,omitempty"`
 }
@@ -716,9 +720,11 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
-	auditctx.Identity(r.Context(),0,strings.TrimSpace(input.Username))
- loginResult, err := m.Login(r.Context(), input)
- if err != nil { auditctx.Error(r.Context(),apperror.Code(err)) }
+	auditctx.Identity(r.Context(), 0, strings.TrimSpace(input.Username))
+	loginResult, err := m.Login(r.Context(), input)
+	if err != nil {
+		auditctx.Error(r.Context(), apperror.Code(err))
+	}
 	if errors.Is(err, ErrSliderCaptchaRequired) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
 		return
@@ -761,12 +767,21 @@ func (m *Module) info(c *gin.Context) {
 {{ else -}}
 func (m *Module) info(w http.ResponseWriter, r *http.Request) {
 {{ end }}
- if _,err:=url.ParseQuery(r.URL.RawQuery);err!=nil {
-  server.WriteError(w,r,http.StatusBadRequest,apperror.InvalidQuery)
-  return
- }
- info,err:=m.Info(r.Context(),authn.PermissionScope(r.Context()))
- if errors.Is(err,ErrInfoScopeInvalid){server.WriteError(w,r,http.StatusBadRequest,err);return}
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
+		return
+	}
+	fields, err := report.ParseFields(query, infoFields...)
+	if err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	info, err := m.InfoSelected(r.Context(), authn.PermissionScope(r.Context()), fields)
+	if errors.Is(err, ErrInfoScopeInvalid) {
+		server.WriteError(w, r, http.StatusBadRequest, err)
+		return
+	}
 
 	if errors.Is(err, ErrUnauthorized) {
 		server.WriteError(w, r, http.StatusUnauthorized, ErrUnauthorized)
@@ -808,32 +823,34 @@ func (m *Module) logout(w http.ResponseWriter, r *http.Request) {
 
 {{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) resetPassword(c *gin.Context) {
-    w, r := c.Writer, c.Request
+	w, r := c.Writer, c.Request
 {{ else -}}
 func (m *Module) resetPassword(w http.ResponseWriter, r *http.Request) {
 {{ end }}
-    w.Header().Set("Cache-Control", "no-store")
-    var encrypted EncryptedPasswordResetInput
-    decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-    decoder.DisallowUnknownFields()
-    if decoder.Decode(&encrypted) != nil || decoder.Decode(new(any)) != io.EOF {
-        server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-        return
-    }
-    input, err := m.OpenPasswordReset(r.Context(), encrypted)
-    var result *LoginResult
-    if err == nil { result, err = m.ResetPassword(r.Context(), input) }
-    switch {
-    case errors.Is(err, ErrUnauthorized):
-        server.WriteError(w, r, http.StatusUnauthorized, err)
-    case errors.Is(err, ErrPasswordResetNotRequired):
-        server.WriteError(w, r, http.StatusConflict, err)
-    case errors.Is(err, ErrInvalidPasswordCredential), errors.Is(err, ErrInvalidPasswordReset), errors.Is(err, ErrSamePassword):
-        server.WriteError(w, r, http.StatusBadRequest, err)
-    case err != nil:
-        slog.ErrorContext(r.Context(), "reset current password failed: "+err.Error(), "operation", "reset_current_password", "outcome", "failure", "error", err)
-        server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
-    default:
-        server.WriteOK(w, result)
-    }
+	w.Header().Set("Cache-Control", "no-store")
+	var encrypted EncryptedPasswordResetInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&encrypted) != nil || decoder.Decode(new(any)) != io.EOF {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
+		return
+	}
+	input, err := m.OpenPasswordReset(r.Context(), encrypted)
+	var result *LoginResult
+	if err == nil {
+		result, err = m.ResetPassword(r.Context(), input)
+	}
+	switch {
+	case errors.Is(err, ErrUnauthorized):
+		server.WriteError(w, r, http.StatusUnauthorized, err)
+	case errors.Is(err, ErrPasswordResetNotRequired):
+		server.WriteError(w, r, http.StatusConflict, err)
+	case errors.Is(err, ErrInvalidPasswordCredential), errors.Is(err, ErrInvalidPasswordReset), errors.Is(err, ErrSamePassword):
+		server.WriteError(w, r, http.StatusBadRequest, err)
+	case err != nil:
+		slog.ErrorContext(r.Context(), "reset current password failed: "+err.Error(), "operation", "reset_current_password", "outcome", "failure", "error", err)
+		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
+	default:
+		server.WriteOK(w, result)
+	}
 }

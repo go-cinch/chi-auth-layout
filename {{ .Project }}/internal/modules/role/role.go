@@ -22,7 +22,7 @@ import (
 var (
 	ErrNotFound       = apperror.New("ROLE_NOT_FOUND", "role not found")
 	ErrActionNotFound = apperror.New("ROLE_ACTION_NOT_FOUND", "role action not found")
-	ErrIDs            = apperror.New("ROLE_IDS", "provide 1-100 positive role ids")
+	ErrIDs            = apperror.New("ROLE_INVALID_IDS", "provide 1-100 positive role ids")
 	ErrInvalid        = apperror.New("ROLE_INVALID", "invalid role")
 	ErrConflict       = apperror.New("ROLE_CONFLICT", "role word already exists")
 )
@@ -56,15 +56,17 @@ type ActionView struct {
 }
 
 type CreateRoleInput struct {
-	Name        string   `json:"name" example:"Operator"`
-	Word        string   `json:"word" example:"operator"`
-	ActionCodes []string `json:"action_codes,omitempty"`
+	ActionBindings *[]actionmodule.ResourceBinding `json:"action_bindings,omitempty"`
+	Name           string                          `json:"name" example:"Operator"`
+	Word           string                          `json:"word" example:"operator"`
+	ActionCodes    []string                        `json:"action_codes,omitempty"`
 }
 
 type UpdateRoleInput struct {
-	Name        *string   `json:"name,omitempty"`
-	Word        *string   `json:"word,omitempty"`
-	ActionCodes *[]string `json:"action_codes,omitempty"`
+	ActionBindings *[]actionmodule.ResourceBinding `json:"action_bindings,omitempty"`
+	Name           *string                         `json:"name,omitempty"`
+	Word           *string                         `json:"word,omitempty"`
+	ActionCodes    *[]string                       `json:"action_codes,omitempty"`
 }
 
 type ListRolesInput struct {
@@ -193,6 +195,9 @@ func (m *Module) Exists(ctx context.Context, executor db.SQLExecutor, id int64) 
 }
 
 func (m *Module) Create(ctx context.Context, input CreateRoleInput) (*Role, error) {
+	if input.ActionBindings != nil && len(input.ActionCodes) > 0 {
+		return nil, ErrInvalid
+	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.Word = strings.TrimSpace(input.Word)
 	if !validName(input.Name) || !validName(input.Word) {
@@ -200,8 +205,19 @@ func (m *Module) Create(ctx context.Context, input CreateRoleInput) (*Role, erro
 	}
 	var value *Role
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.ActionBindings != nil {
+			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "role", "create", *input.ActionBindings)
+			if errors.Is(err, actionmodule.ErrInvalid) {
+				return ErrInvalid
+			}
+			if err != nil {
+				return err
+			}
+			input.ActionCodes = codes
+		}
+
 		if len(input.ActionCodes) > 0 {
-			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+			if err := authn.RequirePermissionOperation(ctx, m.administration, "role", "create"); err != nil {
 				return err
 			}
 		}
@@ -231,7 +247,10 @@ func (m *Module) Create(ctx context.Context, input CreateRoleInput) (*Role, erro
 }
 
 func (m *Module) Update(ctx context.Context, id int64, input UpdateRoleInput) (*Role, error) {
-	if id <= 0 || (input.Name == nil && input.Word == nil && input.ActionCodes == nil) {
+	if input.ActionBindings != nil && input.ActionCodes != nil {
+		return nil, ErrInvalid
+	}
+	if id <= 0 || (input.Name == nil && input.Word == nil && input.ActionCodes == nil && input.ActionBindings == nil) {
 		return nil, ErrInvalid
 	}
 	if input.Name != nil {
@@ -250,8 +269,19 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateRoleInput) (*
 	}
 	var value *Role
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.ActionBindings != nil {
+			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "role", "update", *input.ActionBindings)
+			if errors.Is(err, actionmodule.ErrInvalid) {
+				return ErrInvalid
+			}
+			if err != nil {
+				return err
+			}
+			input.ActionCodes = &codes
+		}
+
 		if input.ActionCodes != nil {
-			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+			if err := authn.RequirePermissionOperation(ctx, m.administration, "role", "update"); err != nil {
 				return err
 			}
 		}
@@ -338,12 +368,20 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 				return err
 			}
 			if assigned {
-				if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+				if err := authn.RequirePermissionOperation(ctx, m.administration, "role", "delete"); err != nil {
 					return err
 				}
 			}
 		} else if err := authn.LockPermissionMutation(ctx, nil); err != nil {
 			return err
+		}
+		// Lock parents before unlinking: concurrent assignments must not slip
+		// between this update and the foreign-key action performed by DELETE.
+		if _, err := m.store.SQL(ctx).ExecContext(ctx, `SELECT id FROM t_role WHERE id = ANY($1) ORDER BY id FOR UPDATE`, pq.Array(ids)); err != nil {
+			return fmt.Errorf("lock deleted roles: %w", err)
+		}
+		if _, err := m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_user SET role_id = NULL, updated_at = $2 WHERE role_id = ANY($1)`, pq.Array(ids), time.Now().UnixMilli()); err != nil {
+			return fmt.Errorf("detach deleted roles: %w", err)
 		}
 		result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_role WHERE id = ANY($1)`, pq.Array(ids))
 		if err != nil {
@@ -358,10 +396,7 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 		}
 		return nil
 	}
-	if m.administration != nil {
-		return m.store.Tx(ctx, operation)
-	}
-	return operation(ctx)
+	return m.store.Tx(ctx, operation)
 }
 
 func containsCode(codes []string, target string) bool {
@@ -579,7 +614,7 @@ func orderedActions(codes []string, byCode map[string]ActionView) []ActionView {
 }
 
 type PermissionAdministration interface {
-	RequirePermissionGrant(context.Context) error
+	RequirePermissionOperation(context.Context, string, string) error
 	LockPermissionMutation(context.Context) error
 }
 

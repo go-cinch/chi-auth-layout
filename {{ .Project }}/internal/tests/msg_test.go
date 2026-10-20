@@ -7,6 +7,10 @@ import (
 
 	"net/http/httptest"
 
+	"strings"
+	"sync"
+	"testing"
+	"time"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
@@ -17,10 +21,6 @@ import (
 	"{{ .Computed.module_name_final }}/internal/modules/msg"
 	"{{ .Computed.module_name_final }}/internal/modules/role"
 	"{{ .Computed.module_name_final }}/internal/modules/user"
-	"strings"
-	"sync"
-	"testing"
-	"time"
 )
 
 func TestMessageDeliveryAndIsolation(t *testing.T) {
@@ -151,7 +151,7 @@ func TestMessageHTTPPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer)
+	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute
@@ -525,7 +525,8 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 	if _, err := messages.Create(ctx, 1, msg.CreateInput{Title: "before registration", Content: "body", Type: "notice", Scope: "all"}); err != nil {
 		t.Fatal(err)
 	}
-	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, auth.Switches{}, localizer)
+	actions := action.New(store, limits, false, localizer)
+	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, auth.Switches{}, localizer, actions)
 	if err := authentication.Register(ctx, auth.RegisterInput{Username: "clock-registered", Password: "secret123"}); err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +534,6 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 	if err := store.DB.QueryRowContext(ctx, `SELECT id FROM t_user WHERE username='clock-registered'`).Scan(&registeredID); err != nil {
 		t.Fatal(err)
 	}
-	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)
 	users := user.New(store, limits, nil, nil, actions, roles, auth.Switches{})
 	created, err := users.Create(ctx, user.CreateUserInput{Username: "clock-created", Password: "secret123"})

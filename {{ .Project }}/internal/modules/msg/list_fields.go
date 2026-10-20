@@ -24,5 +24,13 @@ func listProjection(value *Message, fields report.Fields) report.Projection {
 
 func (value Message) MarshalJSON() ([]byte, error) {
 	type plain Message
+	if value.selectedFields != nil {
+		return report.MarshalFields(struct {
+			plain
+			Summary      string      `json:"summary"`
+			RecipientIDs []int64     `json:"recipient_ids"`
+			Recipients   []Recipient `json:"recipients"`
+		}{plain(value), value.Summary, value.RecipientIDs, value.Recipients}, value.selectedFields)
+	}
 	return report.MarshalFields(plain(value), value.selectedFields)
 }

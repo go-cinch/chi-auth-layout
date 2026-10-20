@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -42,8 +43,8 @@ type Summary struct {
 	AverageMS          float64     `json:"average_ms,omitempty"`
 	P95MS              float64     `json:"p95_ms,omitempty"`
 	SuccessRate        float64     `json:"success_rate,omitempty"`
-	From               int64       `json:"from"`
-	To                 int64       `json:"to"`
+	From               *int64      `json:"from"`
+	To                 *int64      `json:"to"`
 	Trend              []Bucket    `json:"trend,omitempty"`
 	Heatmap            []HeatCell  `json:"heatmap,omitempty"`
 	Modules            []Breakdown `json:"modules,omitempty"`
@@ -60,6 +61,34 @@ func (m *Module) Summary(ctx context.Context, f Filter, fields ...string) (*Summ
 		return nil, err
 	}
 	clause, args := where(f)
+	chartFilter := f
+	if (selection.Has("trend") || selection.Has("heatmap")) && (f.From == nil || f.To == nil) {
+		var first, last sql.NullInt64
+		if err := m.store.SQL(ctx).QueryRowContext(ctx, "SELECT MIN(occurred_at), MAX(occurred_at) FROM t_audit_event"+clause, args...).Scan(&first, &last); err != nil {
+			return nil, err
+		}
+		// Missing public bounds remain absent. Only chart allocation uses data extents.
+		if chartFilter.From == nil {
+			from := last.Int64
+			if first.Valid {
+				from = first.Int64
+			} else if f.To != nil {
+				from = *f.To - 1
+			}
+			chartFilter.From = &from
+		}
+		if chartFilter.To == nil {
+			to := *chartFilter.From + 1
+			if last.Valid {
+				to = last.Int64 + 1
+			}
+			chartFilter.To = &to
+		}
+		if *chartFilter.To-*chartFilter.From > int64(90*24*time.Hour/time.Millisecond) {
+			return nil, ErrFilter
+		}
+	}
+
 	result := &Summary{fields: selection, Accounts: []Breakdown{}, Sources: []Breakdown{}, From: f.From, To: f.To, Trend: []Bucket{}, Heatmap: []HeatCell{}, Modules: []Breakdown{}, RepeatedFailures: []Breakdown{}}
 	if selection.Has("metrics") {
 		err = m.store.SQL(ctx).QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER (WHERE status >= 200 AND status < 400),COUNT(DISTINCT NULLIF(username,'')),COUNT(DISTINCT NULLIF(ip,'')),COALESCE(AVG(duration_ms),0),COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms),0) FROM t_audit_event`+clause, args...).Scan(&result.Total, &result.Success, &result.UniqueUsers, &result.UniqueIPs, &result.AverageMS, &result.P95MS)
@@ -74,7 +103,7 @@ func (m *Module) Summary(ctx context.Context, f Filter, fields ...string) (*Summ
 	if selection.Has("trend") {
 		// UTC buckets are fixed durations. Client renders their instants in its selected timezone.
 		seconds := int64(86400)
-		if f.To-f.From <= int64(24*time.Hour/time.Millisecond) {
+		if *chartFilter.To-*chartFilter.From <= int64(24*time.Hour/time.Millisecond) {
 			seconds = 3600
 		}
 		bucketArgs := append(append([]any{}, args...), seconds)
@@ -98,14 +127,14 @@ func (m *Module) Summary(ctx context.Context, f Filter, fields ...string) (*Summ
 		}
 		step := seconds * 1000
 		result.BucketMS = step
-		for at := (f.From / step) * step; at < f.To; at += step {
+		for at := (*chartFilter.From / step) * step; at < *chartFilter.To; at += step {
 			b := buckets[at]
 			b.At = at
 			result.Trend = append(result.Trend, b)
 		}
 	}
 	if selection.Has("heatmap") {
-		result.Heatmap, result.HeatmapGranularity = heatCells(f)
+		result.Heatmap, result.HeatmapGranularity = heatCells(chartFilter)
 		thresholds := make([]int64, len(result.Heatmap))
 		for i, cell := range result.Heatmap {
 			thresholds[i] = cell.StartedAt

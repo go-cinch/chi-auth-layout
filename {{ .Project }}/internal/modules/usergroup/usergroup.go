@@ -25,7 +25,7 @@ var (
 	ErrNotFound       = apperror.New("USERGROUP_NOT_FOUND", "user group not found")
 	ErrUserNotFound   = apperror.New("USERGROUP_USER_NOT_FOUND", "user group member not found")
 	ErrActionNotFound = apperror.New("USERGROUP_ACTION_NOT_FOUND", "user group action not found")
-	ErrIDs            = apperror.New("USERGROUP_IDS", "provide 1-100 positive user group ids")
+	ErrIDs            = apperror.New("USERGROUP_INVALID_IDS", "provide 1-100 positive user group ids")
 	ErrInvalid        = apperror.New("USERGROUP_INVALID", "invalid user group")
 	ErrConflict       = apperror.New("USERGROUP_CONFLICT", "user group word already exists")
 )
@@ -67,19 +67,21 @@ type UserSummary struct {
 }
 
 type CreateUserGroupInput struct {
-	Name        string   `json:"name" example:"Auditors"`
-	Word        string   `json:"word" example:"auditor"`
-	ActionCodes []string `json:"action_codes,omitempty"`
-	UserIDs     []int64  `json:"user_ids,omitempty"`
+	ActionBindings *[]actionmodule.ResourceBinding `json:"action_bindings,omitempty"`
+	Name           string                          `json:"name" example:"Auditors"`
+	Word           string                          `json:"word" example:"auditor"`
+	ActionCodes    []string                        `json:"action_codes,omitempty"`
+	UserIDs        []int64                         `json:"user_ids,omitempty"`
 }
 
 type UpdateUserGroupInput struct {
-	AddUserIDs    *[]int64  `json:"add_user_ids,omitempty"`
-	RemoveUserIDs *[]int64  `json:"remove_user_ids,omitempty"`
-	Name          *string   `json:"name,omitempty"`
-	Word          *string   `json:"word,omitempty"`
-	ActionCodes   *[]string `json:"action_codes,omitempty"`
-	UserIDs       *[]int64  `json:"user_ids,omitempty"`
+	ActionBindings *[]actionmodule.ResourceBinding `json:"action_bindings,omitempty"`
+	AddUserIDs     *[]int64                        `json:"add_user_ids,omitempty"`
+	RemoveUserIDs  *[]int64                        `json:"remove_user_ids,omitempty"`
+	Name           *string                         `json:"name,omitempty"`
+	Word           *string                         `json:"word,omitempty"`
+	ActionCodes    *[]string                       `json:"action_codes,omitempty"`
+	UserIDs        *[]int64                        `json:"user_ids,omitempty"`
 }
 
 type ListUserGroupsInput struct {
@@ -186,6 +188,9 @@ func (m *Module) scan(row interface{ Scan(...any) error }) (*UserGroup, error) {
 }
 
 func (m *Module) Create(ctx context.Context, input CreateUserGroupInput, fields ...string) (*UserGroup, error) {
+	if input.ActionBindings != nil && len(input.ActionCodes) > 0 {
+		return nil, ErrInvalid
+	}
 	if _, err := groupFields(fields); err != nil {
 		return nil, err
 	}
@@ -196,8 +201,19 @@ func (m *Module) Create(ctx context.Context, input CreateUserGroupInput, fields 
 	}
 	var value *UserGroup
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.ActionBindings != nil {
+			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "user-group", "create", *input.ActionBindings)
+			if errors.Is(err, actionmodule.ErrInvalid) {
+				return ErrInvalid
+			}
+			if err != nil {
+				return err
+			}
+			input.ActionCodes = codes
+		}
+
 		if len(input.ActionCodes) > 0 || len(input.UserIDs) > 0 {
-			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+			if err := authn.RequirePermissionOperation(ctx, m.administration, "user-group", "create"); err != nil {
 				return err
 			}
 		}
@@ -240,6 +256,9 @@ func (m *Module) Create(ctx context.Context, input CreateUserGroupInput, fields 
 }
 
 func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInput, fields ...string) (*UserGroup, error) {
+	if input.ActionBindings != nil && input.ActionCodes != nil {
+		return nil, ErrInvalid
+	}
 	if _, err := groupFields(fields); err != nil {
 		return nil, err
 	}
@@ -266,8 +285,19 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInpu
 	}
 	var value *UserGroup
 	err = m.store.Tx(ctx, func(ctx context.Context) error {
+		if input.ActionBindings != nil {
+			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "user-group", "update", *input.ActionBindings)
+			if errors.Is(err, actionmodule.ErrInvalid) {
+				return ErrInvalid
+			}
+			if err != nil {
+				return err
+			}
+			input.ActionCodes = &codes
+		}
+
 		if input.ActionCodes != nil || input.UserIDs != nil || input.AddUserIDs != nil || input.RemoveUserIDs != nil {
-			if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+			if err := authn.RequirePermissionOperation(ctx, m.administration, "user-group", "update"); err != nil {
 				return err
 			}
 		}
@@ -378,7 +408,7 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 				return err
 			}
 			if assigned {
-				if err := authn.RequirePermissionGrant(ctx, m.administration); err != nil {
+				if err := authn.RequirePermissionOperation(ctx, m.administration, "user-group", "delete"); err != nil {
 					return err
 				}
 			}
@@ -553,7 +583,7 @@ func splitFilterValues(value string) []string {
 func validName(value string) bool { return value != "" && utf8.RuneCountInString(value) <= 50 }
 
 func allNil(input UpdateUserGroupInput) bool {
-	return input.AddUserIDs == nil && input.RemoveUserIDs == nil && input.Name == nil && input.Word == nil && input.ActionCodes == nil && input.UserIDs == nil
+	return input.AddUserIDs == nil && input.RemoveUserIDs == nil && input.Name == nil && input.Word == nil && input.ActionCodes == nil && input.ActionBindings == nil && input.UserIDs == nil
 }
 
 func normalizeIDs(ids []int64) ([]int64, error) {
@@ -663,7 +693,7 @@ func (g UserGroup) MarshalJSON() ([]byte, error) {
 }
 
 type PermissionAdministration interface {
-	RequirePermissionGrant(context.Context) error
+	RequirePermissionOperation(context.Context, string, string) error
 	LockPermissionMutation(context.Context) error
 }
 

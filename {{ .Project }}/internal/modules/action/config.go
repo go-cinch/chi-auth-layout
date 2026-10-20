@@ -1,37 +1,40 @@
 package action
 
 import (
- "{{ .Computed.module_name_final }}/internal/modules/localization"
- "{{ .Computed.module_name_final }}/internal/common/report"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
-
+	"{{ .Computed.module_name_final }}/internal/common/report"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
 // Config stores selected logical features and generated display projections.
 // FeatureKeys nil selects the registered set; an explicit empty array selects none.
 type Config struct {
-	Bindings *[]ResourceBinding `json:"bindings,omitempty"`
-	ResourceKey string `json:"resource_key,omitempty"`
-	Operation string `json:"operation,omitempty"`
-	Builtin     string      `json:"builtin,omitempty"`
-	FeatureKeys []string    `json:"feature_keys" nullable:"true"`
-	ResourceKeys *[]string `json:"resource_keys,omitempty"`
-	UI          []UIBinding `json:"ui"`
-	Endpoints   []Endpoint  `json:"endpoints"`
+	PermissionScopes []string           `json:"permission_scopes,omitempty"`
+	PermissionScope  string             `json:"permission_scope,omitempty"`
+	Bindings         *[]ResourceBinding `json:"bindings,omitempty"`
+	ResourceKey      string             `json:"resource_key,omitempty"`
+	Operation        string             `json:"operation,omitempty"`
+	Builtin          string             `json:"builtin,omitempty"`
+	FeatureKeys      []string           `json:"feature_keys" nullable:"true"`
+	ResourceKeys     *[]string          `json:"resource_keys,omitempty"`
+	UI               []UIBinding        `json:"ui"`
+	Endpoints        []Endpoint         `json:"endpoints"`
 }
 
 type ResourceBinding struct {
-	ResourceKey string `json:"resource_key"`
-	Operation string `json:"operation"`
+	ResourceKey string   `json:"resource_key"`
+	Operation   string   `json:"operation"`
 	FeatureKeys []string `json:"feature_keys" nullable:"true"`
 }
 
 func configBindings(config Config) ([]ResourceBinding, bool) {
-	if config.Bindings != nil { return *config.Bindings, true }
+	if config.Bindings != nil {
+		return *config.Bindings, true
+	}
 	if config.ResourceKey != "" || config.Operation != "" {
 		return []ResourceBinding{ {ResourceKey: config.ResourceKey, Operation: config.Operation, FeatureKeys: config.FeatureKeys}}, true
 	}
@@ -39,10 +42,14 @@ func configBindings(config Config) ([]ResourceBinding, bool) {
 }
 
 func validResourceBinding(word string, binding ResourceBinding) bool {
-	if !validIdentity(word, binding.ResourceKey) { return false }
+	if !validIdentity(word, binding.ResourceKey) {
+		return false
+	}
 	switch binding.Operation {
-	case "read", "create", "update", "delete": return true
-	default: return false
+	case "read", "create", "update", "delete", "*":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -94,10 +101,13 @@ func GroupForWord(word string) string {
 }
 
 func GroupForConfig(word string, config Config) string {
-	if config.Bindings != nil && len(*config.Bindings) > 0 { return (*config.Bindings)[0].ResourceKey }
-	if config.ResourceKey != "" { return config.ResourceKey }
-	parts := strings.Split(word, ":")
-	if config.Builtin != "" || (len(parts) >= 4 && word == parts[0]+":grant:system:permission-admin") {
+	if config.Bindings != nil && len(*config.Bindings) > 0 {
+		return (*config.Bindings)[0].ResourceKey
+	}
+	if config.ResourceKey != "" {
+		return config.ResourceKey
+	}
+	if config.Builtin != "" {
 		return GroupForWord(word)
 	}
 	return ""
@@ -142,12 +152,16 @@ func (c *Config) Validate(word string) error {
 	parts := strings.Split(word, ":")
 	scope := parts[0]
 	bindings, explicit := configBindings(*c)
-	special := c.Builtin != "" || word == scope+":grant:system:permission-admin"
-	if special == explicit || (c.Bindings != nil && (c.ResourceKey != "" || c.Operation != "")) { return ErrInvalid }
+	special := c.Builtin != ""
+	if special == explicit || (c.Bindings != nil && (c.ResourceKey != "" || c.Operation != "")) {
+		return ErrInvalid
+	}
 	resources := map[string]bool{}
 	for _, binding := range bindings {
 		identity := binding.ResourceKey + ":" + binding.Operation
-		if !validResourceBinding(word, binding) || resources[identity] { return ErrInvalid }
+		if !validResourceBinding(word, binding) || resources[identity] {
+			return ErrInvalid
+		}
 		resources[identity] = true
 	}
 	if c.ResourceKeys != nil && c.Builtin != "default" {
@@ -156,7 +170,7 @@ func (c *Config) Validate(word string) error {
 	if c.Builtin != "" && c.Builtin != "all" && c.Builtin != "default" {
 		return ErrInvalid
 	}
-	if (c.Builtin != "" || parts[1] == "all" || parts[1] == "default") && parts[1] != c.Builtin {
+	if c.Builtin != "" && parts[1] != c.Builtin {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}
@@ -187,12 +201,12 @@ func (c *Config) Validate(word string) error {
 			default:
 				return ErrInvalid
 			}
-			{{ if .Computed.enable_grpc_final }}
+{{ if .Computed.enable_grpc_final }}
 		case "grpc":
 			if endpoint.Method != "GRPC" || strings.ContainsAny(endpoint.Path, "{}:") {
 				return ErrInvalid
 			}
-			{{ end }}
+{{ end }}
 		default:
 			return ErrInvalid
 		}
@@ -219,39 +233,60 @@ func validPath(path string, parameters bool) bool {
 
 // ResolveConfig uses the current dictionary snapshot for both writes and authorization.
 func ResolveConfig(catalog localization.Catalog, word string, config Config, selections ...report.Fields) (Config, error) {
- var fields report.Fields
- if len(selections) > 0 { fields = selections[0] }
-	if !ValidWord(word) { return Config{}, ErrInvalid }
+	var fields report.Fields
+	if len(selections) > 0 {
+		fields = selections[0]
+	}
+	if !ValidWord(word) {
+		return Config{}, ErrInvalid
+	}
 	parts := strings.Split(word, ":")
 	bindings, explicit := configBindings(config)
 	grant := localization.ResourceGrant{UI: []UIBinding{}, Endpoints: []Endpoint{}}
 	var err error
 	var normalized []ResourceBinding
 	if explicit {
-		if config.Builtin != "" || word == parts[0]+":grant:system:permission-admin" || (config.Bindings != nil && (config.ResourceKey != "" || config.Operation != "")) { return Config{}, ErrInvalid }
+		if config.Builtin != "" || (config.Bindings != nil && (config.ResourceKey != "" || config.Operation != "")) {
+			return Config{}, ErrInvalid
+		}
 		normalized = []ResourceBinding{}
 		seen := map[string]bool{}
 		for _, binding := range bindings {
 			identity := binding.ResourceKey + ":" + binding.Operation
-			if !validResourceBinding(word, binding) || seen[identity] { return Config{}, ErrInvalid }
+			if !validResourceBinding(word, binding) || seen[identity] {
+				return Config{}, ErrInvalid
+			}
 			seen[identity] = true
 			resolved, resolveErr := catalog.ResolveResourceBinding(parts[0], binding.ResourceKey, binding.Operation, binding.FeatureKeys, fields)
-			if resolveErr != nil { return Config{}, ErrInvalid }
+			if resolveErr != nil {
+				return Config{}, ErrInvalid
+			}
+			if resolved.PermissionScope == "*" {
+				grant.PermissionScope = "*"
+			}
+			grant.PermissionScopes = append(grant.PermissionScopes, resolved.PermissionScopes...)
 			grant.UI = append(grant.UI, resolved.UI...)
 			grant.Endpoints = append(grant.Endpoints, resolved.Endpoints...)
 			normalized = append(normalized, binding)
 		}
 	} else {
-		if config.Builtin == "" && word != parts[0]+":grant:system:permission-admin" { return Config{}, ErrInvalid }
+		if config.Builtin == "" {
+			return Config{}, ErrInvalid
+		}
 		var selections [][]string
-		if config.ResourceKeys != nil { selections = append(selections, *config.ResourceKeys) }
+		if config.ResourceKeys != nil {
+			selections = append(selections, *config.ResourceKeys)
+		}
 		grant, err = catalog.ResolveSelectedPermission(word, config.FeatureKeys, config.Builtin, fields, selections...)
 	}
 	if err != nil {
 		return Config{}, ErrInvalid
 	}
-	result := Config{Builtin: config.Builtin, FeatureKeys: config.FeatureKeys, ResourceKeys: config.ResourceKeys, UI: grant.UI, Endpoints: grant.Endpoints}
-	if explicit { result.Bindings = &normalized; result.FeatureKeys = nil }
+	result := Config{PermissionScopes: grant.PermissionScopes, PermissionScope: grant.PermissionScope, Builtin: config.Builtin, FeatureKeys: config.FeatureKeys, ResourceKeys: config.ResourceKeys, UI: grant.UI, Endpoints: grant.Endpoints}
+	if explicit {
+		result.Bindings = &normalized
+		result.FeatureKeys = nil
+	}
 	// A resource can grant the same entry through several independent operations.
 	ui := []UIBinding{}
 	indices := map[string]int{}
@@ -287,14 +322,17 @@ func ResolveConfig(catalog localization.Catalog, word string, config Config, sel
 
 // Stored built-in all remains a marker; its expansion is read-only.
 func resolveStoredConfig(catalog localization.Catalog, word string, config *Config) error {
- if config.Builtin == "all" {
-  config.UI, config.Endpoints = []UIBinding{}, []Endpoint{}
-  return config.Validate(word)
- }
- resolved, err := ResolveConfig(catalog, word, *config)
+	if config.Builtin == "all" {
+		config.UI, config.Endpoints = []UIBinding{}, []Endpoint{}
+		return config.Validate(word)
+	}
+	resolved, err := ResolveConfig(catalog, word, *config)
 	if err != nil {
 		return err
 	}
 	*config = resolved
+	if config.PermissionScope == "*" {
+		config.UI, config.Endpoints = []UIBinding{}, []Endpoint{}
+	}
 	return config.Validate(word)
 }

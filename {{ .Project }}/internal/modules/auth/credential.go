@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -20,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 
 	"github.com/go-jose/go-jose/v4"
 {{- if .Computed.enable_redis_final }}
@@ -28,21 +28,21 @@ import (
 )
 
 const (
-	credentialKeyAlgorithm     = jose.RSA_OAEP_256
-	credentialContentAlgorithm = jose.A256GCM
-	loginCredentialType        = "login+jwe"
-	registerCredentialType     = "register+jwe"
-	passwordCredentialType     = "password+jwe"
- passwordResetCredentialType = "password-reset+jwe"
-	maxEncryptedCredential     = 8 << 10
-	maxCredentialPlaintext     = 1 << 10
+	credentialKeyAlgorithm      = jose.RSA_OAEP_256
+	credentialContentAlgorithm  = jose.A256GCM
+	loginCredentialType         = "login+jwe"
+	registerCredentialType      = "register+jwe"
+	passwordCredentialType      = "password+jwe"
+	passwordResetCredentialType = "password-reset+jwe"
+	maxEncryptedCredential      = 8 << 10
+	maxCredentialPlaintext      = 1 << 10
 )
 
 var (
-	ErrInvalidCredential = apperror.New("AUTH_INVALID_CREDENTIAL", "invalid login credential")
+	ErrInvalidCredential             = apperror.New("AUTH_INVALID_CREDENTIAL", "invalid login credential")
 	ErrInvalidRegistrationCredential = apperror.New("AUTH_INVALID_REGISTRATION_CREDENTIAL", "invalid registration credential")
-	ErrInvalidPasswordCredential = apperror.New("AUTH_INVALID_PASSWORD_CREDENTIAL", "invalid password change credential")
-	ErrChallengeNotFound = apperror.New("AUTH_CHALLENGE_NOT_FOUND", "credential challenge not found")
+	ErrInvalidPasswordCredential     = apperror.New("AUTH_INVALID_PASSWORD_CREDENTIAL", "invalid password change credential")
+	ErrChallengeNotFound             = apperror.New("AUTH_CHALLENGE_NOT_FOUND", "credential challenge not found")
 )
 
 type PublicJWK struct {
@@ -72,8 +72,8 @@ type EncryptedRegisterInput struct {
 }
 
 type EncryptedPasswordResetInput struct {
- ChallengeID string `json:"challenge_id"`
- Credential string `json:"credential"`
+	ChallengeID string `json:"challenge_id"`
+	Credential  string `json:"credential"`
 }
 
 type EncryptedPasswordChangeInput struct {
@@ -117,11 +117,11 @@ type ChallengeStore interface {
 }
 
 type Credentials struct {
-	keyID        string
-	privateKey   *rsa.PrivateKey
-	publicKey    PublicJWK
-	ttl          time.Duration
-	challenges   ChallengeStore
+	keyID      string
+	privateKey *rsa.PrivateKey
+	publicKey  PublicJWK
+	ttl        time.Duration
+	challenges ChallengeStore
 }
 
 func NewCredentials(keyID, privateKeyFile string, ttl time.Duration, challenges ChallengeStore) (*Credentials, error) {
@@ -163,10 +163,10 @@ func newCredentials(keyID string, ttl time.Duration, challenges ChallengeStore, 
 	}
 	exponent := big.NewInt(int64(privateKey.PublicKey.E)).Bytes()
 	return &Credentials{
-		keyID:        keyID,
-		privateKey:   privateKey,
-		ttl:          ttl,
-		challenges:   challenges,
+		keyID:      keyID,
+		privateKey: privateKey,
+		ttl:        ttl,
+		challenges: challenges,
 		publicKey: PublicJWK{
 			KeyType:   "RSA",
 			Use:       "enc",
@@ -491,28 +491,35 @@ func (s *redisChallengeStore) Take(ctx context.Context, id string) (string, erro
 	}
 	return keyID, err
 }
-{{ end -}}
+{{ end }}
+
 func (c *Credentials) PasswordResetChallenge(ctx context.Context, userID int64) (*CredentialChallenge, error) {
-    if userID <= 0 { return nil, ErrInvalidPasswordCredential }
-    return c.challenge(ctx, passwordResetCredentialType, userID)
+	if userID <= 0 {
+		return nil, ErrInvalidPasswordCredential
+	}
+	return c.challenge(ctx, passwordResetCredentialType, userID)
 }
 
 func (c *Credentials) OpenPasswordReset(ctx context.Context, userID int64, input EncryptedPasswordResetInput) (PasswordResetInput, error) {
-    if userID <= 0 { return PasswordResetInput{}, ErrInvalidPasswordCredential }
-    challengeID := strings.TrimSpace(input.ChallengeID)
-    plaintext, err := c.decrypt(challengeID, input.Credential, passwordResetCredentialType, ErrInvalidPasswordCredential)
-    if err != nil { return PasswordResetInput{}, err }
-    var payload struct {
-        ChallengeID string `json:"challenge_id"`
-        NewPassword string `json:"new_password"`
-    }
-    decoder := json.NewDecoder(bytes.NewReader(plaintext))
-    decoder.DisallowUnknownFields()
-    if decoder.Decode(&payload) != nil || decoder.Decode(new(any)) != io.EOF || payload.NewPassword == "" || subtle.ConstantTimeCompare([]byte(payload.ChallengeID), []byte(challengeID)) != 1 {
-        return PasswordResetInput{}, ErrInvalidPasswordCredential
-    }
-    if err := c.consumeChallenge(ctx, challengeID, passwordResetCredentialType, userID, ErrInvalidPasswordCredential); err != nil {
-        return PasswordResetInput{}, err
-    }
-    return PasswordResetInput{NewPassword: payload.NewPassword}, nil
+	if userID <= 0 {
+		return PasswordResetInput{}, ErrInvalidPasswordCredential
+	}
+	challengeID := strings.TrimSpace(input.ChallengeID)
+	plaintext, err := c.decrypt(challengeID, input.Credential, passwordResetCredentialType, ErrInvalidPasswordCredential)
+	if err != nil {
+		return PasswordResetInput{}, err
+	}
+	var payload struct {
+		ChallengeID string `json:"challenge_id"`
+		NewPassword string `json:"new_password"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(plaintext))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&payload) != nil || decoder.Decode(new(any)) != io.EOF || payload.NewPassword == "" || subtle.ConstantTimeCompare([]byte(payload.ChallengeID), []byte(challengeID)) != 1 {
+		return PasswordResetInput{}, ErrInvalidPasswordCredential
+	}
+	if err := c.consumeChallenge(ctx, challengeID, passwordResetCredentialType, userID, ErrInvalidPasswordCredential); err != nil {
+		return PasswordResetInput{}, err
+	}
+	return PasswordResetInput{NewPassword: payload.NewPassword}, nil
 }

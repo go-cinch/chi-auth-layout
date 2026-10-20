@@ -44,3 +44,30 @@ func TestRedisConnectionError(t *testing.T) {
 		t.Fatalf("ordinary connection error = %v", err)
 	}
 }
+
+func TestNewRejectsMalformedDSNWithoutCredentials(t *testing.T) {
+	const secret = "review-secret"
+	for name, dsn := range map[string]string{
+		"password slash": "redis://default:" + secret + "/fragment@127.0.0.1:6379/0",
+		"invalid port":   "redis://default:" + secret + "@127.0.0.1:invalid/0",
+		"invalid escape": "redis://default:" + secret + "%zz@127.0.0.1:6379/0",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var cfg config.Config
+			cfg.Redis.DSN, cfg.Redis.Prefix = dsn, "test:auth:"
+			client, cleanup, err := New(t.Context(), &cfg)
+			if cleanup != nil {
+				cleanup()
+			}
+			if client != nil || cleanup != nil || err == nil || !strings.Contains(err.Error(), "parse redis dsn") {
+				t.Fatalf("invalid DSN result = %v, cleanup present = %v, error = %v", client, cleanup != nil, err)
+			}
+			// Startup logging unwraps errors; every level must be safe to log.
+			for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+				if strings.Contains(cause.Error(), secret) {
+					t.Fatalf("DSN parse error exposes credentials: %v", cause)
+				}
+			}
+		})
+	}
+}

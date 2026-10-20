@@ -69,8 +69,8 @@ type Filter struct {
 	Query    string
 	Module   string
 	Result   string
-	From     int64
-	To       int64
+	From     *int64
+	To       *int64
 	Timezone string
 	Page     *int32
 	Size     *int32
@@ -127,15 +127,19 @@ func normalize(f Filter) (Filter, error) {
 	if f.Kind != "login" && f.Kind != "operation" {
 		return f, ErrFilter
 	}
-	if f.To == 0 {
-		f.To = time.Now().UnixMilli()
+	// Preserve the existing seven-day default only when neither bound is supplied.
+	if f.From == nil && f.To == nil {
+		to := time.Now().UnixMilli()
+		from := to - int64(7*24*time.Hour/time.Millisecond)
+		f.From, f.To = &from, &to
 	}
-	if f.From == 0 {
-		f.From = f.To - int64(7*24*time.Hour/time.Millisecond)
-	}
-	if f.From < 0 || f.To > 253402300799999 || f.To <= f.From || f.To-f.From > int64(90*24*time.Hour/time.Millisecond) {
+	const maxTimestamp int64 = 253402300799999
+	if (f.From != nil && (*f.From < 0 || *f.From > maxTimestamp)) ||
+		(f.To != nil && (*f.To < 0 || *f.To > maxTimestamp)) ||
+		(f.From != nil && f.To != nil && (*f.To <= *f.From || *f.To-*f.From > int64(90*24*time.Hour/time.Millisecond))) {
 		return f, ErrFilter
 	}
+	f.Query = strings.TrimSpace(f.Query)
 	if f.Result != "" && f.Result != "success" && f.Result != "failure" {
 		return f, ErrFilter
 	}
@@ -161,11 +165,19 @@ func normalize(f Filter) (Filter, error) {
 }
 
 func where(f Filter) (string, []any) {
-	args := []any{f.Kind, f.From, f.To}
-	s := " WHERE kind=$1 AND occurred_at >= $2 AND occurred_at < $3"
+	args := []any{f.Kind}
+	s := " WHERE kind=$1"
+	if f.From != nil {
+		args = append(args, *f.From)
+		s += fmt.Sprintf(" AND occurred_at >= $%d", len(args))
+	}
+	if f.To != nil {
+		args = append(args, *f.To)
+		s += fmt.Sprintf(" AND occurred_at < $%d", len(args))
+	}
 	if f.Query != "" {
 		args = append(args, "%"+strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(f.Query)+"%")
-		s += " AND (username ILIKE $4 OR ip ILIKE $4 OR path ILIKE $4 OR trace_id ILIKE $4)"
+		s += fmt.Sprintf(" AND (username ILIKE $%[1]d OR ip ILIKE $%[1]d OR path ILIKE $%[1]d OR trace_id ILIKE $%[1]d)", len(args))
 	}
 	if f.Module != "" {
 		args = append(args, f.Module)

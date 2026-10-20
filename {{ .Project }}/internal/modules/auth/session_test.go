@@ -132,27 +132,48 @@ func TestRedisSessionStore(t *testing.T) {
 		t.Fatal("delete error was ignored")
 	}
 }
+
 {{ end -}}
 func TestSessionCredentialVersion(t *testing.T) {
- sessions := newSessionTestManager(t)
- identity := authn.Identity{UserID:7, Username:"operator", Code:"CODE0007", CredentialVersion:1}
- issued, err := sessions.Issue(t.Context(), identity, false)
- if err != nil { t.Fatal(err) }
- identity.SessionID = issued.SessionID
- if err := sessions.ValidateIdentity(t.Context(), identity); err != nil { t.Fatal(err) }
- record, err := sessions.ConsumeRefresh(t.Context(), issued.RefreshToken)
- if err != nil { t.Fatal(err) }
- identity.CredentialVersion = 2
- if _, err := sessions.Renew(t.Context(), record, identity); !errors.Is(err, ErrSessionNotFound) { t.Fatalf("upgraded stale session: %v", err) }
- identity.CredentialVersion = 0
- if _, err := sessions.Issue(t.Context(), identity, false); !errors.Is(err, ErrSessionNotFound) { t.Fatalf("issued unversioned session: %v", err) }
- // Simulate records written before the upgrade, retaining valid user and digest fields.
- record.CredentialVersion = 0
- legacy, err := sessions.save(t.Context(), record)
- if err != nil { t.Fatal(err) }
- identity.CredentialVersion = 1
- if err := sessions.ValidateIdentity(t.Context(), identity); !errors.Is(err, ErrSessionNotFound) { t.Fatalf("accepted legacy access session: %v", err) }
- if _, err := sessions.ConsumeRefresh(t.Context(), legacy.RefreshToken); !errors.Is(err, ErrSessionNotFound) { t.Fatalf("accepted legacy refresh session: %v", err) }
- if err := sessions.store.Put(t.Context(), identity.SessionID, "digest", "broken json", time.Hour); err != nil { t.Fatal(err) }
- if err := sessions.ValidateIdentity(t.Context(), identity); !errors.Is(err, ErrSessionNotFound) { t.Fatalf("accepted corrupt session: %v", err) }
+	sessions := newSessionTestManager(t)
+	identity := authn.Identity{UserID: 7, Username: "operator", Code: "CODE0007", CredentialVersion: 1}
+	issued, err := sessions.Issue(t.Context(), identity, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity.SessionID = issued.SessionID
+	if err := sessions.ValidateIdentity(t.Context(), identity); err != nil {
+		t.Fatal(err)
+	}
+	record, err := sessions.ConsumeRefresh(t.Context(), issued.RefreshToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity.CredentialVersion = 2
+	if _, err := sessions.Renew(t.Context(), record, identity); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("upgraded stale session: %v", err)
+	}
+	identity.CredentialVersion = 0
+	if _, err := sessions.Issue(t.Context(), identity, false); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("issued unversioned session: %v", err)
+	}
+	// Simulate records written before the upgrade, retaining valid user and digest fields.
+	record.CredentialVersion = 0
+	legacy, err := sessions.save(t.Context(), record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity.CredentialVersion = 1
+	if err := sessions.ValidateIdentity(t.Context(), identity); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("accepted legacy access session: %v", err)
+	}
+	if _, err := sessions.ConsumeRefresh(t.Context(), legacy.RefreshToken); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("accepted legacy refresh session: %v", err)
+	}
+	if err := sessions.store.Put(t.Context(), identity.SessionID, "digest", "broken json", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessions.ValidateIdentity(t.Context(), identity); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("accepted corrupt session: %v", err)
+	}
 }

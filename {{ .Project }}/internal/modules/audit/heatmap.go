@@ -7,12 +7,12 @@ import "time"
 func heatCells(f Filter) ([]HeatCell, string) {
 	location, _ := time.LoadLocation(f.Timezone) // normalize validates the timezone.
 	granularity := "hour"
-	if f.To-f.From > int64(8*24*time.Hour/time.Millisecond) {
+	if *f.To-*f.From > int64(8*24*time.Hour/time.Millisecond) {
 		granularity = "day"
 	}
-	rollingHours := f.To-f.From <= int64(24*time.Hour/time.Millisecond)
+	rollingHours := *f.To-*f.From <= int64(24*time.Hour/time.Millisecond)
 	cells := []HeatCell{}
-	for at := time.UnixMilli(f.From).In(location); at.UnixMilli() < f.To; {
+	for at := time.UnixMilli(*f.From).In(location); at.UnixMilli() < *f.To; {
 		next := at.Add(time.Hour)
 		if !rollingHours {
 			boundary := nextCalendarDay(at)
@@ -20,7 +20,7 @@ func heatCells(f Filter) ([]HeatCell, string) {
 				next = boundary
 			}
 		}
-		end := min(next.UnixMilli(), f.To)
+		end := min(next.UnixMilli(), *f.To)
 		cells = append(cells, HeatCell{StartedAt: at.UnixMilli(), EndedAt: end,
 			Weekday: (int(at.Weekday()) + 6) % 7, Hour: at.Hour()})
 		at = time.UnixMilli(end).In(location)

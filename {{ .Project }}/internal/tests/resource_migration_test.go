@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -13,11 +14,13 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
 	"{{ .Computed.module_name_final }}/internal/common/server"
+	migrationdb "{{ .Computed.module_name_final }}/internal/infra/db"
 	"{{ .Computed.module_name_final }}/internal/modules/auth"
 
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/modules/action"
 	"{{ .Computed.module_name_final }}/internal/modules/dictionary"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
 type resourcePermissionWriter struct {
@@ -113,7 +116,7 @@ func TestDeveloperPublishRefreshesFiltersAndStoredProjections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer)
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
 	actions.SetPermissionAdministration(policy)
 	dictionaries.SetPermissionAdministration(policy)
 	var identity authn.Identity
@@ -208,7 +211,7 @@ func TestDeveloperPublishRefreshesFiltersAndStoredProjections(t *testing.T) {
 		t.Fatal(stored.UI)
 	}
 	// Built-in all participates in filtering through the same expansion, without violating its storage constraint.
-	raw := request("GET", "/action?f=id,resource&word=admin:all:system:general&resource="+url.QueryEscape("/review-users"), nil, 200)
+	raw := request("GET", "/action?f=id,resource&word=admin:all:system:all&resource="+url.QueryEscape("/review-users"), nil, 200)
 	var all action.ListActionsResult
 	if err := json.Unmarshal(raw, &all); err != nil || all.Total != 1 {
 		t.Fatal(string(raw), err)
@@ -221,5 +224,124 @@ func TestDeveloperPublishRefreshesFiltersAndStoredProjections(t *testing.T) {
 	var stale action.ListActionsResult
 	if err := json.Unmarshal(raw, &stale); err != nil || stale.Total != 1 || !strings.Contains(stale.Items[0].Resource, "/review-users") {
 		t.Fatal(string(raw), err)
+	}
+	// Exercise the same authenticated PATCH used by the developer workbench.
+	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT value FROM t_dictionary WHERE id=3`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	emptyCatalog := localizer.Current()
+	hidden := false
+	emptyCatalog.ResourceCatalog.Resources["admin:high-risk"] = localization.Resource{Kind: "directory", Sort: 5, FrontendVisible: &hidden, PermissionGroup: "admin:system:high-risk"}
+	emptyCatalog.ResourceCatalog.Resources["admin:high-risk:all"] = localization.Resource{Kind: "resource", Parent: "admin:high-risk", PermissionScope: "*"}
+	emptyCatalog.ResourceCatalog.Resources["admin:high-risk:unconfigured"] = localization.Resource{Kind: "resource", Parent: "admin:high-risk"}
+	emptyValue, err := json.Marshal(emptyCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(map[string]any{"expected_value": before, "value": json.RawMessage(emptyValue)})
+	request("PATCH", "/dictionary/3", body, 200)
+
+}
+
+func TestPublishEmptyResourcesKeepsAssociations(t *testing.T) {
+	store := permissionDatabase(t)
+	localizer := testLocalization(t, store)
+	limits, _ := pagination.New(100, 100)
+	actions := action.New(store, limits, false, localizer)
+	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dictionaries.LoadLocalization(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	dictionaries.SetResourcePermissions(actions)
+	var before json.RawMessage
+	var dictionaryID int64
+	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT id,value FROM t_dictionary WHERE dictionary_key='I18N_CATALOG'`).Scan(&dictionaryID, &before); err != nil {
+		t.Fatal(err)
+	}
+	catalog := localizer.Current()
+	hidden := false
+	catalog.ResourceCatalog.Resources["admin:high-risk"] = localization.Resource{Kind: "directory", Sort: 5, FrontendVisible: &hidden, PermissionGroup: "admin:system:high-risk"}
+	catalog.ResourceCatalog.Resources["admin:high-risk:all"] = localization.Resource{Kind: "resource", Parent: "admin:high-risk", PermissionScope: "*"}
+	catalog.ResourceCatalog.Resources["admin:high-risk:unconfigured"] = localization.Resource{Kind: "resource", Parent: "admin:high-risk", Operations: map[string]localization.ResourceOperation{}}
+	after, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := json.RawMessage(after)
+	input := dictionary.UpdateDictionaryInput{Value: &value, ExpectedValue: &before}
+	if _, err := dictionaries.Update(t.Context(), dictionaryID, input); err != nil {
+		t.Fatalf("publish empty resources: %v", err)
+	}
+	var saved json.RawMessage
+	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT value FROM t_dictionary WHERE id=$1`, dictionaryID).Scan(&saved); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := localization.Parse(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ResourceCatalog.Resources["admin:high-risk"].PermissionGroup != "admin:system:high-risk" || persisted.ResourceCatalog.Resources["admin:high-risk:all"].PermissionScope != "*" {
+		t.Fatal("saved associations were lost")
+	}
+	if len(persisted.ResourceCatalog.Resources["admin:high-risk:all"].Operations) != 0 {
+		t.Fatal("publication invented an operation")
+	}
+	if _, err := dictionaries.Update(t.Context(), dictionaryID, input); !errors.Is(err, dictionary.ErrVersionConflict) {
+		t.Fatalf("stale version did not conflict: %v", err)
+	}
+}
+
+func TestResourcePermissionMigrationsAreReversible(t *testing.T) {
+	store := permissionDatabase(t)
+	sqlPart := func(suffix string, down bool) string {
+		t.Helper()
+		files, err := fs.Glob(migrationdb.SQLFiles, migrationdb.SQLRoot+"/*-"+suffix+".sql")
+		if err != nil || len(files) != 1 {
+			t.Fatalf("migration lookup %s: %v %v", suffix, files, err)
+		}
+		raw, err := migrationdb.SQLFiles.ReadFile(files[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, undo, ok := strings.Cut(string(raw), "-- +migrate Down")
+		if !ok {
+			t.Fatal("missing Down")
+		}
+		if down {
+			return undo
+		}
+		return up
+	}
+	suffixes := []string{"01-auth-schema", "02-auth-default-data", "03-action-default-data", "04-dictionary-default-data"}
+	if err := store.Tx(t.Context(), func(ctx context.Context) error {
+		for i := len(suffixes) - 1; i >= 0; i-- {
+			if _, err := store.SQL(ctx).ExecContext(ctx, sqlPart(suffixes[i], true)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("rollback four consolidated migrations: %v", err)
+	}
+	var removed bool
+	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT to_regclass('t_user') IS NULL AND to_regclass('t_action') IS NULL AND to_regclass('t_dictionary') IS NULL`).Scan(&removed); err != nil || !removed {
+		t.Fatalf("schema was not removed: %v", err)
+	}
+	if err := store.Tx(t.Context(), func(ctx context.Context) error {
+		for _, suffix := range suffixes {
+			if _, err := store.SQL(ctx).ExecContext(ctx, sqlPart(suffix, false)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("reapply four consolidated migrations: %v", err)
+	}
+	var users, actions int
+	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM t_user),(SELECT COUNT(*) FROM t_action)`).Scan(&users, &actions); err != nil || users != 8 || actions != 31 {
+		t.Fatalf("seed restoration: users=%d actions=%d err=%v", users, actions, err)
 	}
 }

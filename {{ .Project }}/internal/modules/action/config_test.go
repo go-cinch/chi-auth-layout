@@ -1,17 +1,15 @@
 package action
 
 import (
- "{{ .Computed.module_name_final }}/internal/modules/localization"
 	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
-
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
 func actionCatalogFixture() localization.Catalog {
 	return localization.Catalog{SchemaVersion: 2, DefaultLocale: "en-US", Scopes: []string{"admin", "mini"}, Operations: []string{"read", "create", "update", "delete"}, Locales: []localization.Language{ {Tag: "en-US", Name: "English", Enabled: true}}, Messages: map[string]localization.Messages{"en-US": {}}, ResourceCatalog: localization.ResourceCatalog{
-		Defaults: map[string]localization.ResourceGrant{},
 		Resources: map[string]localization.Resource{
 			"admin:demo:record": {Kind: "resource", Operations: map[string]localization.ResourceOperation{"read": {EntryKeys: []string{}, ButtonKeys: []string{}}}},
 			"admin:system:user": {Kind: "resource", Entries: map[string]localization.ResourceEntry{"admin:menu:system:user": {Path: "/system/user"}}, Operations: map[string]localization.ResourceOperation{
@@ -46,7 +44,7 @@ func installActionCatalog(t *testing.T, localizer *localization.Module) {
 }
 
 func TestConfigSelectedFeaturesDetermineEndpoints(t *testing.T) {
- localizer := localization.New()
+	localizer := localization.New()
 	installActionCatalog(t, localizer)
 	for _, test := range []struct {
 		name               string
@@ -80,7 +78,7 @@ func TestConfigSelectedFeaturesDetermineEndpoints(t *testing.T) {
 }
 
 func TestConfigIgnoresCallerTransportMappings(t *testing.T) {
- localizer := localization.New()
+	localizer := localization.New()
 	installActionCatalog(t, localizer)
 	input := Config{ResourceKey: "admin:system:user", Operation: "read", FeatureKeys: []string{"admin:system:user:query"}, UI: []UIBinding{ {MenuKey: "mini:menu:system:user", PageEntry: true}}, Endpoints: []Endpoint{ {Protocol: "http", Method: "DELETE", Path: "/user/{id}"}}}
 	result, err := ResolveConfig(localizer.Current(), "admin:read:system:user", input)
@@ -96,7 +94,7 @@ func TestConfigIgnoresCallerTransportMappings(t *testing.T) {
 
 {{ if .Computed.enable_grpc_final }}
 func TestConfigGRPCMethod(t *testing.T) {
- localizer := localization.New()
+	localizer := localization.New()
 	installActionCatalog(t, localizer)
 	catalog := localizer.Current()
 	feature := catalog.ResourceCatalog.Buttons["admin:system:user:detail"]
@@ -150,7 +148,10 @@ func TestBuiltinOperationMustMatchInBothDirections(t *testing.T) {
 		{"read", "", true}, {"all", "all", true}, {"default", "default", true}, {"read", "all", false}, {"read", "default", false}, {"default", "all", false}, {"all", "default", false}, {"all", "", false}, {"default", "", false},
 	} {
 		c := Config{Builtin: test.builtin, UI: []UIBinding{}, Endpoints: []Endpoint{}}
-        if test.builtin == "" && test.operation == "read" { c.ResourceKey = "admin:system:access"; c.Operation = "read" }
+		if test.builtin == "" && test.operation == "read" {
+			c.ResourceKey = "admin:system:access"
+			c.Operation = "read"
+		}
 		if (c.Validate("admin:"+test.operation+":system:access") == nil) != test.valid {
 			t.Fatal(test)
 		}
@@ -158,13 +159,23 @@ func TestBuiltinOperationMustMatchInBothDirections(t *testing.T) {
 }
 
 func TestStoredAllRemainsMarkerWhileReadsExpand(t *testing.T) {
- catalog:=resourceMoveCatalog("admin:system:user")
- config:=Config{Builtin:"all",UI:[]UIBinding{},Endpoints:[]Endpoint{}}
- if err:=resolveStoredConfig(catalog,"admin:all:system:general",&config);err!=nil {t.Fatal(err)}
- if len(config.UI)!=0 || len(config.Endpoints)!=0 {t.Fatal("stored all expanded")}
- expanded,err:=ResolveConfig(catalog,"admin:all:system:general",config)
- if err!=nil || len(expanded.UI)==0 || len(expanded.Endpoints)==0 {t.Fatal(expanded,err)}
- ordinary:=Config{Bindings:&[]ResourceBinding{ {ResourceKey:"admin:system:user",Operation:"read"}},UI:[]UIBinding{},Endpoints:[]Endpoint{}}
- if err:=resolveStoredConfig(catalog,"admin:read:system:user",&ordinary);err!=nil || len(ordinary.Endpoints)==0 {t.Fatal(ordinary,err)}
- if err:=resolveStoredConfig(catalog,"invalid",&ordinary);err==nil {t.Fatal("invalid definition accepted")}
+	catalog := resourceMoveCatalog("admin:system:user")
+	config := Config{Builtin: "all", UI: []UIBinding{}, Endpoints: []Endpoint{}}
+	if err := resolveStoredConfig(catalog, "admin:all:system:all", &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.UI) != 0 || len(config.Endpoints) != 0 {
+		t.Fatal("stored all expanded")
+	}
+	expanded, err := ResolveConfig(catalog, "admin:all:system:all", config)
+	if err != nil || len(expanded.UI) == 0 || len(expanded.Endpoints) == 0 {
+		t.Fatal(expanded, err)
+	}
+	ordinary := Config{Bindings: &[]ResourceBinding{ {ResourceKey: "admin:system:user", Operation: "read"}}, UI: []UIBinding{}, Endpoints: []Endpoint{}}
+	if err := resolveStoredConfig(catalog, "admin:read:system:user", &ordinary); err != nil || len(ordinary.Endpoints) == 0 {
+		t.Fatal(ordinary, err)
+	}
+	if err := resolveStoredConfig(catalog, "invalid", &ordinary); err == nil {
+		t.Fatal("invalid definition accepted")
+	}
 }

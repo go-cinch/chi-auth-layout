@@ -1,17 +1,17 @@
 package docs
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"bytes"
 	"embed"
 	"net/http"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 {{- if eq .Computed.http_router_final "gin" }}
 	"github.com/gin-gonic/gin"
 {{- end }}
 
 	"{{ .Computed.module_name_final }}/internal/common/config"
- "{{ .Computed.module_name_final }}/internal/common/pagination"
+	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/common/server"
 	"{{ .Computed.module_name_final }}/internal/modules"
 )
@@ -26,12 +26,12 @@ type Module struct {
 
 var _ modules.Module = (*Module)(nil)
 
-func New(servers []config.HTTPDocsServersItemConfig,limits ...pagination.Limits) (*Module, error) {
+func New(servers []config.HTTPDocsServersItemConfig, limits ...pagination.Limits) (*Module, error) {
 	embedded, err := files.ReadFile("openapi.yaml")
 	if err != nil {
 		return nil, err
 	}
-	spec, err := renderOpenAPI(embedded,servers,limits...)
+	spec, err := renderOpenAPI(embedded, servers, limits...)
 	if err != nil {
 		return nil, err
 	}

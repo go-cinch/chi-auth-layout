@@ -29,7 +29,7 @@ const (
 
 var (
 	ErrNotFound        = apperror.New("DICTIONARY_NOT_FOUND", "dictionary not found")
-	ErrIDs             = apperror.New("DICTIONARY_IDS", "provide 1-100 positive dictionary ids")
+	ErrIDs             = apperror.New("DICTIONARY_INVALID_IDS", "provide 1-100 positive dictionary ids")
 	ErrInvalid         = apperror.New("DICTIONARY_INVALID", "invalid dictionary")
 	ErrConflict        = apperror.New("DICTIONARY_CONFLICT", "dictionary key already exists")
 	ErrVersionConflict = apperror.New("DICTIONARY_VERSION_CONFLICT", "dictionary changed; compare the latest version before submitting")
@@ -257,7 +257,7 @@ func (m *Module) getCached(ctx context.Context, id int64) (*Dictionary, bool, er
 	key := "record:" + strconv.FormatInt(id, 10)
 	raw, hit, version, cacheErr := m.cache.Load(ctx, key)
 	if cacheErr != nil {
-		slog.WarnContext(ctx, "read dictionary record cache failed: "+cacheErr.Error(), "operation", "read_dictionary_cache", "outcome", "failure", "error", cacheErr, "cache_kind", "record", "dictionary_id", id)
+		slog.WarnContext(ctx, "read dictionary "+strconv.FormatInt(id, 10)+" record cache failed: "+cacheErr.Error(), "operation", "read_dictionary_cache", "outcome", "failure", "error", cacheErr, "cache_kind", "record", "dictionary_id", id)
 	} else if hit {
 		var value Dictionary
 		if err := json.Unmarshal([]byte(raw), &value); err == nil && value.ID == id && validKey(value.Key) && json.Valid(value.Value) {
@@ -274,7 +274,7 @@ func (m *Module) getCached(ctx context.Context, id int64) (*Dictionary, bool, er
 			err = m.cache.Store(ctx, key, string(encoded), version, m.ttl)
 		}
 		if err != nil {
-			slog.WarnContext(ctx, "write dictionary record cache failed: "+err.Error(), "operation", "write_dictionary_cache", "outcome", "failure", "error", err, "cache_kind", "record", "dictionary_id", id)
+			slog.WarnContext(ctx, "write dictionary "+strconv.FormatInt(id, 10)+" record cache failed: "+err.Error(), "operation", "write_dictionary_cache", "outcome", "failure", "error", err, "cache_kind", "record", "dictionary_id", id)
 		}
 	}
 	return value, false, nil

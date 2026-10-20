@@ -65,3 +65,49 @@ func TestActionDetailFieldsDocumentation(t *testing.T) {
 		}
 	}
 }
+
+func TestCompositeDetailFieldsDocumentation(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "openapi.yaml")
+	if err := run("../..", "../../../conf", output, "composite details"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Paths map[string]map[string]struct {
+			Parameters []struct{ Name, Description string }
+			Responses  map[string]struct {
+				Content map[string]struct {
+					Schema struct {
+						Required   []string
+						Properties map[string]any
+					}
+				}
+			}
+		}
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/user/{id}", "/role/{id}", "/info", "/audit/login/detail/{id}", "/audit/operation/detail/{id}", "/msg/sent/{id}"} {
+		operation, ok := doc.Paths[path]["get"]
+		if !ok {
+			t.Fatal(path)
+		}
+		count := 0
+		for _, parameter := range operation.Parameters {
+			if parameter.Name == "f" {
+				count++
+				if !strings.Contains(parameter.Description, "Omitted f") {
+					t.Fatal(path, parameter)
+				}
+			}
+		}
+		body := operation.Responses["200"].Content["application/json"].Schema
+		if count != 1 || len(body.Required) != 0 || len(body.Properties) == 0 {
+			t.Fatal(path, count, body)
+		}
+	}
+}

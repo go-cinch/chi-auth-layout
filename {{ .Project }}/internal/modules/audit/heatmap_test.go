@@ -22,7 +22,7 @@ func TestHeatCellsUseActualIntervals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cells, mode := heatCells(Filter{From: c.from.UnixMilli(), To: c.to.UnixMilli(), Timezone: c.zone})
+			cells, mode := heatCells(Filter{From: auditTime(c.from.UnixMilli()), To: auditTime(c.to.UnixMilli()), Timezone: c.zone})
 			if len(cells) != c.want || mode != c.mode {
 				t.Fatalf("got %d %s", len(cells), mode)
 			}
@@ -51,7 +51,7 @@ func TestHeatCellsDSTAndCalendarDays(t *testing.T) {
 	} {
 		from := time.Date(2026, c.month, c.day, 0, 0, 0, 0, location)
 		to := from.AddDate(0, 0, 2)
-		cells, _ := heatCells(Filter{From: from.UnixMilli(), To: to.UnixMilli(), Timezone: location.String()})
+		cells, _ := heatCells(Filter{From: auditTime(from.UnixMilli()), To: auditTime(to.UnixMilli()), Timezone: location.String()})
 		if len(cells) != c.hours {
 			t.Fatalf("DST range: got %d hours, want %d", len(cells), c.hours)
 		}
@@ -63,7 +63,7 @@ func TestHeatCellsDSTAndCalendarDays(t *testing.T) {
 	}
 	from := time.Date(2026, 10, 15, 0, 0, 0, 0, location)
 	to := from.AddDate(0, 0, 30)
-	cells, mode := heatCells(Filter{From: from.UnixMilli(), To: to.UnixMilli(), Timezone: location.String()})
+	cells, mode := heatCells(Filter{From: auditTime(from.UnixMilli()), To: auditTime(to.UnixMilli()), Timezone: location.String()})
 	if mode != "day" || len(cells) != 30 {
 		t.Fatal(mode, len(cells))
 	}
@@ -102,7 +102,7 @@ func TestHeatCellsMidnightTransitions(t *testing.T) {
 					start := noon.AddDate(0, 0, -1)
 					from := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, location)
 					to := from.AddDate(0, 0, days)
-					cells, mode := heatCells(Filter{From: from.UnixMilli(), To: to.UnixMilli(), Timezone: c.zone})
+					cells, mode := heatCells(Filter{From: auditTime(from.UnixMilli()), To: auditTime(to.UnixMilli()), Timezone: c.zone})
 					want := days
 					if days == 3 {
 						want = 2*24 + c.hours

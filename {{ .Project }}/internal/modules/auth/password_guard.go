@@ -20,11 +20,11 @@ type PasswordFailureStore interface {
 }
 
 type PasswordChangeGuard struct {
-	store     PasswordFailureStore
-	captcha   *PointCaptcha
-	threshold int64
+	store         PasswordFailureStore
+	captcha       *PointCaptcha
+	threshold     int64
 	lockThreshold int64
-	ttl       time.Duration
+	ttl           time.Duration
 }
 
 func NewPasswordChangeGuard(store PasswordFailureStore, captcha *PointCaptcha, threshold, lockThreshold int64, ttl time.Duration) (*PasswordChangeGuard, error) {

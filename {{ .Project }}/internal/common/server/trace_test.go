@@ -127,6 +127,8 @@ func TestTraceIDPassesThroughWithoutPropagator(t *testing.T) {
 	called := false
 	handler := TraceID("test", redact.New())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
-	if !called { t.Fatal("handler was not called") }
+	if !called {
+		t.Fatal("handler was not called")
+	}
 }
 {{ end -}}

@@ -57,7 +57,7 @@ func (m *Module) Catalog(ctx context.Context, fields report.Fields) (*CatalogRes
 	if err := fields.Validate("scopes", "operations", "resource_catalog", "defined_actions"); err != nil {
 		return nil, err
 	}
-	if err := authn.RequireAdministrationGrant(ctx, m.administration); err != nil {
+	if err := authn.RequirePermissionOperation(ctx, m.administration, "action", "read"); err != nil {
 		return nil, err
 	}
 	var catalog localization.Catalog
@@ -109,7 +109,7 @@ func (m *Module) Effective(ctx context.Context, scope string, fields report.Fiel
 	if !found {
 		return nil, ErrInvalid
 	}
-	if err := authn.RequireAllPermissions(ctx, m.administration); err != nil {
+	if err := authn.RequirePermissionOperation(ctx, m.administration, "action", "read"); err != nil {
 		return nil, err
 	}
 	inspector, ok := m.administration.(permissionInspector)

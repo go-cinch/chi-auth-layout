@@ -6,10 +6,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"strings"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
 // WriteActionNames updates only action labels, using the caller's transaction.

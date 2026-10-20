@@ -301,3 +301,25 @@ func TestProtectedErrorsPreserveHandlerDescription(t *testing.T) {
 		t.Fatal("handler denial description overwritten")
 	}
 }
+
+func TestPackageQualifiedSchemasAndAnyJSON(t *testing.T) {
+	left := &sourcePackage{name: "action", directory: "internal/modules/action", types: map[string]ast.Expr{"Summary": &ast.StructType{Fields: &ast.FieldList{List: []*ast.Field{ {Names: []*ast.Ident{ast.NewIdent("Code")}, Type: ast.NewIdent("string"), Tag: &ast.BasicLit{Kind: token.STRING, Value: "`json:\"code\"`"}}}}}}}
+	right := &sourcePackage{name: "role", directory: "internal/modules/role", types: map[string]ast.Expr{"Summary": &ast.StructType{Fields: &ast.FieldList{List: []*ast.Field{ {Names: []*ast.Ident{ast.NewIdent("ID")}, Type: ast.NewIdent("int64"), Tag: &ast.BasicLit{Kind: token.STRING, Value: "`json:\"id\"`"}}}}}}}
+	g := &generator{components: map[string]*schema{}, visiting: map[string]bool{}}
+	g.registerSchemaNames([]*sourcePackage{left, right}, "internal")
+	a, b := g.typeSchema(left, ast.NewIdent("Summary")), g.typeSchema(right, ast.NewIdent("Summary"))
+	if a.ref == b.ref || g.components["modules.action.Summary"].properties["code"] == nil || g.components["modules.role.Summary"].properties["id"] == nil {
+		t.Fatal(a, b, g.components)
+	}
+	for _, expression := range []ast.Expr{ast.NewIdent("any"), &ast.InterfaceType{Methods: &ast.FieldList{}}} {
+		if value := g.typeSchema(left, expression); !value.anyJSON {
+			t.Fatal(value)
+		}
+	}
+	named := g.structSchema(right, &ast.StructType{Fields: &ast.FieldList{List: []*ast.Field{ {Names: []*ast.Ident{ast.NewIdent("Role")}, Type: &ast.StarExpr{X: ast.NewIdent("Summary")}}}}})
+	var output strings.Builder
+	renderSchema(&output, named.properties["role"], 0)
+	if !strings.Contains(output.String(), "anyOf:") || !strings.Contains(output.String(), "enum: [null]") || !strings.Contains(output.String(), b.ref) {
+		t.Fatal(output.String())
+	}
+}

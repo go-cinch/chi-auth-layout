@@ -17,7 +17,7 @@ AS $$
                 AND binding ->> 'resource_key' ~ '^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*){2,}$'
                 AND SPLIT_PART(binding ->> 'resource_key', ':', 1) = required_scope
                 AND JSONB_TYPEOF(binding -> 'operation') = 'string'
-                AND binding ->> 'operation' IN ('read', 'create', 'update', 'delete')
+                AND binding ->> 'operation' IN ('read', 'create', 'update', 'delete', '*')
                 AND (
                     NOT (binding ? 'feature_keys')
                     OR JSONB_TYPEOF(binding -> 'feature_keys') IN ('array', 'null')
@@ -65,13 +65,12 @@ CREATE TABLE t_action (
         )
     ),
     CONSTRAINT ck_action_builtin CHECK (
-        CASE WHEN config ? 'builtin' THEN
+        NOT (config ? 'builtin')
+        OR (
             JSONB_TYPEOF(config -> 'builtin') = 'string'
             AND config ->> 'builtin' IN ('all', 'default')
             AND config ->> 'builtin' = SPLIT_PART(word, ':', 2)
-        ELSE
-            SPLIT_PART(word, ':', 2) NOT IN ('all', 'default')
-        END
+        )
     ),
     CONSTRAINT ck_action_all_config CHECK (
         config ->> 'builtin' IS DISTINCT FROM 'all'
@@ -80,9 +79,7 @@ CREATE TABLE t_action (
     CONSTRAINT ck_action_resource_binding CHECK ((
         NOT (config ? 'resource_key') AND NOT (config ? 'operation')
         AND CASE
-            WHEN config ->> 'builtin' IN ('all', 'default')
-                OR word = scope || ':grant:system:permission-admin'
-            THEN NOT (config ? 'bindings')
+            WHEN config ->> 'builtin' IN ('all', 'default') THEN NOT (config ? 'bindings')
             ELSE action_resource_bindings_valid(config -> 'bindings', scope)
         END
     ) IS TRUE)
@@ -98,7 +95,7 @@ COMMENT ON COLUMN t_action.action_group IS 'Stable scope:module:resource group i
 
 COMMENT ON COLUMN t_action.code IS 'Stable eight-character assignment code used by users, roles and user groups';
 
-COMMENT ON COLUMN t_action.word IS 'Stable scope:operation:module:resource permission identifier; label lookup uses frontend.actions[word]';
+COMMENT ON COLUMN t_action.word IS 'Scope:operation:module:resource permission identifier; code is the stable assignment identity; label lookup uses frontend.actions[word]';
 
 COMMENT ON COLUMN t_action.scope IS 'Stored scope derived from word; label lookup uses frontend.scopes[scope]';
 

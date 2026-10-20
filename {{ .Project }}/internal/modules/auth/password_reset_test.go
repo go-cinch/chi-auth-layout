@@ -176,7 +176,7 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 		request := func(method, path, body string, want int) *httptest.ResponseRecorder {
 			t.Helper()
 			mock.ExpectQuery("SELECT username, code, status, credential_version, login_count").WithArgs(int64(3), "EXP78RGH").WillReturnRows(sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow("readonly", "EXP78RGH", userStatusActive, int64(1), int64(0)))
-			if authn.PasswordResetAllowedHTTP(method, path) {
+			if PasswordResetAllowedHTTP(method, path) {
 				expectPermission()
 			}
 			r := httptest.NewRequest(method, path, strings.NewReader(body))

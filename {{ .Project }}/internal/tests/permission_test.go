@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"fmt"
 	"io/fs"
 	"net/http/httptest"
@@ -15,11 +14,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
+	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
-	"github.com/lib/pq"
 
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/common/server"
@@ -100,7 +100,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A user with no assigned actions must receive only the seeded default action.
+	// Defaults are assigned at account creation; authorization never adds them back.
 	exec(`UPDATE t_user SET role_id=NULL, action='', login_count=1 WHERE id=2`)
 	var identity authn.Identity
 	if err := store.DB.QueryRowContext(t.Context(), `SELECT id, username, code, credential_version FROM t_user WHERE id=2`).Scan(
@@ -125,7 +125,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer)
+	m := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer, nil)
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	handler, err := server.NewRouter(cfg, manager, nil, m)
@@ -143,8 +143,8 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 			t.Fatalf("%s %s: got %d, want %d: %s", method, path, w.Code, want, w.Body.String())
 		}
 	}
-	var defaultResources string
-	if err := store.DB.QueryRowContext(t.Context(), `SELECT config::text FROM t_action WHERE config->>'builtin'='default' AND scope='admin'`).Scan(&defaultResources); err != nil {
+	var defaultCode string
+	if err := store.DB.QueryRowContext(t.Context(), `SELECT code FROM t_action WHERE config->>'builtin'='default' AND scope='admin'`).Scan(&defaultCode); err != nil {
 		t.Fatal(err)
 	}
 	for _, restricted := range []bool{false, true} {
@@ -154,11 +154,11 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 		}
 		exec(`UPDATE t_user SET login_count=$1 WHERE id=2`, count)
 		for _, granted := range []bool{true, false} {
-			resources := `{"builtin":"default","ui":[],"endpoints":[]}`
+			assigned := ""
 			if granted {
-				resources = defaultResources
+				assigned = defaultCode
 			}
-			exec(`UPDATE t_action SET config=$1 WHERE config->>'builtin'='default' AND scope='admin'`, resources)
+			exec(`UPDATE t_user SET action=$1 WHERE id=2`, assigned)
 			want := 403
 			if granted {
 				want = 400
@@ -174,8 +174,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 		}
 	}
 	// Even all permissions cannot lift the first-login restriction, including via the gateway.
-	exec(`UPDATE t_action SET config=$1 WHERE config->>'builtin'='default' AND scope='admin'`, defaultResources)
-	exec(`UPDATE t_user SET action=(SELECT code FROM t_action WHERE scope='admin' AND config->>'builtin'='all') WHERE id=2`)
+	exec(`UPDATE t_user SET action=(SELECT code FROM t_action WHERE scope='admin' AND config->>'permission_scope'='*') WHERE id=2`)
 	request("GET", "/info", 403)
 	for _, target := range []struct {
 		method, path string
@@ -218,7 +217,9 @@ func TestPermissionSQL(t *testing.T) {
 		t.Fatalf("timestamp migration: %d %v", lockedAt, loggedAt)
 	}
 	makeConfig := func(method, path, resource, operation string) string {
-		c := registerPermissionFixture(t, localizer, "admin:test:"+resource, operation, "/"+resource, []localization.HTTPPath{ {Method: method, Path: path}})
+		c := registerPermissionFixture(t, localizer, "admin:test:"+resource, operation, "/"+resource, []localization.HTTPPath{
+			{Method: method, Path: path},
+		})
 		encoded, err := json.Marshal(c)
 		if err != nil {
 			t.Fatal(err)
@@ -248,6 +249,8 @@ func TestPermissionSQL(t *testing.T) {
 	}
 	exec(`INSERT INTO t_role(id,name,word,action) VALUES(101,'Test','test','ROLE0001')`)
 	exec(`INSERT INTO t_user(id,username,code,password,status,role_id,action) VALUES(101,'tester','TEST0001','unused',1,101,' DIRECT01, DIRECT01, ROLE0001, MISSING1 ')`)
+	// This fixture deliberately receives the baseline grant as an explicit assignment.
+	exec(`UPDATE t_user SET action=action || ',' || (SELECT code FROM t_action WHERE config->>'builtin'='default' AND scope='admin') WHERE id=101`)
 	exec(`INSERT INTO t_user_group(id,name,word,action) VALUES(101,'Test','test','GROUP001, DIRECT01')`)
 	exec(`INSERT INTO t_user_user_group_relation(user_id,user_group_id) VALUES(101,101)`)
 	manager, err := authn.New("test", strings.Repeat("x", 32), time.Hour)
@@ -265,7 +268,7 @@ func TestPermissionSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx = request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer)
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer, nil)
 	info, err := m.Info(ctx, "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -300,6 +303,8 @@ func TestPermissionSQL(t *testing.T) {
 	exec(`UPDATE t_user SET action='',role_id=NULL WHERE id=101`)
 	check("GET", "/direct", false)
 	check("PATCH", "/role-target", false)
+	check("GET", "/default", false)
+	exec(`UPDATE t_user SET action=(SELECT code FROM t_action WHERE config->>'builtin'='default' AND scope='admin') WHERE id=101`)
 	check("GET", "/default", true)
 	exec(`DELETE FROM t_action WHERE config->>'builtin'='default' AND scope='admin'`)
 	check("GET", "/default", false)
@@ -346,13 +351,15 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	miniConfig := registerPermissionFixture(t, localizer, "mini:content:private", "read", "/private", []localization.HTTPPath{ {Method: "GET", Path: "/mini/private"}, {Method: "GET", Path: "/user"}})
+	miniConfig := registerPermissionFixture(t, localizer, "mini:content:private", "read", "/private", []localization.HTTPPath{
+		{Method: "GET", Path: "/mini/private"}, {Method: "GET", Path: "/user"},
+	})
 	encodedMini, err := json.Marshal(miniConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	exec(`INSERT INTO t_action(action_group,code,word,config) VALUES ('mini:content:private','MINI0001','mini:read:content:private',$1)`, string(encodedMini))
-	exec(`UPDATE t_user SET role_id=NULL,action=(SELECT code FROM t_action WHERE config->>'builtin'='all' AND scope='admin') WHERE id=2`)
+	exec(`UPDATE t_user SET role_id=NULL,action=(SELECT code FROM t_action WHERE config->>'permission_scope'='*' AND scope='admin') WHERE id=2`)
 	var identity authn.Identity
 	if err := store.DB.QueryRowContext(t.Context(), `SELECT id,username,code,credential_version FROM t_user WHERE id=2`).Scan(&identity.UserID, &identity.Username, &identity.Code, &identity.CredentialVersion); err != nil {
 		t.Fatal(err)
@@ -372,7 +379,7 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer)
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
 	check := func(method, path string, want bool) {
 		t.Helper()
 		_, allowed, err := m.CheckPermission(ctx, auth.PermissionTarget{Method: method, Path: path})
@@ -453,10 +460,14 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 	httpCheck("/user", []string{""}, 400)
 	httpCheck("/user", []string{"admin", "mini"}, 400)
 	httpCheck("/info?scope=admin", []string{"mini"}, 403)
+	httpCheck("/info", []string{"admin"}, 403)
+	exec(`UPDATE t_user SET action=action || ',' || (SELECT code FROM t_action WHERE config->>'builtin'='default' AND scope='admin') WHERE id=2`)
 	httpCheck("/info", []string{"admin"}, 200)
 	httpCheck("/info?scope=mini", []string{"admin"}, 200)
 	// The actual server registers static-route precedence for both direct requests and gateway checks.
-	detailConfig := registerPermissionFixture(t, localizer, "admin:system:detail", "read", "/user/detail", []localization.HTTPPath{ {Method: "GET", Path: "/user/{id}"}})
+	detailConfig := registerPermissionFixture(t, localizer, "admin:system:detail", "read", "/user/detail", []localization.HTTPPath{
+		{Method: "GET", Path: "/user/{id}"},
+	})
 	encodedDetail, err := json.Marshal(detailConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -509,9 +520,8 @@ func TestFinalizedSeedBindingsPostgres(t *testing.T) {
 		}
 		parts := strings.Split(word, ":")
 		groupParts := strings.Split(group, ":")
-		expected := groupParts[0] + ":" + parts[1] + ":" + strings.Join(groupParts[1:], ":")
-		if word != expected {
-			t.Errorf("seed word %s does not match business group %s", word, group)
+		if groupParts[0] != parts[0] {
+			t.Errorf("seed group crosses scopes: %s %s", word, group)
 		}
 		if !catalog.GroupKeys()[group] {
 			t.Errorf("unregistered seed group %s", group)
@@ -523,12 +533,20 @@ func TestFinalizedSeedBindingsPostgres(t *testing.T) {
 		if err := config.Validate(word); err != nil {
 			t.Fatalf("invalid seed %s: %v", word, err)
 		}
-		if config.Builtin != "all" {
+		if config.Builtin != "all" && config.PermissionScope != "*" {
 			resolved, err := action.ResolveConfig(localizer.Current(), word, config)
 			if err != nil {
 				t.Fatalf("resolve seed %s: %v", word, err)
 			}
-			if !reflect.DeepEqual(config.UI, resolved.UI) || !reflect.DeepEqual(config.Endpoints, resolved.Endpoints) {
+			for i := range config.Endpoints {
+				if path, ok := auth.AuthHTTPPaths("")[config.Endpoints[i].Path]; ok && config.Endpoints[i].Protocol == "http" {
+					config.Endpoints[i].Path = path
+				}
+			}
+			// Forward-only migrated definitions may have an empty display cache.
+			// Their effective projection is resolved from the catalog on reads.
+			emptyCache := len(config.UI) == 0 && len(config.Endpoints) == 0 && config.Bindings != nil && len(*config.Bindings) > 0
+			if !emptyCache && (!reflect.DeepEqual(config.UI, resolved.UI) || !reflect.DeepEqual(config.Endpoints, resolved.Endpoints)) {
 				t.Errorf("seed %s has stale projections", word)
 			}
 		}
@@ -565,7 +583,9 @@ func registerPermissionFixture(t *testing.T, localizer *localization.Module, key
 	if err := localizer.Install(raw); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := action.ResolveConfig(localizer.Current(), strings.Replace(key, ":", ":"+operation+":", 1), action.Config{Bindings: &[]action.ResourceBinding{ {ResourceKey: key, Operation: operation, FeatureKeys: []string{feature}}}, UI: []action.UIBinding{}, Endpoints: []action.Endpoint{}})
+	resolved, err := action.ResolveConfig(localizer.Current(), strings.Replace(key, ":", ":"+operation+":", 1), action.Config{Bindings: &[]action.ResourceBinding{
+		{ResourceKey: key, Operation: operation, FeatureKeys: []string{feature}},
+	}, UI: []action.UIBinding{}, Endpoints: []action.Endpoint{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +600,7 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer)
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, auth.Switches{}, localizer, nil)
 	limits, _ := pagination.New(100, 100)
 	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
 	if err != nil {
@@ -652,17 +672,14 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 			if !paths["/dashboard/workspace"] {
 				t.Fatalf("%s lost workspace", test.word)
 			}
-			all := false
-			for _, word := range info.Permission.Words {
-				all = all || word == "admin:all:system:general"
-			}
+			all := info.Permission.PermissionScope == "*"
 			if all != test.all {
 				t.Fatalf("%s all=%v", test.word, all)
 			}
 			if err := policy.RequireCatalogAdministration(ctx); (err == nil) != test.developer {
 				t.Fatalf("%s catalog authority: %v", test.word, err)
 			}
-			if !test.all && test.users {
+			if !test.all && test.users && !test.developer {
 				if err := actions.Delete(ctx, action.AllPermissionsActionID); !errors.Is(err, authn.ErrPermissionAdministrationRequired) {
 					t.Fatalf("%s modified all capability: %v", test.word, err)
 				}
@@ -728,7 +745,7 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 
 func testLocalization(t *testing.T, store *db.Store) *localization.Module {
 	t.Helper()
-	localizer := localization.New(authn.AuthHTTPPaths(""))
+	localizer := localization.New(auth.AuthHTTPPaths(""))
 	var raw []byte
 	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), "SELECT value FROM t_dictionary WHERE dictionary_key='I18N_CATALOG'").Scan(&raw); err != nil {
 		t.Fatal(err)

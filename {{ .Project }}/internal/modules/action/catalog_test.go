@@ -1,7 +1,6 @@
 package action
 
 import (
- "{{ .Computed.module_name_final }}/internal/modules/localization"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,11 +8,12 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	{{ if eq .Computed.http_router_final "gin" }}
+{{ if eq .Computed.http_router_final "gin" }}
 	"github.com/gin-gonic/gin"
-	{{ end }}
+{{ end }}
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 
 	"{{ .Computed.module_name_final }}/internal/common/report"
@@ -80,13 +80,13 @@ func TestCatalogHTTP(t *testing.T) {
 	m, _ := newTestModule(t)
 	policy := &catalogPolicy{actionPolicy: actionPolicy{allowed: true}}
 	m.SetPermissionAdministration(policy)
-	{{ if eq .Computed.http_router_final "gin" }}
+{{ if eq .Computed.http_router_final "gin" }}
 	router := gin.New()
 	m.HTTP(router.Group(""))
 	handler := http.Handler(router)
-	{{ else }}
+{{ else }}
 	handler := m.HTTP()
-	{{ end }}
+{{ end }}
 	for _, test := range []struct {
 		path   string
 		status int
@@ -117,28 +117,43 @@ func TestCatalogHTTP(t *testing.T) {
 }
 
 func TestEffectiveFullSelectionPreservesEmptyCollections(t *testing.T) {
- value:=EffectiveResult{Scope:"admin",Btn:[]string{},HTTP:[]localization.HTTPPath{},GRPC:[]string{}}
- raw,err:=json.Marshal(value)
- if err!=nil {t.Fatal(err)}
- var fields map[string]json.RawMessage
- if err:=json.Unmarshal(raw,&fields);err!=nil {t.Fatal(err)}
- if len(fields)!=4 || string(fields["scope"])!=`"admin"` {t.Fatal(string(raw))}
- for _,name:=range []string{"btn","http","grpc"} {if string(fields[name])!="[]" {t.Fatal(string(raw))}}
+	value := EffectiveResult{Scope: "admin", Btn: []string{}, HTTP: []localization.HTTPPath{}, GRPC: []string{}}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 4 || string(fields["scope"]) != `"admin"` {
+		t.Fatal(string(raw))
+	}
+	for _, name := range []string{"btn", "http", "grpc"} {
+		if string(fields[name]) != "[]" {
+			t.Fatal(string(raw))
+		}
+	}
 }
 
-type narrowCatalogSource struct { source *localization.Module; fields report.Fields }
+type narrowCatalogSource struct {
+	source *localization.Module
+	fields report.Fields
+}
 
 func (s *narrowCatalogSource) Current() localization.Catalog { panic("full catalog requested") }
 
 func (s *narrowCatalogSource) Select(fields []string) localization.Catalog {
- s.fields = append(report.Fields{},fields...)
- return s.source.Select(fields)
+	s.fields = append(report.Fields{}, fields...)
+	return s.source.Select(fields)
 }
 
 func TestCatalogLoadsOnlySelectedMetadata(t *testing.T) {
- m,_:=newTestModule(t)
- source:=&narrowCatalogSource{source:m.catalogSource.(*localization.Module)}
- m.catalogSource=source
- value,err:=m.Catalog(t.Context(),report.Fields{"scopes"})
- if err!=nil || len(value.Scopes)==0 || !reflect.DeepEqual(source.fields,report.Fields{"scopes"}) {t.Fatal(value,source.fields,err)}
+	m, _ := newTestModule(t)
+	source := &narrowCatalogSource{source: m.catalogSource.(*localization.Module)}
+	m.catalogSource = source
+	value, err := m.Catalog(t.Context(), report.Fields{"scopes"})
+	if err != nil || len(value.Scopes) == 0 || !reflect.DeepEqual(source.fields, report.Fields{"scopes"}) {
+		t.Fatal(value, source.fields, err)
+	}
 }

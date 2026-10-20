@@ -3,11 +3,11 @@ package tests
 import (
 	"context"
 	"encoding/json"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"fmt"
 	"reflect"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
 	"{{ .Computed.module_name_final }}/internal/common/i18n"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
@@ -604,18 +604,24 @@ func TestActionBindingNameFallbackPostgres(t *testing.T) {
 	localizer := testLocalization(t, store)
 	limits, _ := pagination.New(100, 100)
 	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, false, localizer)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	actions := action.New(store, limits, false, localizer)
 	actions.SetDefinitionCatalog(dictionaries)
 	ctx := i18n.WithLocale(t.Context(), "en-US")
 	value, err := actions.Create(ctx, action.CreateActionInput{
-		Word: "admin:read:custom:users",
+		Word:   "admin:read:custom:users",
 		Config: action.Config{ResourceKey: "admin:system:user", Operation: "update", UI: []action.UIBinding{}, Endpoints: []action.Endpoint{}},
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	catalog := localizer.Current()
 	want := catalog.Labels("en-US", "operations")["update"] + " " + catalog.Labels("en-US", "resources")["admin:system:user"]
-	if value.Name != want { t.Fatalf("created name=%q want=%q", value.Name, want) }
+	if value.Name != want {
+		t.Fatalf("created name=%q want=%q", value.Name, want)
+	}
 	for _, input := range []action.ListActionsInput{
 		{Code: value.Code, Q: want, Fields: report.Fields{"name"}},
 		{Code: value.Code, Name: want, Fields: report.Fields{"name"}},
@@ -626,5 +632,7 @@ func TestActionBindingNameFallbackPostgres(t *testing.T) {
 		}
 	}
 	summaries, err := actions.LookupSummaries(ctx, store.DB, []string{value.Code})
-	if err != nil || summaries[value.Code].Name != want { t.Fatalf("summary=%+v err=%v", summaries, err) }
+	if err != nil || summaries[value.Code].Name != want {
+		t.Fatalf("summary=%+v err=%v", summaries, err)
+	}
 }

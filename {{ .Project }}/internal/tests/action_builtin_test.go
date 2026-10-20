@@ -34,8 +34,8 @@ func TestActionBuiltinOperationConstraintPostgres(t *testing.T) {
 		{"read default mismatch", "read", `"default"`, false},
 		{"all default mismatch", "all", `"default"`, false},
 		{"default all mismatch", "default", `"all"`, false},
-		{"missing all mode", "all", "", false},
-		{"missing default mode", "default", "", false},
+		{"identity containing all is ordinary", "all", "", true},
+		{"identity containing default is ordinary", "default", "", true},
 		{"null builtin", "all", "null", false},
 		{"numeric builtin", "all", "1", false},
 		{"empty builtin", "read", `""`, false},
@@ -71,7 +71,7 @@ func TestUpdateBuiltinAllPreservesStoredMarkerPostgres(t *testing.T) {
 	}
 	actions.SetDefinitionCatalog(dictionaries)
 	actions.SetNameLocalization(dictionaries)
-	word := "admin:all:system:general"
+	word := "admin:all:system:all"
 	value, err := actions.Update(t.Context(), 1, action.UpdateActionInput{Word: &word, Names: map[string]string{"en-US": "All permissions revised"}})
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestUpdateBuiltinAllPreservesStoredMarkerPostgres(t *testing.T) {
 	if err := json.Unmarshal(raw, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Builtin != "all" || config.UI == nil || len(config.UI) != 0 || config.Endpoints == nil || len(config.Endpoints) != 0 {
+	if config.Builtin != "" || config.PermissionScope != "*" || config.Bindings == nil || config.UI == nil || len(config.UI) != 0 || config.Endpoints == nil || len(config.Endpoints) != 0 {
 		t.Fatalf("stored all changed: %s", raw)
 	}
 	// A detail response may contain expanded arrays; submitting it must still persist a marker.

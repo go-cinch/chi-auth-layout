@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"io/fs"
 	"log/slog"
 	"path"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"golang.org/x/crypto/bcrypt"
@@ -96,7 +96,7 @@ func TestDefaultUserPasswordsMatchUsernames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pattern := regexp.MustCompile(`(?m)^\s*\(\d+,\s*(\d+|NULL),\s*'([^']+)',\s*'[^']+',\s*'([^']+)',\s*1\)[,;]$`)
+	pattern := regexp.MustCompile(`(?m)^\s*\(\d+,\s*(\d+|NULL),\s*'([^']+)',\s*'[^']+',\s*'([^']+)',\s*1,\s*'[^']*'\)[,;]$`)
 	matches := pattern.FindAllSubmatch(contents, -1)
 	expectedRoles := map[string]string{
 		"super": "1", "guest": "2", "readonly": "NULL", "write": "NULL",
@@ -174,7 +174,7 @@ func TestDefaultActionButtonCatalog(t *testing.T) {
 		UI []binding `json:"ui"`
 	}
 	actions := readSeedMigration(t, "03-action-default-data")
-	pattern := regexp.MustCompile(`(?m)^\s*\(\d+,\s*'[^']+',\s*'[^']+',\s*'([^']+)',\s*'((?:[^']|'')*)'::jsonb\)[,;]`)
+	pattern := regexp.MustCompile(`(?m)^\s*\(\d+,\s*'[^']+',\s*'[^']+',\s*'([^']+)',\s*'((?:[^']|'')*)'::(?i:jsonb)\)[,;]`)
 	configs := make(map[string]definition)
 	owners := make(map[string]string)
 	buttons := make(map[string]bool)
@@ -206,7 +206,7 @@ func TestDefaultActionButtonCatalog(t *testing.T) {
 				if button == word || !strings.HasPrefix(button, prefix) || button == prefix {
 					t.Fatalf("button %q must identify an independent control on %s", button, ui.MenuKey)
 				}
-				key := ui.MenuKey + "\x00" + button
+				key := word + "\x00" + ui.MenuKey + "\x00" + button
 				if owner, exists := owners[key]; exists {
 					t.Fatalf("button %q is repeated across %s and %s", button, owner, word)
 				}
@@ -245,7 +245,7 @@ func TestDefaultActionButtonCatalog(t *testing.T) {
 		}
 	}
 	dictionaries := readSeedMigration(t, "04-dictionary-default-data")
-	catalogPattern := regexp.MustCompile(`'I18N_CATALOG',\s*'[^']+',\s*'((?:[^']|'')*)'::jsonb`)
+	catalogPattern := regexp.MustCompile(`'I18N_CATALOG',\s*'[^']+',\s*'((?:[^']|'')*)'::(?i:jsonb)`)
 	match := catalogPattern.FindStringSubmatch(dictionaries)
 	if len(match) != 2 {
 		t.Fatal("localization catalog missing")

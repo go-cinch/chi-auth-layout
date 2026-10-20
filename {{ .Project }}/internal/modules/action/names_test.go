@@ -47,8 +47,10 @@ func TestActionNamesFollowActualBindings(t *testing.T) {
 		{"explicit override", "admin:custom:system:override", "zh-CN", "Custom access", []ResourceBinding{read}},
 		{"localized", "admin:read:custom:users", "zh-CN", "查看用户", []ResourceBinding{read}},
 		{"multiple bindings", "admin:custom:system:access", "en-US", "Update User / Read User", []ResourceBinding{update, read, update}},
-		{"missing translation", "admin:read:custom:users", "en-US", "admin:read:custom:users", []ResourceBinding{ {ResourceKey: "admin:unknown:record", Operation: "read"}}},
-		{"no bindings", "admin:all:system:general", "en-US", "admin:all:system:general", nil},
+		{"missing translation", "admin:read:custom:users", "en-US", "Read admin:unknown:record", []ResourceBinding{ {ResourceKey: "admin:unknown:record", Operation: "read"}}},
+		{"missing operation", "admin:read:custom:users", "zh-CN", "export 用户", []ResourceBinding{ {ResourceKey: "admin:system:user", Operation: "export"}}},
+		{"partial translation preserves other bindings", "admin:read:custom:users", "zh-CN", "查看用户 / 查看 admin:unknown:record", []ResourceBinding{read, {ResourceKey: "admin:unknown:record", Operation: "read"}}},
+		{"no bindings", "admin:all:system:all", "en-US", "admin:all:system:all", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			value := Action{Word: test.word, Config: Config{Bindings: &test.bindings}}

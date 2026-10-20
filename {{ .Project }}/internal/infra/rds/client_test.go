@@ -1,13 +1,97 @@
 package rds
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"io"
+	"net"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+func TestClientDeadlineInterruptsSocketRead(t *testing.T) {
+	connection, peer := net.Pipe()
+	defer peer.Close()
+	defer connection.Close()
+	commandRead := make(chan struct{})
+	go func() {
+		reader := bufio.NewReader(peer)
+		for {
+			header, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			count, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(header, "*")))
+			if err != nil {
+				return
+			}
+			var command string
+			for index := 0; index < count; index++ {
+				header, err = reader.ReadString('\n')
+				if err != nil {
+					return
+				}
+				length, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(header, "$")))
+				if err != nil || length < 0 {
+					return
+				}
+				value := make([]byte, length+2)
+				if _, err := io.ReadFull(reader, value); err != nil {
+					return
+				}
+				if index == 0 {
+					command = strings.ToLower(string(value[:length]))
+				}
+			}
+			if command == "get" {
+				close(commandRead)
+				return // Leave the socket open without replying.
+			}
+			reply := "+PONG\r\n"
+			if command == "hello" {
+				reply = "-ERR unknown command 'hello'\r\n"
+			}
+			if _, err := fmt.Fprint(peer, reply); err != nil {
+				return
+			}
+		}
+	}()
+	options := &redis.Options{
+		Protocol: 2, DisableIdentity: true, MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) { return connection, nil },
+	}
+	client, err := newClient(options, "test:deadline:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err := client.Ping(t.Context()).Err(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := client.Get(ctx, "probe:value:1").Err(); err == nil {
+		t.Fatal("stalled read succeeded")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("request deadline ignored: %s", elapsed)
+	}
+	select {
+	case <-commandRead:
+	default:
+		t.Fatal("test did not reach socket read")
+	}
+	if options.ContextTimeoutEnabled {
+		t.Fatal("caller options mutated")
+	}
+}
 
 type captureCommands struct {
 	commands [][]interface{}

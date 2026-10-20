@@ -1,8 +1,8 @@
 package auth
 
 import (
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"testing"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
 func TestPermissionNavigation(t *testing.T) {
@@ -11,7 +11,7 @@ func TestPermissionNavigation(t *testing.T) {
 		return localization.Resource{Kind: "resource", Parent: parent, Sort: order, Entries: map[string]localization.ResourceEntry{menu: {Path: path}}}
 	}
 	catalog := localization.ResourceCatalog{Resources: map[string]localization.Resource{
-		"admin:default":         {Kind: "directory", Collection: "default_permissions", Sort: 0, References: []string{"admin:audit:user"}},
+		"admin:default":         {Kind: "directory", FrontendVisible: &no, Sort: 0, References: []string{"admin:audit:user"}},
 		"admin:default:profile": page("admin:default", "admin:menu:profile", "/profile", 0),
 		"admin:system":          {Kind: "directory", Sort: 20},
 		"admin:system:role":     page("admin:system", "admin:menu:role", "/system/role", 0),
@@ -52,9 +52,10 @@ func TestPermissionNavigation(t *testing.T) {
 	}
 }
 
-func TestNavigationVisibilityUsesCollection(t *testing.T) {
+func TestNavigationVisibilityUsesExplicitFlag(t *testing.T) {
+	no := false
 	catalog := localization.ResourceCatalog{Resources: map[string]localization.Resource{
-		"admin:renamed":         {Kind: "directory", Collection: "default_permissions"},
+		"admin:renamed":         {Kind: "directory", FrontendVisible: &no},
 		"admin:renamed:profile": {Kind: "resource", Parent: "admin:renamed", Entries: map[string]localization.ResourceEntry{"admin:menu:profile": {Path: "/profile"}}},
 		"admin:default":         {Kind: "directory"},
 		"admin:default:user":    {Kind: "resource", Parent: "admin:default", Entries: map[string]localization.ResourceEntry{"admin:menu:user": {Path: "/system/user"}}},
@@ -65,6 +66,6 @@ func TestNavigationVisibilityUsesCollection(t *testing.T) {
 	}
 	navigation := permissionNavigation(catalog, "admin", menus)
 	if len(navigation) != 1 || navigation[0].ResourceKey != "admin:default" {
-		t.Fatalf("visibility depends on key instead of collection: %+v", navigation)
+		t.Fatalf("visibility depends on key instead of explicit flag: %+v", navigation)
 	}
 }

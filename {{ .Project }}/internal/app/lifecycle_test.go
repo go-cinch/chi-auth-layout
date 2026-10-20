@@ -2,19 +2,19 @@ package app
 
 import (
 	"bytes"
-"github.com/DATA-DOG/go-sqlmock"
-"{{ .Computed.module_name_final }}/internal/infra/db"
-"{{ .Computed.module_name_final }}/internal/common/pagination"
-"{{ .Computed.module_name_final }}/internal/modules/msg"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/DATA-DOG/go-sqlmock"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/pagination"
+	"{{ .Computed.module_name_final }}/internal/infra/db"
+	"{{ .Computed.module_name_final }}/internal/modules/msg"
 {{- if .Computed.enable_grpc_final }}
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/rpc"
@@ -197,6 +197,7 @@ func TestGRPCLifecycle(t *testing.T) {
 	}
 	probe.Close()
 }
+
 {{ end -}}
 func TestRunStopsMessageExpiryWorker(t *testing.T) {
 	database, mock, err := sqlmock.New()

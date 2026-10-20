@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 {{- if .Computed.enable_redis_final }}
@@ -30,20 +30,20 @@ type SessionStore interface {
 }
 
 type SessionToken struct {
-	SessionID   string
+	SessionID    string
 	RefreshToken string
-	ExpiredAt   time.Time
-	RememberMe  bool
+	ExpiredAt    time.Time
+	RememberMe   bool
 }
 
 type refreshSession struct {
-	SessionID     string `json:"session_id"`
-	UserID        int64  `json:"user_id"`
-	Username      string `json:"username"`
-	Code          string `json:"code"`
-	CredentialVersion int64 `json:"credential_version"`
-	RefreshDigest string `json:"refresh_digest"`
-	RememberMe    bool   `json:"remember_me"`
+	SessionID         string `json:"session_id"`
+	UserID            int64  `json:"user_id"`
+	Username          string `json:"username"`
+	Code              string `json:"code"`
+	CredentialVersion int64  `json:"credential_version"`
+	RefreshDigest     string `json:"refresh_digest"`
+	RememberMe        bool   `json:"remember_me"`
 }
 
 func (s refreshSession) identity() authn.Identity {
@@ -51,9 +51,9 @@ func (s refreshSession) identity() authn.Identity {
 }
 
 type Sessions struct {
-	store              SessionStore
-	sessionLifetime    time.Duration
-	rememberLifetime   time.Duration
+	store            SessionStore
+	sessionLifetime  time.Duration
+	rememberLifetime time.Duration
 }
 
 func NewSessions(store SessionStore, sessionLifetime, rememberLifetime time.Duration) (*Sessions, error) {
@@ -79,11 +79,11 @@ func (s *Sessions) Issue(ctx context.Context, identity authn.Identity, rememberM
 		return nil, fmt.Errorf("generate authentication session id: %w", err)
 	}
 	record := refreshSession{
-		SessionID:  sessionID,
-		UserID:     identity.UserID,
-		Username:   identity.Username,
-		Code:       identity.Code,
-		RememberMe: rememberMe,
+		SessionID:         sessionID,
+		UserID:            identity.UserID,
+		Username:          identity.Username,
+		Code:              identity.Code,
+		RememberMe:        rememberMe,
 		CredentialVersion: identity.CredentialVersion,
 	}
 	return s.save(ctx, record)
@@ -161,15 +161,18 @@ func (s *Sessions) ValidateSession(ctx context.Context, sessionID string) error 
 // ValidateIdentity binds signed claims to the stored session before checking the user.
 func (s *Sessions) ValidateIdentity(ctx context.Context, identity authn.Identity) error {
 	if identity.SessionID == "" || identity.CredentialVersion <= 0 {
-		return ErrSessionNotFound
+		return fmt.Errorf("%w: %w", authn.ErrUnauthorized, ErrSessionNotFound)
 	}
 	value, err := s.store.Get(ctx, identity.SessionID)
+	if errors.Is(err, ErrSessionNotFound) {
+		return fmt.Errorf("%w: %w", authn.ErrUnauthorized, err)
+	}
 	if err != nil {
 		return err
 	}
 	var record refreshSession
 	if json.Unmarshal([]byte(value), &record) != nil || record.identity() != identity {
-		return ErrSessionNotFound
+		return fmt.Errorf("%w: %w", authn.ErrUnauthorized, ErrSessionNotFound)
 	}
 	return nil
 }
@@ -340,14 +343,17 @@ func (s *redisSessionStore) Delete(ctx context.Context, sessionID, digest string
 		"session:data:"+sessionID, "session:refresh:"+digest,
 	).Err()
 }
-{{ end -}}
+{{ end }}
+
 func (s *Sessions) authenticatedSession(ctx context.Context, identity authn.Identity) (refreshSession, error) {
-    identity.PasswordResetRequired = false
-    value, err := s.store.Get(ctx, identity.SessionID)
-    if err != nil { return refreshSession{}, err }
-    var record refreshSession
-    if json.Unmarshal([]byte(value), &record) != nil || record.identity() != identity {
-        return refreshSession{}, ErrSessionNotFound
-    }
-    return record, nil
+	identity.PasswordResetRequired = false
+	value, err := s.store.Get(ctx, identity.SessionID)
+	if err != nil {
+		return refreshSession{}, err
+	}
+	var record refreshSession
+	if json.Unmarshal([]byte(value), &record) != nil || record.identity() != identity {
+		return refreshSession{}, ErrSessionNotFound
+	}
+	return record, nil
 }

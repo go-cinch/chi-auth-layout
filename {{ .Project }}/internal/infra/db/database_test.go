@@ -26,6 +26,32 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestInvalidDSNDoesNotExposeParserCredentials(t *testing.T) {
+	for _, dsn := range []string{
+		"host=localhost user=test password=prefix private-password-fragment",
+		"postgres://test:private-password-fragment@localhost:invalid/db",
+		"postgres://test:private-password-fragment@localhost/db?sslmode=invalid",
+	} {
+		cfg := &config.Config{Database: config.DatabaseConfig{Driver: "postgres", DSN: dsn}}
+{{ if .Computed.enable_trace_final }}
+		for _, tracing := range []bool{false, true} {
+			cfg.Tracer.Enabled = tracing
+{{ end }}
+			store, cleanup, err := New(t.Context(), cfg)
+			if store != nil || cleanup != nil || err == nil || err.Error() != "invalid database dsn" {
+				t.Fatalf("invalid DSN result: %v", err)
+			}
+			for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+				if strings.Contains(cause.Error(), "private-password-fragment") {
+					t.Fatal("parser credentials remain reachable through error unwrapping")
+				}
+			}
+{{ if .Computed.enable_trace_final }}
+		}
+{{ end }}
+	}
+}
+
 func TestDatabaseConnectionError(t *testing.T) {
 	tests := []struct {
 		driver string

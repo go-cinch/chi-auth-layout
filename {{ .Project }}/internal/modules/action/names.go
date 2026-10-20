@@ -68,10 +68,18 @@ func (labels actionNameLabels) name(word string, config Config) string {
 	seen := make(map[string]bool, len(bindings))
 	for _, binding := range bindings {
 		resource, operation := labels.resources[binding.ResourceKey], labels.operations[binding.Operation]
-		if resource == "" || operation == "" {
-			return word
+		separator := labels.separator
+		// Retain every translated part. One missing label must not hide the
+		// remaining bindings behind an opaque, generated action word.
+		if resource == "" {
+			resource = binding.ResourceKey
+			separator = " "
 		}
-		name := operation + labels.separator + resource
+		if operation == "" {
+			operation = binding.Operation
+			separator = " "
+		}
+		name := operation + separator + resource
 		if !seen[name] {
 			names = append(names, name)
 			seen[name] = true

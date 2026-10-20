@@ -1,27 +1,29 @@
 package auth
 
 import (
- "{{ .Computed.module_name_final }}/internal/modules/localization"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
- "sort"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
- "{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/modules"
 	"{{ .Computed.module_name_final }}/internal/modules/action"
 )
 
 type Permission struct {
-	Words []string         `json:"words"`
-	Menus []PermissionMenu `json:"menus"`
-	Navigation []PermissionNavigation `json:"navigation"`
+	PermissionScopes []string               `json:"permission_scopes,omitempty"`
+	PermissionScope  string                 `json:"permission_scope,omitempty"`
+	Words            []string               `json:"words"`
+	Menus            []PermissionMenu       `json:"menus"`
+	Navigation       []PermissionNavigation `json:"navigation"`
 	// Internal transport rules never cross the info boundary.
-	Resources []string `json:"-"`
-	Buttons   []string `json:"-"`
+	Resources    []string `json:"-"`
+	Buttons      []string `json:"-"`
 	buttonGrants map[string]bool
-	endpoints []action.Endpoint
+	endpoints    []action.Endpoint
 }
 
 type PermissionMenu struct {
@@ -51,12 +53,14 @@ func (m *Module) CheckPermission(ctx context.Context, target PermissionTarget) (
 	if !target.valid() {
 		return identity, false, nil
 	}
-	if identity.PasswordResetRequired && (target.Resource != "" || !authn.PasswordResetAllowedHTTP(target.Method, target.Path, m.httpPath)) {
+	if identity.PasswordResetRequired && (target.Resource != "" || !PasswordResetAllowedHTTP(target.Method, target.Path, m.httpPath)) {
 		return identity, false, authn.ErrPasswordResetRequired
 	}
 	protocol := "http"
- if target.Resource != "" { protocol = "grpc" }
- permission, err := m.permissionsFor(ctx, identity.UserID, authn.PermissionScope(ctx), report.Fields{protocol})
+	if target.Resource != "" {
+		protocol = "grpc"
+	}
+	permission, err := m.permissionsFor(ctx, identity.UserID, authn.PermissionScope(ctx), report.Fields{protocol})
 	if err != nil {
 		return authn.Identity{}, false, err
 	}
@@ -71,6 +75,28 @@ func (m *Module) CheckPermission(ctx context.Context, target PermissionTarget) (
 		if matchEndpoint(endpoint, target) {
 			return identity, true, nil
 		}
+	}
+	if permission.PermissionScope == "*" {
+		// A wildcard covers new routes in this scope, but never routes declared
+		// exclusively by another scope in the shared resource catalog.
+		scope := authn.PermissionScope(ctx)
+		catalog := m.catalogSource.Select([]string{"resource_catalog"}).ResourceCatalog
+		for key, feature := range catalog.Buttons {
+			if strings.HasPrefix(key, scope+":") {
+				continue
+			}
+			for _, endpoint := range feature.HTTP {
+				if matchEndpoint(action.Endpoint{Protocol: "http", Method: endpoint.Method, Path: endpoint.Path}, target) {
+					return identity, false, nil
+				}
+			}
+			for _, path := range feature.GRPC {
+				if matchEndpoint(action.Endpoint{Protocol: "grpc", Method: "GRPC", Path: path}, target) {
+					return identity, false, nil
+				}
+			}
+		}
+		return identity, true, nil
 	}
 	return identity, false, nil
 }
@@ -99,11 +125,11 @@ func (target PermissionTarget) valid() bool {
 
 func matchEndpoint(endpoint action.Endpoint, target PermissionTarget) bool {
 	if target.Resource != "" {
-						{{ if .Computed.enable_grpc_final }}
+{{ if .Computed.enable_grpc_final }}
 		return endpoint.Protocol == "grpc" && endpoint.Path == target.Resource
-						{{ else }}
+{{ else }}
 		return false
-						{{ end }}
+{{ end }}
 	}
 	return endpoint.Protocol == "http" && endpoint.Method == target.Method && matchRouteTemplate(endpoint.Path, target.Path)
 }
@@ -135,7 +161,7 @@ func (m *Module) permissions(ctx context.Context, userID int64, scopes ...string
 	if len(scopes) > 0 {
 		scope = scopes[0]
 	}
- return m.permissionsFor(ctx, userID, scope, nil)
+	return m.permissionsFor(ctx, userID, scope, nil)
 }
 
 func (m *Module) permissionsFor(ctx context.Context, userID int64, scope string, fields report.Fields) (Permission, error) {
@@ -143,20 +169,22 @@ func (m *Module) permissionsFor(ctx context.Context, userID int64, scope string,
 	return m.permissionsFromCatalog(ctx, userID, scope, fields, catalog)
 }
 
-func (m *Module) permissionsFromCatalog(ctx context.Context, userID int64, scope string, fields report.Fields, catalog localization.Catalog) (Permission, error) {
- needUI := fields.Has("btn") || fields.Has("menus")
- needWords := fields.Has("words")
- grantFields := report.Fields{}
- if needUI { grantFields = append(grantFields, "ui") }
- if fields.Has("http") { grantFields = append(grantFields, "http") }
- if fields.Has("grpc") { grantFields = append(grantFields, "grpc") }
+func (m *Module) permissionsFromCatalog(ctx context.Context, userID int64, scope string, fields report.Fields, catalog localization.Catalog, operations ...string) (Permission, error) {
+	needUI := fields.Has("btn") || fields.Has("menus")
+	needWords := fields.Has("words")
+	grantFields := report.Fields{}
+	if needUI {
+		grantFields = append(grantFields, "ui")
+	}
+	if fields.Has("http") {
+		grantFields = append(grantFields, "http")
+	}
+	if fields.Has("grpc") {
+		grantFields = append(grantFields, "grpc")
+	}
 	permission := Permission{Words: []string{}, Menus: []PermissionMenu{}, Resources: []string{}, Buttons: []string{}, endpoints: []action.Endpoint{}}
 	const query = `WITH assigned AS (
-	SELECT BTRIM(a.code) AS code, 0 AS source_order, a.id AS assignment_order, 0::BIGINT AS code_order
-	FROM t_action AS a
-	WHERE a.config ->> 'builtin' = 'default'
-	UNION ALL
-	SELECT BTRIM(direct.code), 1, u.id, direct.code_order
+	SELECT BTRIM(direct.code) AS code, 1 AS source_order, u.id AS assignment_order, direct.code_order
 	FROM t_user AS u
 	CROSS JOIN LATERAL UNNEST(STRING_TO_ARRAY(u.action, ',')) WITH ORDINALITY AS direct(code, code_order)
 	WHERE u.id = $1 AND BTRIM(direct.code) <> ''
@@ -180,13 +208,7 @@ func (m *Module) permissionsFromCatalog(ctx context.Context, userID int64, scope
 SELECT catalog.word, catalog.config - 'ui' - 'endpoints' AS config
 FROM t_action AS catalog
 WHERE catalog.scope = $2
-AND (
- EXISTS (SELECT 1 FROM deduplicated WHERE occurrence = 1 AND code = catalog.code)
- OR EXISTS (
-  SELECT 1 FROM deduplicated JOIN t_action AS granted ON granted.code = deduplicated.code
-  WHERE deduplicated.occurrence = 1 AND granted.scope = catalog.scope AND granted.config ->> 'builtin' = 'all'
- )
-)
+AND EXISTS (SELECT 1 FROM deduplicated WHERE occurrence = 1 AND code = catalog.code)
 ORDER BY catalog.id`
 	rows, err := m.store.SQL(ctx).QueryContext(ctx, query, userID, scope)
 	if err != nil {
@@ -201,8 +223,6 @@ ORDER BY catalog.id`
 	menus := map[string]*menuGrant{}
 	order := []string{}
 	seenEndpoints := map[action.Endpoint]bool{}
-	hasAll, canGrant := false, false
-	definitionWords := map[string]bool{}
 	for rows.Next() {
 		var word string
 		var config action.Config
@@ -215,35 +235,31 @@ ORDER BY catalog.id`
 		if scope != "" && strings.Split(word, ":")[0] != scope {
 			continue
 		}
-		resolved, resolveErr := action.ResolveConfig(catalog, word,config, grantFields)
- if resolveErr != nil {return Permission{},fmt.Errorf("resolve current permission: %w",resolveErr)}
- config=resolved
+		if len(operations) > 0 {
+			config = permissionOperationConfig(config, operations[0])
+		}
+		resolved, resolveErr := action.ResolveConfig(catalog, word, config, grantFields)
+		if resolveErr != nil {
+			return Permission{}, fmt.Errorf("resolve current permission: %w", resolveErr)
+		}
+		config = resolved
 		if err := config.Validate(word); err != nil {
 			return Permission{}, fmt.Errorf("invalid action catalog config: %w", err)
 		}
-		if config.Builtin == "all" {
-			hasAll = true
+		if config.PermissionScope == "*" {
+			permission.PermissionScope = "*"
 		}
-		if word == scope+":grant:system:permission-admin" {
-			canGrant = true
-		}
+		permission.PermissionScopes = append(permission.PermissionScopes, config.PermissionScopes...)
 		if needWords {
-		onlyDefinitions := len(config.Endpoints) > 0
-		for _, endpoint := range config.Endpoints {
-			if !permissionDefinitionEndpoint(endpoint) {
-				onlyDefinitions = false
-			}
+			permission.Words = append(permission.Words, word)
 		}
-		if onlyDefinitions {
-			definitionWords[word] = true
-		}
-		permission.Words = append(permission.Words, word)
- }
 		for _, endpoint := range config.Endpoints {
 			if !seenEndpoints[endpoint] {
 				seenEndpoints[endpoint] = true
 				permission.endpoints = append(permission.endpoints, endpoint)
-				if fields.Has("resources") { permission.Resources = append(permission.Resources, endpoint.Display()) }
+				if fields.Has("resources") {
+					permission.Resources = append(permission.Resources, endpoint.Display())
+				}
 			}
 		}
 		for _, binding := range config.UI {
@@ -258,7 +274,9 @@ ORDER BY catalog.id`
 			}
 			menu.entry = menu.entry || binding.PageEntry
 			for _, button := range binding.ButtonKeys {
-				if permission.buttonGrants == nil { permission.buttonGrants = map[string]bool{} }
+				if permission.buttonGrants == nil {
+					permission.buttonGrants = map[string]bool{}
+				}
 				permission.buttonGrants[button] = true
 				if !menu.seen[button] {
 					menu.seen[button] = true
@@ -276,40 +294,6 @@ ORDER BY catalog.id`
 			permission.Menus = append(permission.Menus, menu.menu)
 			permission.Buttons = append(permission.Buttons, menu.menu.Buttons...)
 		}
-	}
-	if !hasAll && !canGrant {
-		endpoints := permission.endpoints[:0]
-		permission.Resources = permission.Resources[:0]
-		for _, endpoint := range permission.endpoints {
-			if !permissionDefinitionEndpoint(endpoint) {
-				endpoints = append(endpoints, endpoint)
-				if fields.Has("resources") { permission.Resources = append(permission.Resources, endpoint.Display()) }
-			}
-		}
-		permission.endpoints = endpoints
-		words := permission.Words[:0]
-		for _, word := range permission.Words {
-			if !definitionWords[word] {
-				words = append(words, word)
-			}
-		}
-		permission.Words = words
-	}
-	permission.Buttons = permission.Buttons[:0]
-	for index := range permission.Menus {
-		menu := &permission.Menus[index]
-		buttons := menu.Buttons[:0]
-		for _, button := range menu.Buttons {
-			if !hasAll && !canGrant && actionDefinitionButton(button, scope) {
-				continue
-			}
-			if !hasAll && !canGrant && groupAssignmentButton(button, scope) {
-				continue
-			}
-			buttons = append(buttons, button)
-		}
-		menu.Buttons = buttons
-		permission.Buttons = append(permission.Buttons, buttons...)
 	}
 	return permission, nil
 }
@@ -350,29 +334,6 @@ func (m *Module) resolveHTTPRoute(target PermissionTarget) (string, bool) {
 		}
 	}
 	return best, best != ""
-}
-
-func permissionDefinitionEndpoint(endpoint action.Endpoint) bool {
-	if endpoint.Protocol == "http" {
-		return (endpoint.Method == "POST" || endpoint.Method == "PUT" || endpoint.Method == "PATCH" || endpoint.Method == "DELETE") && (endpoint.Path == "/action" || strings.HasPrefix(endpoint.Path, "/action/"))
-	}
-	return strings.HasPrefix(endpoint.Path, "/auth.v1.Action/") && !(strings.Contains(endpoint.Path, "/Get") || strings.Contains(endpoint.Path, "/List"))
-}
-
-func actionDefinitionButton(key, scope string) bool {
-	prefix := scope + ":btn:system:action:"
-	if !strings.HasPrefix(key, prefix) {
-		return false
-	}
-	switch strings.TrimPrefix(key, prefix) {
-	case "create", "edit", "delete", "delete-selected":
-		return true
-	}
-	return false
-}
-
-func groupAssignmentButton(key, scope string) bool {
-	return key == scope+":btn:system:user-group:add-members" || key == scope+":btn:system:user-group:remove-members"
 }
 
 // PermissionPaths returns the same effective rules enforced by CheckPermission.

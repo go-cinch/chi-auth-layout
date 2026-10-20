@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"github.com/DATA-DOG/go-sqlmock"
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 )
 
 const actionNameCatalog = `{"schema_version":2,"default_locale":"en-US","locales":[{"tag":"en-US","name":"English","enabled":true},{"tag":"zh-CN","name":"Chinese","enabled":true}],"messages":{"en-US":{"frontend":{"actions":{"admin:grant:system:permission":"Grant access","unrelated":"Keep"}}},"zh-CN":{"frontend":{"actions":{"admin:grant:system:permission":"权限分配"}}}},"extension":{"revision":9007199254740993}}`

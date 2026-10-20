@@ -41,15 +41,16 @@ type Claims struct {
 }
 
 type IdentityValidator interface {
+	// Return ErrUnauthorized for an invalid identity; preserve storage and context errors.
 	ValidateIdentity(context.Context, Identity) error
 }
 
 type Manager struct {
-	httpPath string
-	issuer   string
-	key      []byte
-	ttl      time.Duration
-	sessions IdentityValidator
+	restrictedHTTPAllowed func(method, path string) bool
+	issuer                string
+	key                   []byte
+	ttl                   time.Duration
+	sessions              IdentityValidator
 }
 
 type identityContextKey struct{}
@@ -66,7 +67,11 @@ func New(issuer, key string, ttl time.Duration, validators ...IdentityValidator)
 	if len(validators) == 1 {
 		sessions = validators[0]
 	}
-	return &Manager{issuer: issuer, key: []byte(key), ttl: ttl, sessions: sessions}, nil
+	manager := &Manager{issuer: issuer, key: []byte(key), ttl: ttl, sessions: sessions}
+	if policy, ok := sessions.(interface{ AllowRestrictedHTTP(string, string) bool }); ok {
+		manager.restrictedHTTPAllowed = policy.AllowRestrictedHTTP
+	}
+	return manager, nil
 }
 
 func (m *Manager) Issue(identity Identity) (string, time.Time, error) {
@@ -134,12 +139,14 @@ func (m *Manager) AuthenticateRequest(r *http.Request) (*http.Request, error) {
 	}); ok {
 		identity, err = resolver.ResolveIdentity(r.Context(), identity)
 		if err != nil {
-			return nil, ErrUnauthorized
+			return nil, err
 		}
-	} else if m.sessions != nil && m.sessions.ValidateIdentity(r.Context(), identity) != nil {
-		return nil, ErrUnauthorized
+	} else if m.sessions != nil {
+		if err := m.sessions.ValidateIdentity(r.Context(), identity); err != nil {
+			return nil, err
+		}
 	}
-	if identity.PasswordResetRequired && !PasswordResetAllowedHTTP(r.Method, r.URL.Path, m.httpPath) && !(r.Method == http.MethodGet && r.URL.Path == m.httpPath+"/permission") {
+	if identity.PasswordResetRequired && (m.restrictedHTTPAllowed == nil || !m.restrictedHTTPAllowed(r.Method, r.URL.Path)) {
 		return nil, ErrPasswordResetRequired
 	}
 	return r.WithContext(context.WithValue(r.Context(), identityContextKey{}, identity)), nil
@@ -148,14 +155,4 @@ func (m *Manager) AuthenticateRequest(r *http.Request) (*http.Request, error) {
 func FromContext(ctx context.Context) (Identity, bool) {
 	identity, ok := ctx.Value(identityContextKey{}).(Identity)
 	return identity, ok
-}
-
-// PasswordResetAllowedHTTP is deliberately independent of role/permission configuration.
-func PasswordResetAllowedHTTP(method, path string, prefixes ...string) bool {
-	prefix := ""
-	if len(prefixes) > 0 {
-		prefix = prefixes[0]
-	}
-	return (method == http.MethodPatch && path == prefix+"/reset/pwd") ||
-		(method == http.MethodPost && (path == prefix+"/challenge" || path == prefix+"/logout" || path == prefix+"/pub/logout" || path == prefix+"/pub/refresh"))
 }

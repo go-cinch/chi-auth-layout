@@ -33,6 +33,7 @@ type Catalog struct {
 	DefaultLocale   string              `json:"default_locale"`
 	Scopes          []string            `json:"scopes,omitempty"`
 	GroupOrder      []string            `json:"group_order,omitempty"`
+	GroupDefaults   map[string]bool     `json:"group_defaults,omitempty"`
 	Operations      []string            `json:"operations"`
 	ResourceCatalog ResourceCatalog     `json:"resource_catalog"`
 	Locales         []Language          `json:"locales"`
@@ -95,6 +96,26 @@ func Parse(raw []byte) (*Catalog, error) {
 	for tag := range value.Messages {
 		if !seen[tag] {
 			return nil, errors.New("messages reference an unregistered locale")
+		}
+	}
+	// Default-group switches are authorization policy, not translated labels.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if err := rejectRetiredResourceFields(fields["resource_catalog"]); err != nil {
+		return nil, err
+	}
+	if defaults, exists := fields["group_defaults"]; exists {
+		var flags map[string]json.RawMessage
+		if err := json.Unmarshal(defaults, &flags); err != nil || flags == nil {
+			return nil, errors.New("invalid default permission groups")
+		}
+		groups := value.GroupKeys()
+		for group, flag := range flags {
+			if !groups[group] || !slices.Contains(value.Scopes, strings.Split(group, ":")[0]) || (string(flag) != "true" && string(flag) != "false") {
+				return nil, errors.New("invalid default permission group")
+			}
 		}
 	}
 	orderedGroups := make(map[string]bool)
@@ -192,6 +213,9 @@ func selectCatalog(source Catalog, fields []string) Catalog {
 	}
 	if hasField(fields, "group_order") {
 		value.GroupOrder = source.GroupOrder
+	}
+	if hasField(fields, "group_defaults") {
+		value.GroupDefaults = source.GroupDefaults
 	}
 	if hasField(fields, "resource_catalog") {
 		value.ResourceCatalog = source.ResourceCatalog

@@ -26,13 +26,10 @@ func (m *Module) CanonicalCatalog(raw []byte) ([]byte, error) {
 		}
 	}
 	changed := false
-	rewrite := func(entries any, endpoints bool) {
+	rewrite := func(entries any) {
 		items, _ := entries.([]any)
 		for _, item := range items {
 			value, _ := item.(map[string]any)
-			if endpoints && value["protocol"] != "http" {
-				continue
-			}
 			previous, _ := value["path"].(string)
 			if path, ok := m.canonicalHTTPPaths[previous]; ok && path != previous {
 				value["path"] = path
@@ -43,12 +40,7 @@ func (m *Module) CanonicalCatalog(raw []byte) ([]byte, error) {
 	buttons, _ := catalog["buttons"].(map[string]any)
 	for _, item := range buttons {
 		feature, _ := item.(map[string]any)
-		rewrite(feature["http"], false)
-	}
-	defaults, _ := catalog["defaults"].(map[string]any)
-	for _, item := range defaults {
-		grant, _ := item.(map[string]any)
-		rewrite(grant["endpoints"], true)
+		rewrite(feature["http"])
 	}
 	if !changed {
 		return raw, nil
@@ -71,16 +63,6 @@ func rewriteHTTPPaths(catalog *ResourceCatalog, paths map[string]string) bool {
 			}
 		}
 		catalog.Buttons[key] = feature
-	}
-	for scope, grant := range catalog.Defaults {
-		for index := range grant.Endpoints {
-			endpoint := &grant.Endpoints[index]
-			if path, ok := paths[endpoint.Path]; endpoint.Protocol == "http" && ok && path != endpoint.Path {
-				endpoint.Path = path
-				changed = true
-			}
-		}
-		catalog.Defaults[scope] = grant
 	}
 	return changed
 }

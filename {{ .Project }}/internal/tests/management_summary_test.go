@@ -232,7 +232,7 @@ func TestManagementSummaryPermissionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authentication := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer)
+	authentication := auth.New(store, manager, nil, sessions, nil, nil, nil, auth.Switches{PasswordResetRequired: true}, localizer, nil)
 	limits, _ := pagination.New(100, 100)
 	actions := action.New(store, limits, false, localizer)
 	roles := role.New(store, limits, actions, false)

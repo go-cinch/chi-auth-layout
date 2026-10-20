@@ -16,17 +16,17 @@ type PermissionMutationPolicy interface{ LockPermissionMutation(context.Context)
 type CatalogAdministrationPolicy interface{ RequireCatalogAdministration(context.Context) error }
 
 func RequireAdministrationGrant(ctx context.Context, policy AllPermissionsPolicy) error {
-    if granted, ok := policy.(PermissionGrantPolicy); ok {
-        return granted.RequirePermissionGrant(ctx)
-    }
-    return RequireAllPermissions(ctx, policy)
+	if granted, ok := policy.(PermissionGrantPolicy); ok {
+		return granted.RequirePermissionGrant(ctx)
+	}
+	return RequireAllPermissions(ctx, policy)
 }
 
 func RequireCatalogAdministration(ctx context.Context, policy AllPermissionsPolicy) error {
-    if catalog, ok := policy.(CatalogAdministrationPolicy); ok {
-        return catalog.RequireCatalogAdministration(ctx)
-    }
-    return RequireAllPermissions(ctx, policy)
+	if catalog, ok := policy.(CatalogAdministrationPolicy); ok {
+		return catalog.RequireCatalogAdministration(ctx)
+	}
+	return RequireAllPermissions(ctx, policy)
 }
 
 // A missing policy is permitted only for identity-free internal construction.
@@ -69,4 +69,44 @@ func LockPermissionMutation(ctx context.Context, policy PermissionMutationPolicy
 		return ErrPermissionAdministrationRequired
 	}
 	return nil
+}
+
+// PermissionEndpointPolicy checks the concrete operation being performed. A
+// named action is never itself an administration capability.
+type PermissionEndpointPolicy interface {
+	RequirePermissionEndpoint(context.Context, string, string) error
+}
+
+func RequirePermissionEndpoint(ctx context.Context, policy any, method, path string) error {
+	if endpoint, ok := policy.(PermissionEndpointPolicy); ok {
+		return endpoint.RequirePermissionEndpoint(ctx, method, path)
+	}
+	if all, ok := policy.(AllPermissionsPolicy); ok {
+		return RequireAllPermissions(ctx, all)
+	}
+	if policy == nil {
+		if _, authenticated := FromContext(ctx); !authenticated && !IsHTTPPermissionRequest(ctx) {
+			return nil
+		}
+	}
+	return ErrPermissionGrantRequired
+}
+
+type PermissionOperationPolicy interface {
+	RequirePermissionOperation(context.Context, string, string) error
+}
+
+func RequirePermissionOperation(ctx context.Context, policy any, resource, operation string) error {
+	if configured, ok := policy.(PermissionOperationPolicy); ok {
+		return configured.RequirePermissionOperation(ctx, resource, operation)
+	}
+	if all, ok := policy.(AllPermissionsPolicy); ok {
+		return RequireAllPermissions(ctx, all)
+	}
+	if policy == nil {
+		if _, authenticated := FromContext(ctx); !authenticated && !IsHTTPPermissionRequest(ctx) {
+			return nil
+		}
+	}
+	return ErrPermissionGrantRequired
 }

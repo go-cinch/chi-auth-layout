@@ -24,10 +24,10 @@ func TestMappingFilterUsesCurrentCatalogBeforePagination(t *testing.T) {
 	ordinary := `{"bindings":[{"resource_key":"admin:system:user","operation":"read","feature_keys":null}],"ui":[],"endpoints":[{"protocol":"http","method":"GET","path":"/old"}]}`
 	all := `{"builtin":"all","ui":[],"endpoints":[]}`
 	mock.ExpectQuery("SELECT word, config FROM t_action").WillReturnRows(sqlmock.NewRows([]string{"word", "config"}).
-		AddRow("admin:read:system:user", ordinary).AddRow("admin:all:system:general", all))
-	words := []string{"admin:all:system:general", "admin:read:system:user"}
+		AddRow("admin:read:system:user", ordinary).AddRow("admin:all:system:all", all))
+	words := []string{"admin:all:system:all", "admin:read:system:user"}
 	mock.ExpectQuery("SELECT COUNT.*word = ANY").WithArgs(pq.Array(words)).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(2))
-	mock.ExpectQuery("SELECT .* FROM t_action.*word = ANY").WithArgs(pq.Array(words), int32(1), int64(1)).WillReturnRows(sqlmock.NewRows([]string{"id", "word", "config"}).AddRow(1, "admin:all:system:general", all))
+	mock.ExpectQuery("SELECT .* FROM t_action.*word = ANY").WithArgs(pq.Array(words), int32(1), int64(1)).WillReturnRows(sqlmock.NewRows([]string{"id", "word", "config"}).AddRow(1, "admin:all:system:all", all))
 	p, size := int32(2), int32(1)
 	value, err := m.List(t.Context(), ListActionsInput{Resource: "/NEW_", Fields: report.Fields{"id", "resource"}, Page: &p, PageSize: &size})
 	if err != nil {

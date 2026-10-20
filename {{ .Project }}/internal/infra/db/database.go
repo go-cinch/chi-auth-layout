@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/redact"
-	"github.com/lib/pq"
 
 {{- if .Computed.enable_trace_final }}
 	"github.com/XSAM/otelsql"
@@ -37,6 +37,11 @@ func New(ctx context.Context, cfg *config.Config) (*Store, func(), error) {
 	dsn := strings.TrimSpace(cfg.Database.DSN)
 	if dsn == "" {
 		return nil, nil, errors.New("database dsn is required")
+	}
+	// Parse before opening either driver. A parser error may contain fragments of
+	// malformed credentials; do not wrap it where startup logging can unwrap it.
+	if _, err := pq.NewConnector(dsn); err != nil {
+		return nil, nil, errors.New("invalid database dsn")
 	}
 
 {{- if .Computed.enable_trace_final }}

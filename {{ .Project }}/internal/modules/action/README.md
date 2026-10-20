@@ -24,14 +24,24 @@ operation and features of other bindings; an empty list grants no resource acces
 One resource may have several bindings with different operations. The schema
 requires each resource/operation pair to be unique. The
 editor's All shortcut selects every registered operation and feature for that
-resource explicitly; it does not select other resources or a built-in capability.
+resource explicitly. A resource with `permission_scope: "*"` additionally exposes the explicit `*` selection; ordinary resources do not imply wildcard authority.
 Technical information previews this action's generated mappings only and does not
 request or compare the signed-in user's effective permissions.
 
+Catalog publication reconciles resource-to-directory conversions using the new
+catalog's children and operation-filtered references. Existing bindings to the
+converted resource become explicit selections of the reachable canonical
+resources and their current features for each previously selected operation.
+Overlaps are merged; an empty directory produces an empty selection. Default
+resource selections expand only read operations. The conversion does not depend
+on any resource key or action word, does not recreate removed features or special
+capabilities, and does not add new nodes to the submitted catalog. Future
+directory changes do not expand these saved selections automatically. Catalog
+and action changes commit together, retaining action IDs, codes and assignments.
+
 Business operations are exactly `read/create/update/delete`. Frontend button IDs
 such as `:edit` or `:send` remain control identifiers. Export is a selectable feature
-under read, and sending a message is a feature under create. Built-in all/default
-and the explicit grant capability are separate system mechanisms.
+under read, and sending a message is a feature under create. A wildcard selection is separate from CRUD. The explicit default marker describes baseline rules; only assigned default actions grant them.
 
 Display names come from `frontend.actions[word]`, then the actual bindings' resource
 and operation labels, then the stable word. Multiple binding labels retain binding
@@ -67,97 +77,48 @@ opens the existing record instead of attempting a duplicate insert.
 `GET /action/effective?scope=...` supports `f=btn,http,grpc`; omitted `f` returns btn.
 The always-present `scope` describes the inspected scope. The result is the signed-in
 user's current effective access after the same administrative restrictions used by
-authorization. Catalog reads require the administrative grant or scoped all;
-effective-access diagnostics require scoped all authority.
+authorization. Catalog reads and effective-access diagnostics require the selected
+`action:read` collection capability or scoped all authority. HTTP route authorization
+also applies; the inspected scope never replaces the request authorization scope.
 
-The built-in `default` action supplies only its explicit rules to authenticated
-users. A scoped `all` action expands to the current catalog in that scope, including
+The built-in `default` action supplies its explicit rules only when assigned to
+the authenticated user directly or through a role/group. A scoped `all` action expands to the current catalog in that scope, including
 future entries; it never grants an unrestricted HTTP wildcard or another scope.
 User, role and group assignment codes are unioned and deduplicated on every request,
-so changes take effect without renewing a session. Assignment management requires either a scoped `builtin=all` action or the exact
-`scope:grant:system:permission-admin` capability, together with each resource's ordinary
-read/write/delete endpoint permission. The grant capability has no UI bindings or
-endpoints of its own. Holders may assign existing permissions, including all/grant,
-to themselves or other accounts, as an explicit administrative privilege.
-The qualification is checked in the request scope: an admin management grant may
-manage existing permissions for mini/h5/app accounts from the admin entry point.
-It cannot be reused as a mini-scope management qualification, and does not itself
-grant the business API permissions of any scope.
+so changes take effect without renewing a session. Assignment management follows the selected CRUD bindings of the current user/role/action/user-group resources. The bound operation must match the requested operation, and a selected feature must map to that resource's exact collection or item HTTP endpoint. For example, user update with `PATCH /user/{id}` permits changing that user's assignments; a menu-only selection, empty feature set, another resource, another CRUD operation, or a static subroute does not. Stored endpoint caches, action words, group labels, and the legacy `permission_resource` marker never grant authority. Mutations recheck the current catalog and assignments after acquiring the permission transaction lock.
 
-The same qualification governs user role/action assignments, role/group action
-assignments, all group membership changes, and deletion of roles/groups containing
-permissions or members. Ordinary account/group/role creation and non-grant fields
-remain governed by their existing endpoint permissions. Empty roles/groups remain
-deletable without assignment qualification.
+Resources contain menus, reusable page/button references, transport mappings, and optional `permission_scope: "*"`. Actions select resources through `config.bindings`; resource definitions never reference action words. Selecting a wildcard resource with operation `*` grants the current authentication scope, including newly registered endpoints. Action words remain identifiers and can be renamed without changing authorization. Maintaining default or wildcard definitions requires catalog publishing authority as well as the specific action CRUD capability; existing wildcard authority satisfies both. The developer action explicitly references the current user, role, action and user-group CRUD bindings plus catalog publishing. It can maintain those definitions and assignments without receiving global wildcard authority.
 
-Action definition create/update/delete and changing an existing account's username
-or password require the administrative grant or scoped all plus the matching
-resource endpoint permission. Built-in all definitions remain exclusive to scoped
-all; built-in defaults additionally require developer publication authority.
-Self-service password changes retain their existing authenticated-user rules. New
-accounts may receive initial credentials without assignment qualification if they
-receive no role or explicit actions.
+The resource-scope migrations preserve action codes and existing assignments while converting historical built-in-all and named-management rows to explicit bindings. The legacy built-in-all marker remains read-compatible during upgrades; no action word grants authority. Default rules remain explicit assignments and are never injected during authorization.
 
-These guards run inside the mutation transaction and use a shared PostgreSQL
-transaction advisory lock before checking the current caller's grants. A queued
-operation rechecks after a preceding revocation commits. Production wiring injects
-the policy into every management module; a missing policy fails closed for any
-verified HTTP identity. Info omits action-definition and group-membership controls
-without all/grant, matching the backend policy.
+Features may reference canonical same-scope page entries with `entry_keys` and their button IDs with `btn`. Shared references reuse existing menu definitions without associating a resource with an action.
 
-Protected HTTP requests select one scope using `X-Auth-Scope`; omission means
-`admin` for existing clients. Empty, malformed or repeated headers are rejected.
-The permission gateway uses the same scope. Permissions from different scopes
-are never unioned, even when they map to the same endpoint. The header also selects
-the scope returned by info.
+### Resource selections on assignments
 
-`GET /auth/info` returns permissions for the header-selected scope. It accepts no
-scope query selector; legacy query values are ignored. Empty, malformed or repeated
-scope headers return HTTP 400. The response contains `scope`, `permission.words`
-and `permission.menus`, whose entries have `menu_key`, optional `parent_menu_key`,
-`menu_path`, and `btns`. HTTP/RPC mappings never appear in this response.
+User, role and user-group create/PATCH accept `action_bindings` as an alternative to `action_codes`. Each item contains `resource_key`, `operation` and an explicit `feature_keys` array. Omission preserves assignments on PATCH; `[]` clears them. Do not combine the two assignment fields. Null feature sets, duplicate resource/operation pairs and unregistered selections are rejected.
 
-A menu is returned only when at least one granted binding has `page_entry: true`.
-Buttons from other granted operations on that same menu are merged. Possessing an
-edit action alone does not enable entry to the page. Buttons are a UI control layer;
-backend business operations remain governed by their words and endpoint mappings.
-Several controls, such as query/reset/refresh, may share the same GET endpoint. Removing one control does not revoke an endpoint still provided by another selected feature.
+The owner mutation checks its existing permission-management capability, then resolves selections against the committed catalog under the permission mutation lock. Each resource/operation reuses an action only when its complete resource/operation/feature set matches exactly. A larger feature set or a multi-resource action never satisfies a smaller selection. Missing atomic definitions are created with explicit feature arrays and server-generated codes. Creation and assignment share the owner transaction, so failed saves roll back the generated definitions. Concurrent identical selections reuse the committed action.
 
-HTTP authorization uses the registered router's static-route precedence before
-comparing canonical templates. `/user/{id}` cannot grant the registered static
-`/user/summary` route. Parameters match a single segment; legacy glob rules are not
-accepted. RPC mappings, when enabled, match the complete RPC method exactly.
+The resource editor expands existing action definitions for display. Permissions that cannot be represented by the current catalog block editing rather than being silently dropped. Backend authorization continues to resolve the stored action definitions against the current catalog.
 
-Action group identifiers must be registered in the current I18N_CATALOG.
-Create and update recheck the database catalog under the permission mutation
-lock so an old form cannot write a renamed or deleted identifier back. Group
-renames migrate existing action membership once; no runtime aliases are kept.
+Deleting an action removes its exact code from user, role and user-group assignments atomically with the definition. Other codes and their order are preserved. Legacy missing codes do not block the resource editor: it shows the remaining valid selections and marks the stale references for removal on save. Failed catalog or action requests still block editing; missing records are distinguished from failed requests.
 
-The default roles are Super (scoped all), Guest (overview), Admin (explicit codes
-except scoped all, developer and dictionary), Developer (all explicit non-all
-codes), and Operator (default plus workspace). Role names do not grant authority;
-only their assigned action codes do. Existing account and group links are preserved.
+### Default permission groups
 
-Selected `config`, `resource`, `menu` and `button` fields are resolved from the same
-application catalog snapshot as details and authorization. Sparse reads fetch only
-the hidden word/config dependencies needed by those selected fields.
+`I18N_CATALOG.group_defaults` maps registered group words to Boolean switches.
+Only `true` groups supply default permissions. Catalog publishing controls these
+switches; group-name/order-only authority cannot change them. User creation and
+public registration resolve every current code in these groups under the shared
+permission mutation lock and persist the deduplicated union with selected codes.
+Explicit selections retain their normal grant checks. Account updates never call
+this resolver, and authorization no longer injects built-in defaults. Direct
+permissions can therefore be removed later; role/group grants remain independent.
+Renames move the switch and deletions remove it. Existing users are unaffected by
+later default-group changes. The baseline stores initial users’ default grants as explicit assignments in migration 02.
 
-Query `scope` remains a data selector on management reads: `/action` filters
-permission definitions and `/action/effective` chooses the scope being inspected.
-Their caller authorization always uses `X-Auth-Scope`. Message-list `scope` selects
-`all` versus `targeted` delivery and is unrelated to permission domains.
-
-Catalog metadata and effective permission diagnostics expand only the requested
-results and their necessary authorization dependencies. HTTP-only diagnostics do
-not build menu/button or gRPC projections. Nullable `feature_keys` retains its
-selection meaning: null selects the registered set; an empty array selects none.
-OpenAPI declares that nullability explicitly.
-
-Publishing resource mappings refreshes ordinary/default action projections in the
-same transaction as the dictionary. Built-in all remains an empty stored marker;
-its full mappings are resolved for reads, including edits submitted from details.
-Resource/menu/button filters resolve candidate definitions from the same captured
-catalog as the response, then pass matching words as bound SQL parameters before
-counting and pagination. This also handles older persisted projections and scoped
-all definitions. Requests without these filters skip the candidate query. Selected
-mapping results reuse that resolution instead of expanding permissions again.
+The current catalog protocol retires `resource_catalog.defaults` and resource `collection`.
+New writes reject both fields. Existing hidden navigation and read references are
+preserved through explicit `frontend_visible` and `reference_operations` values.
+Default actions require explicit `resource_keys`; nonempty legacy default maps
+are rejected rather than silently changing authorization. Vben upgrades old
+browser drafts containing the empty map and legacy collection marker before save.

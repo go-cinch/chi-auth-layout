@@ -1,24 +1,26 @@
 package auth
 
 import (
+	"context"
 	"database/sql"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/server"
-	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestIdentityValidator(t *testing.T) {
 	localizer := localization.New()
 	for _, enabled := range []bool{false, true} {
-		for _, scenario := range []string{"valid", "reset required", "stale", "pending", "locked", "missing", "database failure", "renamed", "changed code", "wrong session user", "wrong session version", "revoked"} {
+		for _, scenario := range []string{"valid", "reset required", "stale", "pending", "locked", "missing", "database failure", "session failure", "renamed", "changed code", "wrong session user", "wrong session version", "revoked"} {
 			t.Run(scenario+map[bool]string{false: "/authorization-off", true: "/authorization-on"}[enabled], func(t *testing.T) {
 				m, _, mock := newAuthTestModule(t)
 				localizer = m.catalogSource.(*localization.Module)
@@ -29,6 +31,8 @@ func TestIdentityValidator(t *testing.T) {
 				}
 				identity.SessionID = issued.SessionID
 				switch scenario {
+				case "session failure":
+					m.sessions.store = identityReadFailureStore{SessionStore: m.sessions.store, err: errors.New("session storage unavailable")}
 				case "wrong session user":
 					identity.UserID++
 				case "wrong session version":
@@ -94,12 +98,27 @@ func TestIdentityValidator(t *testing.T) {
 				if scenario == "reset required" {
 					want = http.StatusForbidden
 				}
+				if scenario == "database failure" || scenario == "session failure" {
+					want = http.StatusInternalServerError
+					if response.Body.String() != `{"error_code":"HTTP_INTERNAL","msg":"internal server error"}` {
+						t.Fatalf("storage failure response leaked details or continued to handler: %s", response.Body.String())
+					}
+				}
 				if response.Code != want {
 					t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 				}
 			})
 		}
 	}
+}
+
+type identityReadFailureStore struct {
+	SessionStore
+	err error
+}
+
+func (s identityReadFailureStore) Get(context.Context, string) (string, error) {
+	return "", s.err
 }
 
 func TestIdentityValidatorDisablesPasswordResetRequirement(t *testing.T) {
@@ -117,5 +136,30 @@ func TestIdentityValidatorDisablesPasswordResetRequirement(t *testing.T) {
 	resolved, err := validator.ResolveIdentity(t.Context(), identity)
 	if err != nil || resolved.PasswordResetRequired {
 		t.Fatalf("resolved identity: %#v %v", resolved, err)
+	}
+}
+
+func TestIdentityValidatorPreservesStorageErrors(t *testing.T) {
+	for _, source := range []string{"session", "database"} {
+		for _, failure := range []error{errors.New("storage unavailable"), context.Canceled, context.DeadlineExceeded} {
+			t.Run(source+"/"+failure.Error(), func(t *testing.T) {
+				m, _, mock := newAuthTestModule(t)
+				identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+				issued, err := m.sessions.Issue(t.Context(), identity, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				identity.SessionID = issued.SessionID
+				if source == "session" {
+					m.sessions.store = identityReadFailureStore{SessionStore: m.sessions.store, err: failure}
+				} else {
+					mock.ExpectQuery("SELECT username, code, status, credential_version").WithArgs(int64(3), "EXP78RGH").WillReturnError(failure)
+				}
+				validator := NewIdentityValidator(m.store, m.sessions, Switches{})
+				if _, err := validator.ResolveIdentity(t.Context(), identity); !errors.Is(err, failure) || errors.Is(err, authn.ErrUnauthorized) {
+					t.Fatalf("identity error = %v, want underlying %v", err, failure)
+				}
+			})
+		}
 	}
 }

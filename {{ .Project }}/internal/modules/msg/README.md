@@ -1,4 +1,18 @@
-# Personal message status
+# Messages
+
+## Sent message detail selection
+
+`GET /msg/sent/{id}` accepts `f` with the message list fields plus
+`recipient_ids` and `recipients`. Omitted `f` preserves the complete legacy detail.
+Explicit selections return only those fields, with no required metadata.
+For example, `f=id,title,content` does not query recipients. `f=recipient_ids`
+reads recipient IDs without joining users; selecting `recipients` loads their
+`id`, `username`, and `code`. Selecting both reuses one query. Selected recipient
+arrays remain `[]` for broadcast messages or an empty recipient set, and selected
+nullable timestamps remain `null`. Invalid or repeated selectors return HTTP 400
+before database access. Clients send the fields required by their current view.
+
+## Personal message status
 
 `GET /msg/unread-count` reads `t_user_msg_status` by its unique `user_id` index.
 The existing response (`count`, `latest_unread_at`, `observed_at`, `user_id`)

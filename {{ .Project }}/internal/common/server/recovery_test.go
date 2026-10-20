@@ -28,7 +28,9 @@ func TestRecoverer(t *testing.T) {
 		t.Fatalf("response = %d, log = %q", recorder.Code, output.String())
 	}
 	var entry map[string]any
-	if err := json.Unmarshal(output.Bytes(), &entry); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
 	if entry["msg"] != "panic recovered: boom" || entry["error"] != "boom" || entry["outcome"] != "failure" || entry["method"] != "GET" {
 		t.Fatalf("panic fields: %v", entry)
 	}
@@ -59,7 +61,9 @@ func TestRecovererLogsAbort(t *testing.T) {
 		t.Fatalf("abort log = %q", output.String())
 	}
 	var entry map[string]any
-	if err := json.Unmarshal(output.Bytes(), &entry); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
 	if entry["operation"] != "handle_http_request" || entry["outcome"] != "aborted" || entry["method"] != "GET" {
 		t.Fatalf("abort fields: %v", entry)
 	}
@@ -118,7 +122,9 @@ func TestRecoverer(t *testing.T) {
 		t.Fatalf("response = %d, log = %q", recorder.Code, output.String())
 	}
 	var entry map[string]any
-	if err := json.Unmarshal(output.Bytes(), &entry); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
 	if entry["msg"] != "panic recovered: boom" || entry["error"] != "boom" || entry["outcome"] != "failure" || entry["method"] != "GET" {
 		t.Fatalf("panic fields: %v", entry)
 	}
@@ -147,7 +153,9 @@ func TestRecovererLogsAbort(t *testing.T) {
 		t.Fatalf("abort log = %q", output.String())
 	}
 	var entry map[string]any
-	if err := json.Unmarshal(output.Bytes(), &entry); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
 	if entry["operation"] != "handle_http_request" || entry["outcome"] != "aborted" || entry["method"] != "GET" {
 		t.Fatalf("abort fields: %v", entry)
 	}

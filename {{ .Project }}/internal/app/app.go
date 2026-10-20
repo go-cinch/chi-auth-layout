@@ -1,9 +1,9 @@
 package app
 
 import (
- "{{ .Computed.module_name_final }}/internal/modules/localization"
 	"context"
 	"fmt"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 {{- if .Computed.enable_trace_final }}
 	"log/slog"
 {{- end }}
@@ -20,11 +20,11 @@ import (
 
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
-	auditmodule "{{ .Computed.module_name_final }}/internal/modules/audit"
- authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
- msgmodule "{{ .Computed.module_name_final }}/internal/modules/msg"
 	actionmodule "{{ .Computed.module_name_final }}/internal/modules/action"
+	auditmodule "{{ .Computed.module_name_final }}/internal/modules/audit"
+	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 	dictionarymodule "{{ .Computed.module_name_final }}/internal/modules/dictionary"
+	msgmodule "{{ .Computed.module_name_final }}/internal/modules/msg"
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
 	usermodule "{{ .Computed.module_name_final }}/internal/modules/user"
 	groupmodule "{{ .Computed.module_name_final }}/internal/modules/usergroup"
@@ -48,14 +48,14 @@ import (
 )
 
 type Application struct {
-	authPath string
- localization *localization.Module
- auditModule *auditmodule.Module
- msgModule *msgmodule.Module
-	pagination      pagination.Limits
+	authPath     string
+	localization *localization.Module
+	auditModule  *auditmodule.Module
+	msgModule    *msgmodule.Module
+	pagination   pagination.Limits
 
-	authenticator   *authn.Manager
-	idempotencyKeys idempotency.Store
+	authenticator    *authn.Manager
+	idempotencyKeys  idempotency.Store
 	credentials      *authmodule.Credentials
 	loginSessions    *authmodule.Sessions
 	loginCaptcha     *authmodule.PointCaptcha
@@ -69,11 +69,11 @@ type Application struct {
 	userModule       *usermodule.Module
 	groupModule      *groupmodule.Module
 
-	server          *http.Server
-	profilerServer  *http.Server
+	server         *http.Server
+	profilerServer *http.Server
 {{- if .Computed.enable_grpc_final }}
-	grpcServer      *grpc.Server
-	grpcAddr        string
+	grpcServer *grpc.Server
+	grpcAddr   string
 {{- end }}
 	shutdownTimeout time.Duration
 
@@ -92,7 +92,9 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	}
 
 	authPath, err := config.NormalizeHTTPPath(cfg.Auth.Path)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	if err := logging.Init(os.Stdout, cfg.Log.Level); err != nil {
 		return nil, err
@@ -163,13 +165,16 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	dictionaryCache = redisDictionaryCache
 	cleanups = append(cleanups, cleanupDictionaryCache)
 {{- end }}
-	localizer := localization.New(authn.AuthHTTPPaths(authPath))
- dictionaryModule, err := dictionarymodule.New(dbStore, dictionaryCache, dictionarymodule.CacheTTL, limits, authSwitches.ProtectCaptchaDictionaries, localizer)
+	localizer := localization.New(authmodule.AuthHTTPPaths(authPath))
+	dictionaryModule, err := dictionarymodule.New(dbStore, dictionaryCache, dictionarymodule.CacheTTL, limits, authSwitches.ProtectCaptchaDictionaries, localizer)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("initialize dictionary module: %w", err)
 	}
-	if err := dictionaryModule.LoadLocalization(ctx); err != nil { cleanup(); return nil, fmt.Errorf("initialize localization: %w", err) }
+	if err := dictionaryModule.LoadLocalization(ctx); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("initialize localization: %w", err)
+	}
 	credentials, err := authmodule.NewCredentials(
 		cfg.Auth.ChallengeEncryption.KeyID,
 		cfg.Auth.ChallengeEncryption.PrivateKeyFile,
@@ -218,24 +223,24 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 		cleanup()
 		return nil, fmt.Errorf("initialize login sessions: %w", err)
 	}
-	authenticator, err := authn.New(cfg.Auth.Jwt.Issuer, cfg.Auth.Jwt.Key, cfg.Auth.Jwt.Lifetime, authmodule.NewIdentityValidator(dbStore, loginSessions, authSwitches))
+	authenticator, err := authn.New(cfg.Auth.Jwt.Issuer, cfg.Auth.Jwt.Key, cfg.Auth.Jwt.Lifetime, authmodule.NewIdentityValidator(dbStore, loginSessions, authSwitches, authPath))
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("initialize authentication: %w", err)
 	}
 
 	application := &Application{
-		authPath: authPath,
+		authPath:   authPath,
 		pagination: limits,
 
-		authenticator: authenticator,
-		idempotencyKeys: idempotencyKeys,
+		authenticator:    authenticator,
+		idempotencyKeys:  idempotencyKeys,
 		credentials:      credentials,
-		loginSessions: loginSessions,
-		loginCaptcha: loginCaptcha,
-		sliderCaptcha: sliderCaptcha,
-		passwordGuard: passwordGuard,
-		authSwitches: authSwitches,
+		loginSessions:    loginSessions,
+		loginCaptcha:     loginCaptcha,
+		sliderCaptcha:    sliderCaptcha,
+		passwordGuard:    passwordGuard,
+		authSwitches:     authSwitches,
 		dictionaryModule: dictionaryModule, localization: localizer,
 
 		db: dbStore,
@@ -258,9 +263,9 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 
 func sliderCaptchaFromConfig(cfg *config.Config, store authmodule.PointCaptchaStore) (*authmodule.SliderCaptcha, error) {
 	return authmodule.NewSliderCaptcha(store, authmodule.SliderCaptchaConfig{
-		TTL: cfg.Auth.SliderCaptcha.TTL,
+		TTL:             cfg.Auth.SliderCaptcha.TTL,
 		MinimumDuration: cfg.Auth.SliderCaptcha.MinimumDuration,
-		EnableE2ETest: e2eTestEnabledFromConfig(cfg),
+		EnableE2ETest:   e2eTestEnabledFromConfig(cfg),
 	})
 }
 
@@ -275,8 +280,8 @@ func initializeSliderCaptcha(cfg *config.Config, store authmodule.PointCaptchaSt
 
 func authSwitchesFromConfig(cfg *config.Config) authmodule.Switches {
 	return authmodule.Switches{
-		PasswordResetRequired:       cfg.Auth.Switches.PasswordResetRequired,
-		ProtectSuper:                cfg.Auth.Switches.ProtectSuper,
+		PasswordResetRequired:      cfg.Auth.Switches.PasswordResetRequired,
+		ProtectSuper:               cfg.Auth.Switches.ProtectSuper,
 		ProtectCaptchaDictionaries: cfg.Auth.Switches.ProtectCaptchaDictionaries,
 		EnableE2ETest:              cfg.Auth.Switches.EnableE2ETest,
 	}
@@ -285,21 +290,29 @@ func authSwitchesFromConfig(cfg *config.Config) authmodule.Switches {
 func (a *Application) wireBusinessModules() {
 	// Build in dependency order; generatedModules registers these same instances.
 	// The dictionary is initialized earlier because captcha construction needs it.
-	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.authSwitches, a.localization, a.authPath)
-	a.auditModule = auditmodule.New(a.db,a.pagination)
+	a.actionModule = actionmodule.New(a.db, a.pagination, a.authSwitches.ProtectSuper, a.localization)
+	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.authSwitches, a.localization, a.actionModule, a.authPath)
+	a.auditModule = auditmodule.New(a.db, a.pagination)
 	a.auditModule.SetAuthHTTPPath(a.authPath)
- a.actionModule = actionmodule.New(a.db, a.pagination, a.authSwitches.ProtectSuper, a.localization)
-	if a.dictionaryModule != nil { a.actionModule.SetNameLocalization(a.dictionaryModule); a.actionModule.SetDefinitionCatalog(a.dictionaryModule) }
-	if a.dictionaryModule != nil { a.dictionaryModule.SetPermissionGroups(a.actionModule); a.dictionaryModule.SetResourcePermissions(a.actionModule) }
+	if a.dictionaryModule != nil {
+		a.actionModule.SetNameLocalization(a.dictionaryModule)
+		a.actionModule.SetDefinitionCatalog(a.dictionaryModule)
+	}
+	if a.dictionaryModule != nil {
+		a.dictionaryModule.SetPermissionGroups(a.actionModule)
+		a.dictionaryModule.SetResourcePermissions(a.actionModule)
+	}
 	a.roleModule = rolemodule.New(a.db, a.pagination, a.actionModule, a.authSwitches.ProtectSuper)
 	a.userModule = usermodule.New(a.db, a.pagination, a.credentials, a.passwordGuard, a.actionModule, a.roleModule, a.authSwitches)
 	a.groupModule = groupmodule.New(a.db, a.pagination, a.actionModule, a.userModule)
 	a.actionModule.SetPermissionAdministration(a.authModule)
- if a.dictionaryModule!=nil {a.dictionaryModule.SetPermissionAdministration(a.authModule)}
- a.userModule.SetPermissionAdministration(a.authModule)
- a.roleModule.SetPermissionAdministration(a.authModule)
- a.groupModule.SetPermissionAdministration(a.authModule)
- a.msgModule = msgmodule.New(a.db, a.pagination)
+	if a.dictionaryModule != nil {
+		a.dictionaryModule.SetPermissionAdministration(a.authModule)
+	}
+	a.userModule.SetPermissionAdministration(a.authModule)
+	a.roleModule.SetPermissionAdministration(a.authModule)
+	a.groupModule.SetPermissionAdministration(a.authModule)
+	a.msgModule = msgmodule.New(a.db, a.pagination)
 }
 
 func SignalContext() (context.Context, context.CancelFunc) {

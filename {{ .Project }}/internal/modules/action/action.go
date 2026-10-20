@@ -25,7 +25,7 @@ import (
 
 var (
 	ErrNotFound = apperror.New("ACTION_NOT_FOUND", "action not found")
-	ErrIDs      = apperror.New("ACTION_IDS", "provide 1-100 positive action ids")
+	ErrIDs      = apperror.New("ACTION_INVALID_IDS", "provide 1-100 positive action ids")
 	ErrInvalid  = apperror.New("ACTION_INVALID", "invalid action")
 	ErrConflict = apperror.New("ACTION_CONFLICT", "action code or word already exists")
 )
@@ -153,7 +153,7 @@ func (m *Module) Create(ctx context.Context, input CreateActionInput) (*Action, 
 	var value *Action
 	var dictionaryID int64
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
-		if err := authn.RequireAdministrationGrant(ctx, m.administration); err != nil {
+		if err := authn.RequirePermissionOperation(ctx, m.administration, "action", "create"); err != nil {
 			return err
 		}
 		catalog, err := m.requireRegisteredDefinition(ctx, input.Word, input.Group, input.Config)
@@ -163,6 +163,12 @@ func (m *Module) Create(ctx context.Context, input CreateActionInput) (*Action, 
 		if err := resolveStoredConfig(catalog, input.Word, &input.Config); err != nil {
 			return err
 		}
+		if input.Config.PermissionScope == "*" {
+			if err := authn.RequireCatalogAdministration(ctx, m.administration); err != nil {
+				return err
+			}
+		}
+
 		encoded, err := json.Marshal(input.Config)
 		if err != nil {
 			return err
@@ -221,7 +227,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateActionInput) 
 	var value *Action
 	var dictionaryID int64
 	err := m.store.Tx(ctx, func(ctx context.Context) error {
-		if err := authn.RequireAdministrationGrant(ctx, m.administration); err != nil {
+		if err := authn.RequirePermissionOperation(ctx, m.administration, "action", "update"); err != nil {
 			return err
 		}
 		current, err := scan(m.store.SQL(ctx).QueryRowContext(ctx, "SELECT "+actionColumns+" FROM t_action WHERE id = $1 FOR UPDATE", id))
@@ -231,11 +237,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateActionInput) 
 		if err != nil {
 			return err
 		}
-		if current.Config.Builtin == "all" {
-			if err := authn.RequireAllPermissions(ctx, m.administration); err != nil {
-				return err
-			}
-		} else if current.Config.Builtin == "default" {
+		if current.Config.Builtin == "all" || current.Config.Builtin == "default" || current.Config.PermissionScope == "*" {
 			if err := authn.RequireCatalogAdministration(ctx, m.administration); err != nil {
 				return err
 			}
@@ -263,6 +265,12 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateActionInput) 
 		if err := resolveStoredConfig(catalog, word, &config); err != nil {
 			return err
 		}
+		if config.PermissionScope == "*" {
+			if err := authn.RequireCatalogAdministration(ctx, m.administration); err != nil {
+				return err
+			}
+		}
+
 		encoded, err := json.Marshal(config)
 		if err != nil {
 			return err
@@ -302,7 +310,7 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 	}
 
 	operation := func(ctx context.Context) error {
-		if err := authn.RequireAdministrationGrant(ctx, m.administration); err != nil {
+		if err := authn.RequirePermissionOperation(ctx, m.administration, "action", "delete"); err != nil {
 			return err
 		}
 		if m.administration != nil {
@@ -311,26 +319,19 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 					return err
 				}
 				var all, defaults bool
-				if queryErr := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT COALESCE(BOOL_OR(config->>'builtin'='all'),false),COALESCE(BOOL_OR(config->>'builtin'='default'),false) FROM t_action WHERE id = ANY($1)`, pq.Array(ids)).Scan(&all, &defaults); queryErr != nil {
+				if queryErr := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT COALESCE(BOOL_OR(config->>'builtin'='all' OR config->>'permission_scope'='*'),false),COALESCE(BOOL_OR(config->>'builtin'='default'),false) FROM t_action WHERE id = ANY($1)`, pq.Array(ids)).Scan(&all, &defaults); queryErr != nil {
 					return queryErr
 				}
-				if all {
-					return err
-				}
-				if defaults {
+				if all || defaults {
 					if err := authn.RequireCatalogAdministration(ctx, m.administration); err != nil {
 						return err
 					}
 				}
 			}
 		}
-		result, err := m.store.SQL(ctx).ExecContext(ctx, `DELETE FROM t_action WHERE id = ANY($1)`, pq.Array(ids))
-		if err != nil {
-			return fmt.Errorf("delete action: %w", err)
-		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("delete action result: %w", err)
+		var count int64
+		if err := m.store.SQL(ctx).QueryRowContext(ctx, deleteAssignedActionsSQL, pq.Array(ids), time.Now().UnixMilli()).Scan(&count); err != nil {
+			return fmt.Errorf("delete action and assignments: %w", err)
 		}
 		if count == 0 {
 			return ErrNotFound

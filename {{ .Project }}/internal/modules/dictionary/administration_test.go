@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 	"testing"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
-	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
 )
 
 type catalogAdministration struct {
@@ -23,6 +23,7 @@ func (p *catalogAdministration) RequireAllPermissions(context.Context) error {
 	}
 	return authn.ErrPermissionAdministrationRequired
 }
+
 func (p *catalogAdministration) LockPermissionMutation(context.Context) error { p.locks++; return nil }
 
 func TestCatalogMutationCannotBypassPermissionAdministration(t *testing.T) {

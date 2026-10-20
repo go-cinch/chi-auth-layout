@@ -8,10 +8,15 @@ INSERT INTO t_role (id, name, word, action) VALUES
     (4, 'Developer', 'developer', 'B7RP4HYW,35VY9TRL,Y6RW5544,PMWSQYY5,R2LTBEEG,JBVF9YWV,F9PEAFVW,VLN9HX2E,K4AQMSC6,B2VYAELW,XXY567KR,3V5GWBQT,QYALLJEG,K5VF772F,E66VGBKA,5RNWYB4S,TW535HD8,V75R23SD,H3HW2LEB,HED6QQTL,E3WB6LE7,MCHJ3RY3,JJNWC246,9TS8JETG,SNP225K5,47WDGP7H,GW3JY8SJ,SKFRSH2E,HFSNA574,76JJGCBN'),
     (5, 'Operator', 'operator', 'B7RP4HYW,SKFRSH2E');
 
+-- Demo groups cover all ordinary admin pages, including workspace, dictionaries,
+-- message management and both audit pages. Developer/catalog publishing remains
+-- a separate capability of the Developer role, never implied by a demo tier.
+-- Read Only: read. Read Write: read/create/update/delete. No Delete: read/create/update.
+-- Personal account, inbox and session defaults remain assigned directly below.
 INSERT INTO t_user_group (id, name, word, action) VALUES
-    (1, 'Read Only', 'readonly', 'Y6RW5544,F9PEAFVW,XXY567KR,E66VGBKA'),
-    (2, 'Read Write', 'write', 'Y6RW5544,PMWSQYY5,R2LTBEEG,JBVF9YWV,F9PEAFVW,VLN9HX2E,K4AQMSC6,B2VYAELW,XXY567KR,3V5GWBQT,QYALLJEG,K5VF772F,E66VGBKA,5RNWYB4S,TW535HD8,V75R23SD'),
-    (3, 'No Delete', 'nodelete', 'Y6RW5544,PMWSQYY5,R2LTBEEG,F9PEAFVW,VLN9HX2E,K4AQMSC6,XXY567KR,3V5GWBQT,QYALLJEG,E66VGBKA,5RNWYB4S,TW535HD8');
+    (1, 'Read Only', 'readonly', '35VY9TRL,SKFRSH2E,Y6RW5544,F9PEAFVW,XXY567KR,E66VGBKA,H3HW2LEB,JJNWC246,47WDGP7H,GW3JY8SJ'),
+    (2, 'Read Write', 'write', '35VY9TRL,SKFRSH2E,Y6RW5544,PMWSQYY5,R2LTBEEG,JBVF9YWV,F9PEAFVW,VLN9HX2E,K4AQMSC6,B2VYAELW,XXY567KR,3V5GWBQT,QYALLJEG,K5VF772F,E66VGBKA,5RNWYB4S,TW535HD8,V75R23SD,H3HW2LEB,HED6QQTL,E3WB6LE7,MCHJ3RY3,JJNWC246,9TS8JETG,SNP225K5,47WDGP7H,GW3JY8SJ'),
+    (3, 'No Delete', 'nodelete', '35VY9TRL,SKFRSH2E,Y6RW5544,PMWSQYY5,R2LTBEEG,F9PEAFVW,VLN9HX2E,K4AQMSC6,XXY567KR,3V5GWBQT,QYALLJEG,E66VGBKA,5RNWYB4S,TW535HD8,H3HW2LEB,HED6QQTL,E3WB6LE7,JJNWC246,9TS8JETG,47WDGP7H,GW3JY8SJ');
 
 -- Local seed credentials intentionally use the username as the password.
 -- Preserve the finalized seed accounts; group defaults only affect future creation.

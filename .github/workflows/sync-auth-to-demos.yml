@@ -5,6 +5,31 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      delete_old_sql:
+        description: DELETE_OLD_SQL (default uses the Makefile setting)
+        type: choice
+        default: default
+        options:
+          - default
+          - "true"
+          - "false"
+      http_router:
+        description: HTTP_ROUTER (default uses the Makefile setting)
+        type: choice
+        default: default
+        options:
+          - default
+          - chi
+          - gin
+      enable_grpc:
+        description: ENABLE_GRPC (default uses the Makefile setting)
+        type: choice
+        default: default
+        options:
+          - default
+          - "true"
+          - "false"
 
 concurrency:
   group: sync-auth-to-demos
@@ -58,14 +83,24 @@ jobs:
           go install "github.com/hay-kot/scaffold@${SCAFFOLD_COMMIT_SHA}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Remove old auth demo and generate from scratch
+      - name: Generate auth demo with make local
+        working-directory: chi-auth-layout
+        shell: bash
+        env:
+          INPUT_DELETE_OLD_SQL: ${{ inputs.delete_old_sql }}
+          INPUT_HTTP_ROUTER: ${{ inputs.http_router }}
+          INPUT_ENABLE_GRPC: ${{ inputs.enable_grpc }}
         run: |
           set -euo pipefail
-          rm -rf -- "$GITHUB_WORKSPACE/demos/auth"
-          scaffold new "$GITHUB_WORKSPACE/chi-auth-layout" \
-            --output-dir="$GITHUB_WORKSPACE/demos" \
-            --run-hooks=always --no-prompt --preset=full \
-            Project=auth http_port=8081 http_router=chi enable_grpc=true
+          set --
+          for option in DELETE_OLD_SQL HTTP_ROUTER ENABLE_GRPC; do
+            input_name="INPUT_${option}"
+            value="${!input_name}"
+            if [ -n "$value" ] && [ "$value" != default ]; then
+              set -- "$@" "$option=$value"
+            fi
+          done
+          make local "$@"
 
       - name: Verify generated auth demo
         working-directory: demos/auth

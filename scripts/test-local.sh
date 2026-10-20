@@ -13,7 +13,10 @@ setup_case() {
   layout_dir="$case_dir/chi-auth-layout"
   sql_dir="$case_dir/demos/auth/internal/infra/db/migrations"
   auth_config="$case_dir/demos/auth/conf/auth.yml"
-  mkdir -p "$layout_dir" "$sql_dir" "$(dirname "$auth_config")" "$case_dir/expected" "$case_dir/demos/auth/bin"
+  mkdir -p "$layout_dir" "$sql_dir" "$(dirname "$auth_config")" "$case_dir/expected" "$case_dir/demos/auth/bin" "$case_dir/demos/another-demo" "$case_dir/demos/auth/internal/modules/whitelist"
+  printf 'keep sibling\n' > "$case_dir/demos/another-demo/sentinel"
+  printf 'obsolete source\n' > "$case_dir/demos/auth/internal/modules/whitelist/http.go"
+  printf 'old local override\n' > "$case_dir/demos/auth/.env.local"
   printf 'original binary\n' > "$case_dir/demos/auth/bin/auth"
   cp "$template_dir/Makefile" "$layout_dir/Makefile"
   for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data; do
@@ -39,12 +42,17 @@ set -eu
 test "$1" = new
 output_dir=
 for arg in "$@"; do
-  case "$arg" in --output-dir=*) output_dir=${arg#--output-dir=} ;; esac
+  case "$arg" in
+    --output-dir=*) output_dir=${arg#--output-dir=} ;;
+    --overwrite|--force) exit 9 ;;
+  esac
 done
 test -n "$output_dir"
 touch scaffold-called
 sql_dir="$output_dir/auth/internal/infra/db/migrations"
-test "$(find "$sql_dir" -name '*.sql' | wc -l | tr -d ' ')" = 0
+test ! -e "$output_dir/auth"
+if [ "${TEST_MODE:-success}" = early-failure ]; then exit 7; fi
+mkdir -p "$sql_dir" "$output_dir/auth/conf" "$output_dir/auth/bin"
 timestamp=2026101920
 if [ "${TEST_MODE:-success}" = out-of-order ]; then timestamp=2025010101; fi
 for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data 05-resource-permission-schema 11-sparse-default-groups 12-new-feature 13-another-feature; do
@@ -87,7 +95,10 @@ assert_sql() {
   rm -f "$actual_dir"/*.sql
   cp -p "$sql_dir"/*.sql "$actual_dir/"
   diff -ru "$case_dir/expected" "$actual_dir"
-  test "$(cat "$sql_dir/README.txt")" = 'keep non-sql files'
+  test ! -e "$sql_dir/README.txt"
+  test ! -e "$case_dir/demos/auth/internal/modules/whitelist"
+  test ! -e "$case_dir/demos/auth/.env.local"
+  test "$(cat "$case_dir/demos/another-demo/sentinel")" = 'keep sibling'
 }
 
 assert_jwt() {
@@ -178,6 +189,34 @@ if run_local DELETE_OLD_SQL=invalid; then
 fi
 test ! -e "$layout_dir/scaffold-called"
 rg -q 'DELETE_OLD_SQL must be true or false' "$case_dir/run.log"
-assert_sql
+diff -ru "$case_dir/expected" "$sql_dir" -x README.txt
+test -f "$sql_dir/README.txt"
+test -f "$case_dir/demos/auth/internal/modules/whitelist/http.go"
+test -f "$case_dir/demos/auth/.env.local"
 cmp "$auth_config" "$case_dir/original-auth.yml"
 printf 'PASS reject invalid flag before changing files\n'
+
+for setting in true false; do
+  setup_case "early-failure-$setting"
+  if TEST_MODE=early-failure run_local "DELETE_OLD_SQL=$setting"; then
+    printf 'expected early generation failure to propagate\n' >&2
+    exit 1
+  fi
+  assert_sql
+  assert_jwt
+  cmp "$auth_config" "$case_dir/original-auth.yml"
+  test "$(cat "$case_dir/demos/auth/bin/auth")" = 'original binary'
+  printf 'PASS restore SQL, configuration and binary after failure before generation (%s)\n' "$setting"
+done
+
+for setting in true false; do
+  setup_case "absent-$setting"
+  rm -rf "$case_dir/demos/auth"
+  run_local "DELETE_OLD_SQL=$setting"
+  test -f "$auth_config"
+  rg -q 'generated-test-key' "$auth_config"
+  test -f "$case_dir/demos/auth/bin/auth"
+  assert_binary
+  test "$(cat "$case_dir/demos/another-demo/sentinel")" = 'keep sibling'
+  printf 'PASS generate an absent demo (%s)\n' "$setting"
+done

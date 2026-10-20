@@ -7,10 +7,6 @@ binary_name='{{ .Computed.service_name_kebab }}'
 
 cd "$project_dir"
 
-# Overwriting a generated project retains files absent from the template.
-# Remove the retired capability before module discovery and compilation.
-rm -rf './internal/modules/whitelist'
-
 seed_file='./internal/infra/db/migrations/YYYYMMDDHH-02-auth-default-data.sql'
 action_seed_file='./internal/infra/db/migrations/YYYYMMDDHH-03-action-default-data.sql'
 if [ -f "$seed_file" ]; then

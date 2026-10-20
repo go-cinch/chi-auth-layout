@@ -56,6 +56,38 @@ Use `OUTPUT_DIR` to select another destination:
 make full PROJECT=my-service OUTPUT_DIR=/path/to/projects
 ```
 
+## Regenerate the Local Demo
+
+```bash
+make local
+```
+
+This deletes the entire `../demos/auth` directory and generates fresh source for
+the `auth` project on HTTP port 8081, removing obsolete packages and other local
+files. It also works when the demo does not exist yet.
+`HTTP_ROUTER` and `ENABLE_GRPC` select the same options as `make full`.
+
+`DELETE_OLD_SQL=true` (the default) uses the newly generated SQL. To retain SQL
+for an initialized database:
+
+```bash
+make local DELETE_OLD_SQL=false
+```
+
+This backs up the existing SQL before deleting the directory, restores the
+original filenames and contents after generation, appends only new migrations,
+then rebuilds the binary to embed the final SQL. Existing JWT keys are preserved
+in both modes. If generation or the final rebuild fails, the previous SQL, JWT
+key and binary are restored; obsolete source files remain removed.
+
+The command does not reset PostgreSQL or Redis. With `DELETE_OLD_SQL=true`, an
+existing database may need migration reconciliation before the service starts.
+
+The **Sync Auth to Demos** workflow calls this same `make local` target.
+Push-triggered runs use the Makefile defaults. Manual runs can override
+`DELETE_OLD_SQL`, `HTTP_ROUTER` and `ENABLE_GRPC`; selecting `default` leaves
+the corresponding Makefile setting in control.
+
 ## Generate with Scaffold
 
 ```bash

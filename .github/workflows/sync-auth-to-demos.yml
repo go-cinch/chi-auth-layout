@@ -58,8 +58,14 @@ jobs:
           go install "github.com/hay-kot/scaffold@${SCAFFOLD_COMMIT_SHA}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Generate and incrementally sync auth demo
-        run: make -C "$GITHUB_WORKSPACE/chi-auth-layout" local
+      - name: Remove old auth demo and generate from scratch
+        run: |
+          set -euo pipefail
+          rm -rf -- "$GITHUB_WORKSPACE/demos/auth"
+          scaffold new "$GITHUB_WORKSPACE/chi-auth-layout" \
+            --output-dir="$GITHUB_WORKSPACE/demos" \
+            --run-hooks=always --no-prompt --preset=full \
+            Project=auth http_port=8081 http_router=chi enable_grpc=true
 
       - name: Verify generated auth demo
         working-directory: demos/auth

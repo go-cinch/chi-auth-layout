@@ -3,6 +3,12 @@
 set -eu
 
 template_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+default_delete_old_sql=$(make -s --no-print-directory -C "$template_dir" -f Makefile -f - print-delete-old-sql <<'MAKE'
+.PHONY: print-delete-old-sql
+print-delete-old-sql:
+	@printf '%s\n' '$(DELETE_OLD_SQL)'
+MAKE
+)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/chi-auth-local-test.XXXXXX")
 trap 'rm -rf "$test_root"' EXIT INT TERM
 
@@ -129,17 +135,31 @@ assert_binary
 printf 'PASS preserve historical SQL and append new migrations; repeated generation is stable\n'
 
 for setting in true default; do
-  setup_case "replace-$setting"
-  if [ "$setting" = default ]; then run_local; else run_local DELETE_OLD_SQL=true; fi
-  rm "$case_dir/expected"/*.sql
-  for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data 05-resource-permission-schema 11-sparse-default-groups 12-new-feature 13-another-feature; do
-    printf 'generated 1 %s\n' "$suffix" > "$case_dir/expected/2026101920-$suffix.sql"
-  done
+  setup_case "mode-$setting"
+  effective_delete_old_sql=$setting
+  if [ "$setting" = default ]; then
+    effective_delete_old_sql=$default_delete_old_sql
+    run_local
+  else
+    run_local DELETE_OLD_SQL=true
+  fi
+  if [ "$effective_delete_old_sql" = true ]; then
+    rm "$case_dir/expected"/*.sql
+    for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data 05-resource-permission-schema 11-sparse-default-groups 12-new-feature 13-another-feature; do
+      printf 'generated 1 %s\n' "$suffix" > "$case_dir/expected/2026101920-$suffix.sql"
+    done
+    test ! -e "$case_dir/demos/auth/rebuilt"
+  else
+    # Preservation mode skips replacement assertions and retains the old SQL.
+    for suffix in 12-new-feature 13-another-feature; do
+      printf 'generated 1 %s\n' "$suffix" > "$case_dir/expected/2026101920-$suffix.sql"
+    done
+    test -f "$case_dir/demos/auth/rebuilt"
+  fi
   assert_sql
   assert_jwt
   assert_binary
-  test ! -e "$case_dir/demos/auth/rebuilt"
-  printf 'PASS replacement mode (%s)\n' "$setting"
+  printf 'PASS SQL mode (%s, DELETE_OLD_SQL=%s)\n' "$setting" "$effective_delete_old_sql"
 done
 
 for setting in true false; do

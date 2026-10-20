@@ -5,7 +5,7 @@ PROJECT ?= auth-service
 OUTPUT_DIR ?= ..
 HTTP_ROUTER ?= chi
 ENABLE_GRPC ?= true
-DELETE_OLD_SQL ?= true
+DELETE_OLD_SQL ?= false
 
 ifneq ($(ENABLE_GRPC),true)
 ifneq ($(ENABLE_GRPC),false)

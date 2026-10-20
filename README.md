@@ -67,18 +67,20 @@ the `auth` project on HTTP port 8081, removing obsolete packages and other local
 files. It also works when the demo does not exist yet.
 `HTTP_ROUTER` and `ENABLE_GRPC` select the same options as `make full`.
 
-`DELETE_OLD_SQL=true` (the default) uses the newly generated SQL. To retain SQL
-for an initialized database:
+`DELETE_OLD_SQL=false` is the default, so `make local` retains SQL for an
+initialized database. It backs up the existing SQL before deleting the directory,
+restores the original filenames and contents after generation, appends only new
+migrations, then rebuilds the binary to embed the final SQL.
+
+To replace the existing SQL with the newly generated SQL, explicitly run:
 
 ```bash
-make local DELETE_OLD_SQL=false
+make local DELETE_OLD_SQL=true
 ```
 
-This backs up the existing SQL before deleting the directory, restores the
-original filenames and contents after generation, appends only new migrations,
-then rebuilds the binary to embed the final SQL. Existing JWT keys are preserved
-in both modes. If generation or the final rebuild fails, the previous SQL, JWT
-key and binary are restored; obsolete source files remain removed.
+Existing JWT keys are preserved in both modes. If generation or the final rebuild
+fails, the previous SQL, JWT key and binary are restored; obsolete source files
+remain removed.
 
 The command does not reset PostgreSQL or Redis. With `DELETE_OLD_SQL=true`, an
 existing database may need migration reconciliation before the service starts.

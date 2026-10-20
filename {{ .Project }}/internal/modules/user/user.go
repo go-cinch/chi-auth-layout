@@ -40,24 +40,25 @@ const (
 )
 
 type User struct {
-	selectedFields   report.Fields
-	selectedActions  string
-	selectedMetadata []byte
-	LoginCount       int64               `json:"login_count"`
-	ID               int64               `json:"id"`
-	CreatedAt        int64               `json:"created_at"`
-	UpdatedAt        int64               `json:"updated_at"`
-	Username         string              `json:"username"`
-	Code             string              `json:"code"`
-	Status           int16               `json:"status"`
-	Metadata         map[string]any      `json:"metadata"`
-	Wrong            int64               `json:"wrong"`
-	LastLoggedInAt   *int64              `json:"last_logged_in_at,omitempty"`
-	RoleID           *int64              `json:"role_id,omitempty"`
-	RoleSummary      *rolemodule.Summary `json:"role_summary,omitempty"`
-	Role             *RoleView           `json:"role,omitempty"`
-	ActionCodes      []string            `json:"action_codes"`
-	Actions          []ActionView        `json:"actions"`
+	selectedFields    report.Fields
+	selectedActions   string
+	selectedMetadata  []byte
+	LoginCount        int64               `json:"login_count"`
+	ID                int64               `json:"id"`
+	CreatedAt         int64               `json:"created_at"`
+	UpdatedAt         int64               `json:"updated_at"`
+	Username          string              `json:"username"`
+	Code              string              `json:"code"`
+	Status            int16               `json:"status"`
+	Metadata          map[string]any      `json:"metadata"`
+	Wrong             int64               `json:"wrong"`
+	LastLoggedInAt    *int64              `json:"last_logged_in_at,omitempty"`
+	RoleID            *int64              `json:"role_id,omitempty"`
+	RoleSummary       *rolemodule.Summary `json:"role_summary,omitempty"`
+	Role              *RoleView           `json:"role,omitempty"`
+	ActionCodes       []string            `json:"action_codes"`
+	Actions           []ActionView        `json:"actions"`
+	PermissionSources *[]PermissionSource `json:"permission_sources,omitempty"`
 }
 
 type ActionView struct {

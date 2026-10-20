@@ -94,7 +94,7 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
 		return
 	}
-	fields, err := report.ParseFields(query, listFields...)
+	fields, err := report.ParseFields(query, detailFields...)
 	if err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, err)
 		return

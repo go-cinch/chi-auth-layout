@@ -15,7 +15,7 @@ func (g *generator) describeDetailFields(r *route) {
 		case r.path == "/msg/sent/{id}":
 			fields = "id,created_at,updated_at,title,content,summary,type,scope,sender_id,published_at,expired_at,read_at,recipient_ids,recipients"
 		case r.path == "/user/{id}":
-			fields = "id,created_at,updated_at,username,code,role_id,last_logged_in_at,login_count,status,metadata,wrong,action_codes,actions,role,role_summary"
+			fields = "id,created_at,updated_at,username,code,role_id,last_logged_in_at,login_count,status,metadata,wrong,action_codes,actions,role,role_summary,permission_sources"
 		case r.path == "/role/{id}":
 			fields = "id,created_at,updated_at,name,word,action_codes,actions,action_summaries"
 		case strings.HasPrefix(r.path, "/audit/") && strings.Contains(r.path, "/detail/"):
@@ -47,6 +47,9 @@ func (g *generator) describeDetailFields(r *route) {
 
 func (g *generator) describeSelectedDetail(r *route, fields string) {
 	description := "Optional comma-separated f: " + fields + ". Omitted f preserves the complete detail response. Only selected fields and their hidden dependencies are loaded; unselected associations and payloads are not queried. No metadata is always present. Selected zero values, empty arrays and null associations are retained. Empty, unknown, duplicate selectors and repeated f parameters return 400."
+	if r.path == "/user/{id}" {
+		description += " permission_sources is opt-in and adds one statement snapshot of direct, role and user-group assignments, including owner kind/id/name and action_codes/actions (code,word,config without technical ui/endpoints projections). Empty owners are retained, overlapping codes keep all owners, and no user-list or write contract changes."
+	}
 	r.parameters = append(r.parameters, parameter{name: "f", in: "query", description: description, schema: schema{typeName: "string", example: "id"}})
 	response := r.responses[http.StatusOK]
 	response.description = description

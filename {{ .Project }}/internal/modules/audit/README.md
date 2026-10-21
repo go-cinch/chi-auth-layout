@@ -1,6 +1,6 @@
 # Operation audit
 
-Independent Go Cinch implementation; no code or assets from scaffold-master.
+Independent {{ (fromJSON .Computed.brand).title }} implementation; no code or assets from scaffold-master.
 
 `GET /audit/{login|operation}` lists append-only HTTP audit metadata. Companion
 routes: `/summary`, `/option`, `/detail/{id}`, `/export` (CSV). The concrete routes
@@ -72,7 +72,7 @@ Design references (interaction concepts only):
 - https://echarts.apache.org/examples/en/editor.html?c=heatmap-cartesian
 
 PC UI uses the existing Vben EchartsUI/useEcharts plugin, its ECharts dependency,
-Ant Design Vue cards/statistics/table/drawer and existing Go Cinch table controls.
+Ant Design Vue cards/statistics/table/drawer and existing {{ (fromJSON .Computed.brand).title }} table controls.
 
 ## V2 investigation filters
 

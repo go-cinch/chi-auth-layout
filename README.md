@@ -107,6 +107,30 @@ Interactive generation can also adjust the HTTP port, timeout, Redis, tracing
 and health checks. PostgreSQL and the business modules are always included,
 including when no preset is specified.
 
+## Brand Name
+
+Set one `BRAND_NAME` value in both the auth and Vben frontend generators:
+
+```bash
+make full PROJECT=project-auth BRAND_NAME="this is my project"
+# Direct Scaffold equivalent: append brand_name="this is my project"
+```
+
+The generator derives `This Is My Project`, `this is my project`, and
+`this-is-my-project` for display text, lowercase text, and identifiers. Names
+must start with an English letter and contain only English letters, digits,
+spaces, hyphens, or underscores. Extra surrounding spaces are trimmed and
+repeated separators are collapsed. The default is `go cinch`.
+
+The generated dictionary seed SQL uses the same brand as the frontend's bundled
+Chinese and English messages. `Project`, `service_name`, and `module_name` remain
+independent service identifiers. This changes new projects, not an initialized
+database; `make local` with its default `DELETE_OLD_SQL=false` preserves existing
+SQL and dictionary data.
+
+Run `make test-branding` to check custom names, valid JSON in SQL, and invalid
+input rejection using temporary output directories.
+
 ## Generated Project
 
 ```bash

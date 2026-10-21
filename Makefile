@@ -1,6 +1,7 @@
-.PHONY: lint test test-local full local
+.PHONY: test-branding lint test test-local full local
 
 SCAFFOLD ?= scaffold
+BRAND_NAME ?= go cinch
 PROJECT ?= auth-service
 OUTPUT_DIR ?= ..
 HTTP_ROUTER ?= chi
@@ -22,14 +23,14 @@ endif
 lint:
 	$(SCAFFOLD) lint scaffold.yml
 
-test: lint test-local
+test: test-branding lint test-local
 	./scripts/test-template.sh
 
 test-local:
 	sh ./scripts/test-local.sh
 
 full:
-	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(OUTPUT_DIR)" --run-hooks=always --no-prompt --preset=full "Project=$(PROJECT)" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)"
+	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(OUTPUT_DIR)" --run-hooks=always --no-prompt --preset=full "Project=$(PROJECT)" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))'
 
 # Use DELETE_OLD_SQL=false when retaining an initialized local database.
 # Recreate the demo directory to remove obsolete source files. In preserve mode,
@@ -139,4 +140,8 @@ local:
 	trap 'exit 130' INT; \
 	trap 'exit 143' TERM; \
 	rm -rf -- "$$auth_dir"; \
-	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full "Project=auth" "http_port=8081" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)"
+	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full "Project=auth" "http_port=8081" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))'
+
+# Exercise real rendering with custom brands without touching local demos.
+test-branding:
+	SCAFFOLD="$(SCAFFOLD)" python3 scripts/test-branding.py

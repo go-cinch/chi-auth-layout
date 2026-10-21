@@ -21,6 +21,11 @@ messages:
     {{- end }}
 
 questions:
+  - name: brand_name
+    prompt:
+      message: Brand name (title, lowercase and kebab-case are derived automatically)?
+      default: go cinch
+
   - name: service_name
     prompt:
       message: Service name (leave empty to use Project name)?
@@ -72,6 +77,8 @@ questions:
       default: "true"
 
 computed:
+  # JSON preserves string names such as "true"; Scaffold coerces scalar computed values.
+  brand: '{{ $raw := trim (or .Scaffold.brand_name "go cinch") }}{{ if not (regexMatch "^[A-Za-z][A-Za-z0-9]*([ _-]+[A-Za-z0-9]+)*$" $raw) }}{{ template "brand_name must start with a letter and contain only English letters, digits, spaces, underscores or hyphens" . }}{{ end }}{{ $lower := toLower (regexReplaceAll "[ _-]+" $raw " ") }}{{ dict "title" (toTitleCase $lower) "lower" $lower "slug" (replace " " "-" $lower) | toJSON }}'
   # Scaffold 0.13.1 swallows sprig fail errors. An undefined Go template
   # action raises a native rendering error before any project files are written.
   http_router_final: '{{ $router := or .Scaffold.http_router "chi" }}{{ if or (eq $router "chi") (eq $router "gin") }}{{ $router }}{{ else }}{{ template "http_router must be chi or gin" . }}{{ end }}'

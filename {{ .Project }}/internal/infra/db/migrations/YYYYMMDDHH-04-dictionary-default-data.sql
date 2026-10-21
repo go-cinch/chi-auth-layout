@@ -309,7 +309,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "journey": {
                         "title": "Welcome ashore",
                         "entering": "Signed in. Taking you in…",
-                        "description": "Sign in to Go Cinch and pick up where you left off"
+                        "description": "Sign in to {{ (fromJSON .Computed.brand).title }} and pick up where you left off"
                     },
                     "register": {
                         "success": "Account created successfully. You can sign in after administrator approval.",
@@ -581,7 +581,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                                     "closedRunIssue": "Closed the issue \"How to run the project\"",
                                     "createdProject": "Created the Vue project in the Open Source Team",
                                     "followedWilliam": "Followed William",
-                                    "publishedAdminVben": "Published \"How to use go cinch\"",
+                                    "publishedAdminVben": "Published \"How to use {{ (fromJSON .Computed.brand).lower }}\"",
                                     "repliedOptimization": "Replied to Jack''s question \"How can I optimize a project?\""
                                 }
                             },
@@ -2007,7 +2007,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "journey": {
                         "title": "欢迎归航",
                         "entering": "登录成功，正在进入…",
-                        "description": "进入 Go Cinch，继续今天的工作"
+                        "description": "进入 {{ (fromJSON .Computed.brand).title }}，继续今天的工作"
                     },
                     "register": {
                         "success": "账号创建成功，请等待管理员审核后登录。",
@@ -2279,7 +2279,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                                     "closedRunIssue": "关闭了问题《如何运行项目》",
                                     "createdProject": "在开源组创建了 Vue 项目",
                                     "followedWilliam": "关注了威廉",
-                                    "publishedAdminVben": "发表了《如何使用 go cinch》",
+                                    "publishedAdminVben": "发表了《如何使用 {{ (fromJSON .Computed.brand).lower }}》",
                                     "repliedOptimization": "回复了杰克的问题《如何进行项目优化？》"
                                 }
                             },

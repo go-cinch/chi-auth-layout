@@ -211,13 +211,13 @@ func TestCredentialsRoundTripAndReplay(t *testing.T) {
 		Credential: encryptLoginCredential(t, credentials, loginCredential{
 			ChallengeID:   challenge.ChallengeID,
 			Username:      "readonly",
-			Password:      "cinch123",
+			Password:      authTestPassword,
 			CaptchaID:     "captcha-1",
 			CaptchaPoints: []CaptchaPoint{CaptchaPoint{X: 42, Y: 84}},
 		}, true),
 	}
 	plain, err := credentials.Open(t.Context(), input)
-	if err != nil || plain.Username != "readonly" || plain.Password != "cinch123" || plain.CaptchaID != "captcha-1" || len(plain.CaptchaPoints) != 1 {
+	if err != nil || plain.Username != "readonly" || plain.Password != authTestPassword || plain.CaptchaID != "captcha-1" || len(plain.CaptchaPoints) != 1 {
 		t.Fatalf("open = %#v, %v", plain, err)
 	}
 	if _, err := credentials.Open(t.Context(), input); !errors.Is(err, ErrInvalidCredential) {
@@ -297,7 +297,7 @@ func TestCredentialsRejectInvalidInput(t *testing.T) {
 		}
 	}
 
-	input := encryptedLoginInput(t, credentials, "readonly", "cinch123")
+	input := encryptedLoginInput(t, credentials, "readonly", authTestPassword)
 	input.ChallengeID = "different"
 	if _, err := credentials.Open(t.Context(), input); !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("mismatched challenge error = %v", err)
@@ -307,7 +307,7 @@ func TestCredentialsRejectInvalidInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withoutType := encryptLoginCredential(t, credentials, loginCredential{ChallengeID: challenge.ChallengeID, Username: "readonly", Password: "cinch123"}, false)
+	withoutType := encryptLoginCredential(t, credentials, loginCredential{ChallengeID: challenge.ChallengeID, Username: "readonly", Password: authTestPassword}, false)
 	if _, err := credentials.Open(t.Context(), EncryptedLoginInput{ChallengeID: challenge.ChallengeID, Credential: withoutType}); !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("missing type error = %v", err)
 	}

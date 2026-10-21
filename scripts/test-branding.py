@@ -29,19 +29,27 @@ with tempfile.TemporaryDirectory(prefix='auth-branding-') as temporary:
         values = re.findall(r"'((?:''|[^'])*)'::jsonb", sql)
         catalogs = [json.loads(value.replace("''", "'")) for value in values]
         assert len(catalogs) == 3, 'all SQL JSON values must remain parseable'
-        assert f'Sign in to {title} and pick up where you left off' in sql
-        assert f'进入 {title}，继续今天的工作' in sql
+        messages = catalogs[2]['messages']
+        assert messages['en-US']['frontend']['app']['journey']['description'] == f'Sign in to {title} Admin and pick up where you left off'
+        assert messages['zh-CN']['frontend']['app']['journey']['description'] == f'进入 {title} Admin，继续今天的工作'
         assert f'How to use {lower}' in sql
         assert f'如何使用 {lower}' in sql
         assert (project / 'go.mod').read_text().startswith(f'module {project.name}\n')
-        if name:
-            for path in project.rglob('*'):
-                if path.is_file():
-                    try:
-                        text = path.read_text()
-                    except UnicodeError:
-                        continue
-                    assert not re.search(r'go[ _-]*cinch', text, re.I), path
+        fixture = (project / 'internal/modules/auth/auth_test.go').read_text()
+        password = lower.replace(' ', '-')[:64] + '123'
+        assert f'const authTestPassword = "{password}"' in fixture
+        for path in project.rglob('*'):
+            relative = str(path.relative_to(project))
+            assert not re.search(r'(?<!go[ _-])cinch', relative, re.I), path
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text()
+            except UnicodeError:
+                continue
+            assert not re.search(r'(?<!go[ _-])cinch', text, re.I), path
+            if name:
+                assert not re.search(r'cinch', text + relative, re.I), path
         print(f'PASS auth brand {name or "default"!r}', flush=True)
 
     for index, invalid in enumerate(["O'Reilly", '<script>', '---', 'acme\nother']):

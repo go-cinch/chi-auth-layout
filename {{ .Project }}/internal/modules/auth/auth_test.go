@@ -18,6 +18,9 @@ import (
 
 const authTestKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+// Keep the branded fixture below bcrypt's 72-byte limit, even for long names.
+const authTestPassword = "{{ printf "%.64s" (fromJSON .Computed.brand).slug }}123"
+
 func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) {
 	localizer := localization.New()
 	installAuthCatalog(t, localizer)
@@ -72,7 +75,7 @@ func loginRows(t *testing.T, status int16, wrongValues ...int64) *sqlmock.Rows {
 		wrong = wrongValues[0]
 	}
 	return sqlmock.NewRows([]string{"id", "username", "code", "password", "status", "wrong", "credential_version"}).
-		AddRow(int64(3), "readonly", "EXP78RGH", passwordHash(t, "cinch123"), status, wrong, int64(1))
+		AddRow(int64(3), "readonly", "EXP78RGH", passwordHash(t, authTestPassword), status, wrong, int64(1))
 }
 
 func expectPasswordChangeLock(mock sqlmock.Sqlmock, locked bool) {
@@ -144,40 +147,40 @@ func TestLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive, 5))
-	if _, err := m.Login(ctx, LoginInput{Username: "readonly", Password: "cinch123"}); !errors.Is(err, ErrPointCaptchaRequired) {
+	if _, err := m.Login(ctx, LoginInput{Username: "readonly", Password: authTestPassword}); !errors.Is(err, ErrPointCaptchaRequired) {
 		t.Fatalf("captcha requirement: %v", err)
 	}
 	answer := storedPointCaptchaAnswer(t, m.captcha.store.(*memoryPointCaptchaStore), verification.Captcha.CaptchaID)
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive, 5))
 	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WithArgs(sqlmock.AnyArg(), int64(3), int64(1), userStatusActive).WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(int64(2)))
 	if result, err := m.Login(ctx, LoginInput{
-		Username: "readonly", Password: "cinch123", CaptchaID: verification.Captcha.CaptchaID, CaptchaPoints: answer.Points,
+		Username: "readonly", Password: authTestPassword, CaptchaID: verification.Captcha.CaptchaID, CaptchaPoints: answer.Points,
 	}); err != nil || result.AccessToken == "" {
 		t.Fatalf("point captcha without slider: %#v %v", result, err)
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusPending))
-	if _, err := m.Login(ctx, LoginInput{Username: "readonly", Password: "cinch123"}); !errors.Is(err, ErrPendingApproval) {
+	if _, err := m.Login(ctx, LoginInput{Username: "readonly", Password: authTestPassword}); !errors.Is(err, ErrPendingApproval) {
 		t.Fatal(err)
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusLocked))
 	mock.ExpectExec("UPDATE t_user SET status").WithArgs(userStatusActive, sqlmock.AnyArg(), int64(3), userStatusLocked, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 0))
-	if _, err := m.Login(ctx, LoginInput{Username: "readonly", Password: "cinch123"}); !errors.Is(err, ErrLocked) {
+	if _, err := m.Login(ctx, LoginInput{Username: "readonly", Password: authTestPassword}); !errors.Is(err, ErrLocked) {
 		t.Fatal(err)
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusLocked))
 	mock.ExpectExec("UPDATE t_user SET status").WithArgs(userStatusActive, sqlmock.AnyArg(), int64(3), userStatusLocked, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WithArgs(sqlmock.AnyArg(), int64(3), int64(1), userStatusActive).WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(int64(2)))
-	if result, err := m.Login(ctx, LoginInput{Username: "readonly", Password: "cinch123", SliderProof: validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")}); err != nil || result.AccessToken == "" {
+	if result, err := m.Login(ctx, LoginInput{Username: "readonly", Password: authTestPassword, SliderProof: validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")}); err != nil || result.AccessToken == "" {
 		t.Fatalf("expired lock login: %#v %v", result, err)
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
 	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WithArgs(sqlmock.AnyArg(), int64(3), int64(1), userStatusActive).WillReturnError(sqlmock.ErrCancelled)
-	if _, err := m.Login(ctx, LoginInput{Username: " readonly ", Password: "cinch123", SliderProof: validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")}); err == nil {
+	if _, err := m.Login(ctx, LoginInput{Username: " readonly ", Password: authTestPassword, SliderProof: validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")}); err == nil {
 		t.Fatal("update failure was ignored")
 	}
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
 	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WithArgs(sqlmock.AnyArg(), int64(3), int64(1), userStatusActive).WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(int64(2)))
-	result, err := m.Login(ctx, LoginInput{Username: "readonly", Password: "cinch123", SliderProof: validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")})
+	result, err := m.Login(ctx, LoginInput{Username: "readonly", Password: authTestPassword, SliderProof: validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")})
 	if err != nil || result.AccessToken == "" || result.ExpiredAt <= time.Now().UnixMilli() {
 		t.Fatalf("login: %#v %v", result, err)
 	}
@@ -279,15 +282,15 @@ func TestChangePassword(t *testing.T) {
 	if err != nil || challenge.ChallengeID == "" {
 		t.Fatalf("password challenge: %#v %v", challenge, err)
 	}
-	encrypted := encryptedPasswordChangeInput(t, m.credentials, 3, "cinch123", "new-secret")
+	encrypted := encryptedPasswordChangeInput(t, m.credentials, 3, authTestPassword, "new-secret")
 	opened, err := m.OpenPasswordChange(ctx, encrypted)
-	if err != nil || opened.OldPassword != "cinch123" || opened.NewPassword != "new-secret" {
+	if err != nil || opened.OldPassword != authTestPassword || opened.NewPassword != "new-secret" {
 		t.Fatalf("open password change: %#v %v", opened, err)
 	}
 
 	for _, input := range []PasswordChangeInput{
 		{},
-		{OldPassword: "cinch123", NewPassword: "   "},
+		{OldPassword: authTestPassword, NewPassword: "   "},
 		{OldPassword: "   ", NewPassword: "new-secret"},
 	} {
 		if err := m.ChangePassword(ctx, input); !errors.Is(err, ErrInvalidPasswordChange) {
@@ -298,7 +301,7 @@ func TestChangePassword(t *testing.T) {
 	expectPasswordChangeLock(mock, false)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT password, credential_version FROM t_user").WithArgs(int64(3), "EXP78RGH").WillReturnRows(
-		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, "cinch123"), int64(1)),
+		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, authTestPassword), int64(1)),
 	)
 	mock.ExpectRollback()
 	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "wrong-password", NewPassword: "new-secret"}); !errors.Is(err, ErrIncorrectPassword) {
@@ -308,21 +311,21 @@ func TestChangePassword(t *testing.T) {
 	expectPasswordChangeLock(mock, false)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT password, credential_version FROM t_user").WithArgs(int64(3), "EXP78RGH").WillReturnRows(
-		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, "cinch123"), int64(1)),
+		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, authTestPassword), int64(1)),
 	)
 	mock.ExpectRollback()
-	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "cinch123", NewPassword: "cinch123"}); !errors.Is(err, ErrSamePassword) {
+	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: authTestPassword, NewPassword: authTestPassword}); !errors.Is(err, ErrSamePassword) {
 		t.Fatalf("same password: %v", err)
 	}
 
 	expectPasswordChangeLock(mock, false)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT password, credential_version FROM t_user").WithArgs(int64(3), "EXP78RGH").WillReturnRows(
-		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, "cinch123"), int64(1)),
+		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, authTestPassword), int64(1)),
 	)
 	mock.ExpectExec("UPDATE t_user SET password").WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), int64(3), "EXP78RGH").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "cinch123", NewPassword: "x"}); err != nil {
+	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: authTestPassword, NewPassword: "x"}); err != nil {
 		t.Fatalf("change password: %v", err)
 	}
 
@@ -330,7 +333,7 @@ func TestChangePassword(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT password, credential_version FROM t_user").WithArgs(int64(3), "EXP78RGH").WillReturnError(sqlmock.ErrCancelled)
 	mock.ExpectRollback()
-	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "cinch123", NewPassword: "another-secret"}); err == nil {
+	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: authTestPassword, NewPassword: "another-secret"}); err == nil {
 		t.Fatal("database failure was ignored")
 	}
 }
@@ -342,7 +345,7 @@ func TestChangePasswordRequiresCaptchaAfterThreeFailures(t *testing.T) {
 		expectPasswordChangeLock(mock, false)
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT password, credential_version FROM t_user").WithArgs(int64(3), "EXP78RGH").WillReturnRows(
-			sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, "cinch123"), int64(1)),
+			sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, authTestPassword), int64(1)),
 		)
 		mock.ExpectRollback()
 		err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "wrong-password", NewPassword: "new-secret"})
@@ -351,7 +354,7 @@ func TestChangePasswordRequiresCaptchaAfterThreeFailures(t *testing.T) {
 		}
 	}
 	expectPasswordChangeLock(mock, false)
-	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "cinch123", NewPassword: "new-secret"}); !errors.Is(err, ErrPointCaptchaRequired) || !requiresPasswordChangeCaptcha(err) {
+	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: authTestPassword, NewPassword: "new-secret"}); !errors.Is(err, ErrPointCaptchaRequired) || !requiresPasswordChangeCaptcha(err) {
 		t.Fatalf("missing captcha: %v", err)
 	}
 	challenge, err := m.NewPasswordChangeCaptcha(ctx)
@@ -362,12 +365,12 @@ func TestChangePasswordRequiresCaptchaAfterThreeFailures(t *testing.T) {
 	expectPasswordChangeLock(mock, false)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT password, credential_version FROM t_user").WithArgs(int64(3), "EXP78RGH").WillReturnRows(
-		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, "cinch123"), int64(1)),
+		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, authTestPassword), int64(1)),
 	)
 	mock.ExpectExec("UPDATE t_user SET password").WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), int64(3), "EXP78RGH").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := m.ChangePassword(ctx, PasswordChangeInput{
-		OldPassword: "cinch123", NewPassword: "new-secret",
+		OldPassword: authTestPassword, NewPassword: "new-secret",
 		CaptchaID: challenge.CaptchaID, CaptchaPoints: answer.Points,
 	}); err != nil {
 		t.Fatalf("captcha-protected password change: %v", err)
@@ -394,7 +397,7 @@ func TestChangePasswordLocksAfterSixFailures(t *testing.T) {
 		expectPasswordChangeLock(mock, false)
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT password, credential_version FROM t_user").WithArgs(int64(3), "EXP78RGH").WillReturnRows(
-			sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, "cinch123"), int64(1)),
+			sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, authTestPassword), int64(1)),
 		)
 		mock.ExpectRollback()
 		if attempt == 6 {
@@ -412,7 +415,7 @@ func TestChangePasswordLocksAfterSixFailures(t *testing.T) {
 		t.Fatalf("locked failure count = %d, %v", count, err)
 	}
 	expectPasswordChangeLock(mock, true)
-	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "cinch123", NewPassword: "new-secret"}); !errors.Is(err, ErrPasswordChangeLocked) {
+	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: authTestPassword, NewPassword: "new-secret"}); !errors.Is(err, ErrPasswordChangeLocked) {
 		t.Fatalf("persisted lock was ignored: %v", err)
 	}
 }
@@ -519,10 +522,10 @@ func TestPasswordChangeRejectsStaleAuthenticatedRequest(t *testing.T) {
 	expectPasswordChangeLock(mock, false)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT password, credential_version FROM t_user.*FOR UPDATE").WithArgs(int64(3), "EXP78RGH").WillReturnRows(
-		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, "cinch123"), int64(2)),
+		sqlmock.NewRows([]string{"password", "credential_version"}).AddRow(passwordHash(t, authTestPassword), int64(2)),
 	)
 	mock.ExpectRollback()
-	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: "cinch123", NewPassword: "new-secret"}); !errors.Is(err, ErrUnauthorized) {
+	if err := m.ChangePassword(ctx, PasswordChangeInput{OldPassword: authTestPassword, NewPassword: "new-secret"}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("stale request: %v", err)
 	}
 	if count, err := m.passwordGuard.FailureCount(ctx, 3); err != nil || count != 0 {

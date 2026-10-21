@@ -309,7 +309,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "journey": {
                         "title": "Welcome ashore",
                         "entering": "Signed in. Taking you in…",
-                        "description": "Sign in to {{ (fromJSON .Computed.brand).title }} and pick up where you left off"
+                        "description": "Sign in to {{ (fromJSON .Computed.brand).admin_title }} and pick up where you left off"
                     },
                     "register": {
                         "success": "Account created successfully. You can sign in after administrator approval.",
@@ -2007,7 +2007,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "journey": {
                         "title": "欢迎归航",
                         "entering": "登录成功，正在进入…",
-                        "description": "进入 {{ (fromJSON .Computed.brand).title }}，继续今天的工作"
+                        "description": "进入 {{ (fromJSON .Computed.brand).admin_title }}，继续今天的工作"
                     },
                     "register": {
                         "success": "账号创建成功，请等待管理员审核后登录。",

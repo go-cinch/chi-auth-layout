@@ -91,12 +91,12 @@ func TestPasswordResetTransactions(t *testing.T) {
 			case "already reset":
 				count = 1
 			case "same password":
-				password = "cinch123"
+				password = authTestPassword
 			}
 			if scenario == "query error" {
 				query.WillReturnError(sqlmock.ErrCancelled)
 			} else {
-				query.WillReturnRows(sqlmock.NewRows([]string{"password", "credential_version", "login_count", "status"}).AddRow(passwordHash(t, "cinch123"), version, count, status))
+				query.WillReturnRows(sqlmock.NewRows([]string{"password", "credential_version", "login_count", "status"}).AddRow(passwordHash(t, authTestPassword), version, count, status))
 			}
 			switch scenario {
 			case "success", "update error", "commit error":
@@ -209,7 +209,7 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 		mock.ExpectQuery("SELECT username, code, status, credential_version, login_count").WillReturnRows(sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow("readonly", "EXP78RGH", userStatusActive, int64(1), int64(0)))
 		expectPermission()
 		mock.ExpectBegin()
-		mock.ExpectQuery("SELECT password, credential_version, login_count, status").WillReturnRows(sqlmock.NewRows([]string{"password", "credential_version", "login_count", "status"}).AddRow(passwordHash(t, "cinch123"), int64(1), int64(0), userStatusActive))
+		mock.ExpectQuery("SELECT password, credential_version, login_count, status").WillReturnRows(sqlmock.NewRows([]string{"password", "credential_version", "login_count", "status"}).AddRow(passwordHash(t, authTestPassword), int64(1), int64(0), userStatusActive))
 		mock.ExpectExec("UPDATE t_user SET password").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 		r := httptest.NewRequest(http.MethodPatch, "/reset/pwd", strings.NewReader(string(body)))

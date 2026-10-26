@@ -128,7 +128,7 @@ func TestPasswordResetTransactions(t *testing.T) {
 			if err != nil || identity.CredentialVersion != 2 || identity.SessionID == oldIdentity.SessionID {
 				t.Fatalf("new identity: %#v %v", identity, err)
 			}
-			if _, err := m.sessions.ConsumeRefresh(ctx, result.RefreshToken); err != nil {
+			if _, err := m.sessions.ReadRefresh(ctx, result.RefreshToken); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -223,9 +223,19 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 		if json.Unmarshal(w.Body.Bytes(), &result) != nil || result.PasswordResetRequired || result.AccessToken == "" {
 			t.Fatal("invalid reset response")
 		}
-		renewed, err := m.sessions.ConsumeRefresh(t.Context(), result.RefreshToken)
+		renewed, err := m.sessions.ReadRefresh(t.Context(), result.RefreshToken)
 		if err != nil || !renewed.RememberMe {
 			t.Fatalf("remember me lost: %#v %v", renewed, err)
 		}
+	}
+}
+
+func TestPasswordResetPreservesSessionStorageError(t *testing.T) {
+	m, manager, _ := newAuthTestModule(t)
+	ctx := authenticatedContext(t, manager, m.sessions)
+	failure := errors.New("temporary session storage failure")
+	m.sessions.store = identityReadFailureStore{SessionStore: m.sessions.store, err: failure}
+	if _, err := m.ResetPassword(ctx, PasswordResetInput{NewPassword: "new-secret"}); !errors.Is(err, failure) || errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("session storage failure was not preserved: %v", err)
 	}
 }

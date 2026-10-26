@@ -129,7 +129,15 @@ func TestGroupMemberPermissions(t *testing.T) {
 	if err := store.DB.QueryRowContext(t.Context(), `SELECT id,username,code,credential_version FROM t_user WHERE id=2`).Scan(&identity.UserID, &identity.Username, &identity.Code, &identity.CredentialVersion); err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := auth.NewSessions(auth.NewMemorySessionStore(), time.Hour, 24*time.Hour)
+	memorySessions := auth.NewMemorySessionStore()
+	t.Cleanup(func() { _ = memorySessions.Close() })
+	sessions, err := auth.NewSessions(memorySessions, auth.SessionConfig{
+		Issuer:           "test",
+		Key:              "session-test-signing-key-0123456789abcdef",
+		SessionLifetime:  time.Hour,
+		RememberLifetime: 24 * time.Hour,
+		RetryWindow:      10 * time.Second,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

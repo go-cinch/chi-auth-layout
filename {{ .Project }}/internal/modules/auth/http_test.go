@@ -469,7 +469,13 @@ func TestAuthHTTP(t *testing.T) {
 	if cookies := refreshRecorder.Result().Cookies(); len(cookies) != 0 {
 		t.Fatalf("refresh unexpectedly set cookies: %#v", cookies)
 	}
-	request(http.MethodPost, "/pub/refresh", string(sessionRefreshBody), "", http.StatusUnauthorized)
+	mock.ExpectQuery("SELECT username, code, status, credential_version, login_count FROM t_user").WithArgs(int64(3), "EXP78RGH").
+		WillReturnRows(sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow("readonly", "EXP78RGH", userStatusActive, int64(1), int64(1)))
+	retryRecorder := request(http.MethodPost, "/pub/refresh", string(sessionRefreshBody), "", http.StatusOK)
+	var retried LoginResult
+	if err := json.Unmarshal(retryRecorder.Body.Bytes(), &retried); err != nil || retried.RefreshToken != refreshed.RefreshToken {
+		t.Fatalf("refresh retry did not return the committed token: %s %v", retryRecorder.Body.String(), err)
+	}
 
 	mock.ExpectQuery("SELECT u.id, u.username, u.code").WithArgs(int64(3), "EXP78RGH").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "code", "role_id", "role_name", "role_word"}).

@@ -48,7 +48,15 @@ func TestCredentialVersionTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := auth.NewSessions(auth.NewMemorySessionStore(), time.Hour, 24*time.Hour)
+	memorySessions := auth.NewMemorySessionStore()
+	t.Cleanup(func() { _ = memorySessions.Close() })
+	sessions, err := auth.NewSessions(memorySessions, auth.SessionConfig{
+		Issuer:           "test",
+		Key:              "session-test-signing-key-0123456789abcdef",
+		SessionLifetime:  time.Hour,
+		RememberLifetime: 24 * time.Hour,
+		RetryWindow:      10 * time.Second,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

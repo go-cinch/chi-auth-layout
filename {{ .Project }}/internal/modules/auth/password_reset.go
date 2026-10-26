@@ -52,8 +52,11 @@ func (m *Module) ResetPassword(ctx context.Context, input PasswordResetInput) (*
 		return nil, ErrInvalidPasswordReset
 	}
 	session, err := m.sessions.authenticatedSession(ctx, identity)
-	if err != nil {
+	if errors.Is(err, ErrSessionNotFound) {
 		return nil, ErrUnauthorized
+	}
+	if err != nil {
+		return nil, err
 	}
 	var result *LoginResult
 	var newSessionID string

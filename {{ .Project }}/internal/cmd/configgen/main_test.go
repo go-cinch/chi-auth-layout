@@ -16,7 +16,7 @@ func TestRunGeneratesAndUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(configDir, "server.yml")
-	content := "http:\n  timeout: 5s\n  ratio: 0.5\n  profiler:\n    enabled: false\nitems:\n  - name: first\n"
+	content := "http:\n  timeout: 5s\n  ratio: 0.5\n  profiler:\n    enabled: false\nitems:\n  - name: first\nauth:\n  refresh:\n    retryWindow: 10s\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestRunGeneratesAndUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"time.Duration", "float64", "HTTPProfilerConfig", "[]ItemsItemConfig"} {
+	for _, expected := range []string{"time.Duration", "float64", "HTTPProfilerConfig", "[]ItemsItemConfig", "AuthRefreshConfig", "`koanf:\"retryWindow\"`"} {
 		if !bytes.Contains(generated, []byte(expected)) {
 			t.Fatalf("generated source missing %q:\n%s", expected, generated)
 		}
@@ -72,9 +72,9 @@ func TestRunErrors(t *testing.T) {
 }
 
 func TestDurationConversion(t *testing.T) {
-	source := []byte("package config\n\ntype Config struct {\n\tTimeout string `koanf:\"timeout\"`\n\tChallengeTTL string `koanf:\"challengeTTL\"`\n}\n")
+	source := []byte("package config\n\ntype Config struct {\n\tTimeout string `koanf:\"timeout\"`\n\tChallengeTTL string `koanf:\"challengeTTL\"`\n\tRetryWindow string `koanf:\"retryWindow\"`\n}\n")
 	converted, err := addDurationTypes(source)
-	if err != nil || bytes.Count(converted, []byte("time.Duration")) != 2 {
+	if err != nil || bytes.Count(converted, []byte("time.Duration")) != 3 {
 		t.Fatalf("converted source = %s, %v", converted, err)
 	}
 	unchanged := []byte("package config\n\ntype Config struct { Name string }\n")

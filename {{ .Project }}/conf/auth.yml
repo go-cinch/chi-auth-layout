@@ -13,8 +13,11 @@ auth:
     key: "{{ randAlphaNum 64 }}"
     lifetime: 15m
   refresh:
+    # Absolute lifetimes from login; refreshing never extends either deadline.
     sessionLifetime: 12h
-    rememberLifetime: 720h
+    rememberLifetime: 168h
+    # Concurrent refreshes and retries return the same token within this window.
+    retryWindow: 10s
   challengeEncryption:
     keyId: "challenge-v1"
     # Empty generates an ephemeral RSA-3072 key for local, single-instance use.

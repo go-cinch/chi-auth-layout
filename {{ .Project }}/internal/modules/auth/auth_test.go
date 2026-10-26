@@ -35,7 +35,15 @@ func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) 
 		}
 		_ = database.Close()
 	})
-	sessions, sessionErr := NewSessions(NewMemorySessionStore(), time.Hour, 30*24*time.Hour)
+	memorySessions := NewMemorySessionStore()
+	t.Cleanup(func() { _ = memorySessions.Close() })
+	sessions, sessionErr := NewSessions(memorySessions, SessionConfig{
+		Issuer:           "test",
+		Key:              authTestKey,
+		SessionLifetime:  time.Hour,
+		RememberLifetime: 30 * 24 * time.Hour,
+		RetryWindow:      10 * time.Second,
+	})
 	if sessionErr != nil {
 		t.Fatal(sessionErr)
 	}
@@ -556,4 +564,70 @@ type defaultPermissionsStub struct{}
 
 func (defaultPermissionsStub) DefaultUserCodes(_ context.Context, selected []string) ([]string, error) {
 	return append([]string{}, selected...), nil
+}
+
+func TestRefreshTransientFailurePreservesSession(t *testing.T) {
+	for _, scenario := range []string{"database", "rotation not committed", "rotation response lost"} {
+		t.Run(scenario, func(t *testing.T) {
+			m, manager, mock := newAuthTestModule(t)
+			identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+			login, sessionID, err := m.issueLoginResult(t.Context(), identity, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failure := errors.New("temporary backend failure")
+			query := mock.ExpectQuery("SELECT username, code, status, credential_version, login_count FROM t_user").WithArgs(int64(3), "EXP78RGH")
+			if scenario == "database" {
+				query.WillReturnError(failure)
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow("readonly", "EXP78RGH", userStatusActive, int64(1), int64(1)))
+				m.sessions.store = &refreshRotationFailureStore{SessionStore: m.sessions.store, failure: failure, afterCommit: scenario == "rotation response lost"}
+			}
+			if _, err := m.Refresh(t.Context(), login.RefreshToken); !errors.Is(err, failure) {
+				t.Fatalf("first refresh = %v; want transient failure", err)
+			}
+			request := httptest.NewRequest("GET", "/info", nil)
+			request.Header.Set("Authorization", "Bearer "+login.AccessToken)
+			if _, err := manager.AuthenticateRequest(request); err != nil {
+				t.Fatalf("transient failure invalidated access token: %v", err)
+			}
+			var committedToken string
+			if scenario == "rotation response lost" {
+				record, err := m.sessions.read(t.Context(), sessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				committedToken = m.sessions.token(record).RefreshToken
+			}
+			mock.ExpectQuery("SELECT username, code, status, credential_version, login_count FROM t_user").WithArgs(int64(3), "EXP78RGH").
+				WillReturnRows(sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow("readonly", "EXP78RGH", userStatusActive, int64(1), int64(1)))
+			retried, err := m.Refresh(t.Context(), login.RefreshToken)
+			if err != nil || retried.RefreshToken == login.RefreshToken {
+				t.Fatalf("retry = %#v, %v", retried, err)
+			}
+			if committedToken != "" && retried.RefreshToken != committedToken {
+				t.Fatal("response-loss retry did not recover the committed refresh token")
+			}
+		})
+	}
+}
+
+type refreshRotationFailureStore struct {
+	SessionStore
+	failure     error
+	afterCommit bool
+}
+
+func (s *refreshRotationFailureStore) Rotate(ctx context.Context, id, expected, value string, expiredAt time.Time) (bool, error) {
+	if s.failure == nil {
+		return s.SessionStore.Rotate(ctx, id, expected, value, expiredAt)
+	}
+	failure := s.failure
+	s.failure = nil
+	if s.afterCommit {
+		if changed, err := s.SessionStore.Rotate(ctx, id, expected, value, expiredAt); err != nil || !changed {
+			return changed, err
+		}
+	}
+	return false, failure
 }

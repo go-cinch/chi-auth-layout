@@ -22,7 +22,7 @@ import (
 	jsonstruct "github.com/twpayne/go-jsonstruct/v3"
 )
 
-var durationField = regexp.MustCompile("(?m)^(\\s+[A-Za-z0-9_]*(?:Timeout|Duration|Lifetime|Interval|TTL)\\s+)string(\\s+`koanf:)")
+var durationField = regexp.MustCompile("(?m)^(\\s+[A-Za-z0-9_]*(?:Timeout|Duration|Lifetime|Interval|Window|TTL)\\s+)string(\\s+`koanf:)")
 
 func main() {
 	configDir := flag.String("config-dir", "conf", "configuration directory")

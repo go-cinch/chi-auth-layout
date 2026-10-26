@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
-{{- if .Computed.enable_trace_final }}
+{{- if or .Computed.enable_trace_final (not .Computed.enable_redis_final) }}
 	"log/slog"
 {{- end }}
 	"net/http"
@@ -146,13 +146,19 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	idempotencyKeys = rds.NewIdempotencyStore(rdsClient)
 {{- end }}
 	var challengeStore authmodule.ChallengeStore = authmodule.NewMemoryChallengeStore()
-	var sessionStore authmodule.SessionStore = authmodule.NewMemorySessionStore()
+{{- if .Computed.enable_redis_final }}
+	var sessionStore authmodule.SessionStore = authmodule.NewRedisSessionStore(rdsClient)
+{{- else }}
+	memorySessions := authmodule.NewMemorySessionStore()
+	cleanups = append(cleanups, func() { _ = memorySessions.Close() })
+	var sessionStore authmodule.SessionStore = memorySessions
+	slog.WarnContext(ctx, "using process-local sessions: single instance only, restart loses sessions, capacity 10000", "operation", "initialize_session_store", "outcome", "success", "store", "memory", "capacity", 10000)
+{{- end }}
 	var pointCaptchaStore authmodule.PointCaptchaStore = authmodule.NewMemoryPointCaptchaStore()
 	var passwordFailureStore authmodule.PasswordFailureStore = authmodule.NewMemoryPasswordFailureStore()
 	var dictionaryCache dictionarymodule.ValueCache = dictionarymodule.NewMemoryValueCache()
 {{- if .Computed.enable_redis_final }}
 	challengeStore = authmodule.NewRedisChallengeStore(rdsClient)
-	sessionStore = authmodule.NewRedisSessionStore(rdsClient)
 	pointCaptchaStore = authmodule.NewRedisPointCaptchaStore(rdsClient)
 	passwordFailureStore = authmodule.NewRedisPasswordFailureStore(rdsClient)
 	redisDictionaryCache, cleanupDictionaryCache, err := rds.NewRedisNamespaceCache(cfg.Redis.DSN, cfg.Redis.Prefix, "dictionary:cache")
@@ -214,8 +220,13 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	}
 	loginSessions, err := authmodule.NewSessions(
 		sessionStore,
-		cfg.Auth.Refresh.SessionLifetime,
-		cfg.Auth.Refresh.RememberLifetime,
+		authmodule.SessionConfig{
+			Issuer:           cfg.Auth.Jwt.Issuer,
+			Key:              cfg.Auth.Jwt.Key,
+			SessionLifetime:  cfg.Auth.Refresh.SessionLifetime,
+			RememberLifetime: cfg.Auth.Refresh.RememberLifetime,
+			RetryWindow:      cfg.Auth.Refresh.RetryWindow,
+		},
 	)
 	if err != nil {
 		cleanup()

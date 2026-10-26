@@ -530,7 +530,7 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 }
 
 func (m *Module) Refresh(ctx context.Context, refreshToken string) (*LoginResult, error) {
-	session, err := m.sessions.ConsumeRefresh(ctx, refreshToken)
+	session, err := m.sessions.ReadRefresh(ctx, refreshToken)
 	if errors.Is(err, ErrSessionNotFound) {
 		return nil, ErrUnauthorized
 	}
@@ -539,19 +539,26 @@ func (m *Module) Refresh(ctx context.Context, refreshToken string) (*LoginResult
 	}
 	identity, err := m.refreshIdentity(ctx, session.identity())
 	if err != nil {
-		_ = m.sessions.Revoke(ctx, session.SessionID)
+		// Infrastructure failures must not destroy a valid, retryable session.
+		if errors.Is(err, ErrUnauthorized) {
+			if revokeErr := m.sessions.Revoke(ctx, session.SessionID); revokeErr != nil {
+				return nil, revokeErr
+			}
+		}
 		return nil, err
 	}
-	refresh, err := m.sessions.Renew(ctx, session, identity)
-	if err != nil {
-		_ = m.sessions.Revoke(ctx, session.SessionID)
-		return nil, fmt.Errorf("renew login session: %w", err)
-	}
-	identity.SessionID = refresh.SessionID
+	// Prepare the access token before committing the rotation. If signing fails,
+	// the caller can still use its existing access and refresh credentials.
 	token, expiredAt, err := m.authenticator.Issue(identity)
 	if err != nil {
-		_ = m.sessions.Revoke(ctx, refresh.SessionID)
 		return nil, fmt.Errorf("issue refreshed login token: %w", err)
+	}
+	refresh, err := m.sessions.Renew(ctx, session, identity)
+	if errors.Is(err, ErrSessionNotFound) {
+		return nil, ErrUnauthorized
+	}
+	if err != nil {
+		return nil, fmt.Errorf("renew login session: %w", err)
 	}
 	return &LoginResult{AccessToken: token, RefreshToken: refresh.RefreshToken, ExpiredAt: expiredAt.UnixMilli(), PasswordResetRequired: identity.PasswordResetRequired}, nil
 }

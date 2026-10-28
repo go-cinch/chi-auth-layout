@@ -191,6 +191,20 @@ func TestNewErrors(t *testing.T) {
 {{- end }}
 }
 
+func TestNewRejectsAmbiguousAuthenticationPath(t *testing.T) {
+	for _, path := range []string{"/auth/../pub", "/auth%2fpub", "auth"} {
+		t.Run(path, func(t *testing.T) {
+			// Reject ambiguous authentication mounts before initializing logging
+			// or dependencies; later invalid settings cannot mask this boundary.
+			content := "auth:\n  path: \"" + path + "\"\nlog:\n  level: invalid\ndatabase:\n  driver: sqlite\n"
+			application, err := New(t.Context(), writeConfig(t, content))
+			if application != nil || err == nil || !strings.Contains(err.Error(), "invalid auth.path") {
+				t.Fatalf("auth.path=%q: application=%v error=%v", path, application, err)
+			}
+		})
+	}
+}
+
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

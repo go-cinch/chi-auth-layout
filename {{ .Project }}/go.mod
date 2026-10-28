@@ -1,8 +1,9 @@
 module {{ .Computed.module_name_final }}
 
-go 1.27.1
+go 1.27.3
 
 require (
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/text v0.41.0
 {{- if .Computed.enable_grpc_final }}
 	google.golang.org/grpc v1.83.2
@@ -10,6 +11,7 @@ require (
 {{- end }}
 {{- if eq .Computed.http_router_final "gin" }}
 	github.com/gin-gonic/gin v1.12.0
+	github.com/quic-go/quic-go v0.59.1 // indirect
 {{- else }}
 	github.com/go-chi/chi/v5 v5.3.2
 {{- end }}
@@ -30,11 +32,11 @@ require (
 	github.com/redis/go-redis/v9 v9.21.0
 {{- end }}
 {{- if .Computed.enable_trace_final }}
-	go.opentelemetry.io/otel v1.44.0
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0
-	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.44.0
-	go.opentelemetry.io/otel/sdk v1.44.0
-	go.opentelemetry.io/otel/trace v1.44.0
+	go.opentelemetry.io/otel v1.45.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
+	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.45.0
+	go.opentelemetry.io/otel/sdk v1.45.0
+	go.opentelemetry.io/otel/trace v1.45.0
 {{- end }}
 	golang.org/x/crypto v0.49.0
 )

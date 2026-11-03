@@ -56,7 +56,7 @@ func (m *Module) Summary(ctx context.Context, f Filter, fields ...string) (*Summ
 	if err := selection.Validate("metrics", "trend", "heatmap", "modules", "accounts", "sources", "repeated_failures"); err != nil {
 		return nil, ErrFilter
 	}
-	f, err := normalize(f)
+	f, err := normalize(f, m.settings)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (m *Module) Summary(ctx context.Context, f Filter, fields ...string) (*Summ
 			}
 			chartFilter.To = &to
 		}
-		if *chartFilter.To-*chartFilter.From > int64(90*24*time.Hour/time.Millisecond) {
+		if *chartFilter.To-*chartFilter.From > m.settings.MaxWindow.Milliseconds() {
 			return nil, ErrFilter
 		}
 	}

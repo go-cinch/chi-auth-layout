@@ -12,11 +12,9 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/redact"
 )
 
-const auditPayloadLimit = 64 << 10
-
 // auditHeaders snapshots request headers before handlers run. Host is stored
 // separately by net/http and must be included explicitly.
-func auditHeaders(r *http.Request, policy redact.Policy) json.RawMessage {
+func auditHeaders(r *http.Request, policy redact.Policy, limit int) json.RawMessage {
 	values := make(url.Values, len(r.Header)+1)
 	size := 0
 	for name, items := range r.Header {
@@ -24,7 +22,7 @@ func auditHeaders(r *http.Request, policy redact.Policy) json.RawMessage {
 		size += len(name)
 		for _, value := range items {
 			size += len(value)
-			if size > auditPayloadLimit {
+			if size > limit {
 				return json.RawMessage(`{"_omitted":"size limit"}`)
 			}
 			if policy.IsSensitive(name) {
@@ -39,7 +37,7 @@ func auditHeaders(r *http.Request, policy redact.Policy) json.RawMessage {
 		values["Host"] = []string{r.Host}
 	}
 	result, _ := json.Marshal(auditQuery(values, policy))
-	if len(result) > auditPayloadLimit {
+	if len(result) > limit {
 		return json.RawMessage(`{"_omitted":"size limit"}`)
 	}
 	return result
@@ -79,13 +77,14 @@ func auditHeaderURL(name, value string, policy redact.Policy) string {
 }
 
 type auditBuffer struct {
+	limit    int
 	data     []byte
 	overflow bool
 }
 
 func (b *auditBuffer) Write(p []byte) (int, error) {
 	n := len(p)
-	available := auditPayloadLimit - len(b.data)
+	available := b.limit - len(b.data)
 	if n > available {
 		b.overflow = true
 		p = p[:available]
@@ -160,7 +159,7 @@ func auditRequest(r *http.Request, b *auditBuffer, policy redact.Policy) json.Ra
 		return json.RawMessage(`"file"`)
 	}
 	var query any
-	if len(r.URL.RawQuery) > auditPayloadLimit {
+	if len(r.URL.RawQuery) > b.limit {
 		query = "[omitted: size limit]"
 	} else {
 		values, err := url.ParseQuery(r.URL.RawQuery)
@@ -171,7 +170,7 @@ func auditRequest(r *http.Request, b *auditBuffer, policy redact.Policy) json.Ra
 		}
 	}
 	result, _ := json.Marshal(map[string]any{"query": query, "body": auditPayload(r.Header, b, policy)})
-	if len(result) > auditPayloadLimit {
+	if len(result) > b.limit {
 		return json.RawMessage(`"[omitted: size limit]"`)
 	}
 	return result
@@ -179,7 +178,7 @@ func auditRequest(r *http.Request, b *auditBuffer, policy redact.Policy) json.Ra
 
 func auditResponse(header http.Header, b *auditBuffer, policy redact.Policy) json.RawMessage {
 	result, _ := json.Marshal(auditPayload(header, b, policy))
-	if len(result) > auditPayloadLimit {
+	if len(result) > b.limit {
 		return json.RawMessage(`"[omitted: size limit]"`)
 	}
 	return result

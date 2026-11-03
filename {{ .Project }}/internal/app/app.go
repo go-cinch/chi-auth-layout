@@ -50,7 +50,9 @@ import (
 type Application struct {
 	authPath     string
 	localization *localization.Module
+	localizationRefreshInterval time.Duration
 	auditModule  *auditmodule.Module
+	auditSettings config.AuditConfig
 	msgModule    *msgmodule.Module
 	pagination   pagination.Limits
 
@@ -58,6 +60,7 @@ type Application struct {
 	idempotencyKeys  idempotency.Store
 	credentials      *authmodule.Credentials
 	loginSessions    *authmodule.Sessions
+	mfa *authmodule.MFA
 	loginCaptcha     *authmodule.PointCaptcha
 	sliderCaptcha    *authmodule.SliderCaptcha
 	passwordGuard    *authmodule.PasswordChangeGuard
@@ -170,7 +173,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	cleanups = append(cleanups, cleanupDictionaryCache)
 {{- end }}
 	localizer := localization.New(authmodule.AuthHTTPPaths(authPath))
-	dictionaryModule, err := dictionarymodule.New(dbStore, dictionaryCache, dictionarymodule.CacheTTL, limits, localizer)
+	dictionaryModule, err := dictionarymodule.New(dbStore, dictionaryCache, cfg.Dictionary.CacheTTL, limits, localizer)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("initialize dictionary module: %w", err)
@@ -238,7 +241,25 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 		return nil, fmt.Errorf("initialize authentication: %w", err)
 	}
 
+    var mfaState authmodule.MFAStateStore
+{{- if .Computed.enable_redis_final }}
+    mfaState = authmodule.NewRedisMFAStore(rdsClient)
+{{- end }}
+    mfa, err := authmodule.NewMFA(dbStore, mfaState, authmodule.MFAConfig{
+        Enabled: cfg.Auth.MFA.Enabled,
+        LoginTicketTTL: cfg.Auth.MFA.LoginTicketTTL,
+        TOTPPeriod: cfg.Auth.MFA.TOTPPeriod, EnrollmentTTL: cfg.Auth.MFA.EnrollmentTTL,
+        SensitiveLifetime: cfg.Auth.MFA.SensitiveLifetime,
+        RateLimitWindow: cfg.Auth.MFA.RateLimit.Window,
+        RateLimitMaxAttempts: int64(cfg.Auth.MFA.RateLimit.MaxAttempts),
+        AccountNamePrefix: cfg.Auth.MFA.AccountNamePrefix,
+        Issuer: cfg.Auth.Jwt.Issuer, SigningKey: cfg.Auth.Jwt.Key,
+        EncryptionKeyFile: cfg.Auth.MFA.EncryptionKeyFile,
+    })
+    if err != nil { cleanup(); return nil, fmt.Errorf("initialize mfa: %w", err) }
 	application := &Application{
+		mfa: mfa,
+        auditSettings: cfg.Audit,
 		authPath:   authPath,
 		pagination: limits,
 
@@ -250,6 +271,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 		sliderCaptcha:    sliderCaptcha,
 		passwordGuard:    passwordGuard,
 		dictionaryModule: dictionaryModule, localization: localizer,
+		localizationRefreshInterval: cfg.Dictionary.LocalizationRefreshInterval,
 
 		db: dbStore,
 
@@ -290,8 +312,9 @@ func (a *Application) wireBusinessModules() {
 	// Build in dependency order; generatedModules registers these same instances.
 	// The dictionary is initialized earlier because captcha construction needs it.
 	a.actionModule = actionmodule.New(a.db, a.pagination, a.localization)
-	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.localization, a.actionModule, a.authPath)
-	a.auditModule = auditmodule.New(a.db, a.pagination)
+	a.authModule = authmodule.New(a.db, a.authenticator, a.credentials, a.loginSessions, a.loginCaptcha, a.sliderCaptcha, a.passwordGuard, a.localization, a.actionModule, a.mfa, a.authPath)
+    if a.authenticator != nil { a.authenticator.SetHTTPSecurityPolicy(a.authModule.CheckHTTPSecurity) }
+	a.auditModule = auditmodule.New(a.db, a.pagination, a.auditSettings)
 	a.auditModule.SetAuthHTTPPath(a.authPath)
 	if a.dictionaryModule != nil {
 		a.actionModule.SetNameLocalization(a.dictionaryModule)

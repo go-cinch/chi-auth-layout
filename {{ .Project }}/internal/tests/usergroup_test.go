@@ -159,7 +159,7 @@ func TestGroupMemberPermissions(t *testing.T) {
 	roles := role.New(store, limits, actions)
 	users := user.New(store, limits, nil, nil, actions, roles)
 	groups := usergroup.New(store, limits, actions, users)
-	authModule := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil)
+	authModule := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.MFA{})
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute

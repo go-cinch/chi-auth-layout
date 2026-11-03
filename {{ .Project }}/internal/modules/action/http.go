@@ -3,7 +3,6 @@ package action
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -134,13 +133,7 @@ func (m *Module) create(c *gin.Context) {
 func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	var input CreateActionInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyBusiness); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -177,13 +170,7 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input UpdateActionInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyBusiness); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}

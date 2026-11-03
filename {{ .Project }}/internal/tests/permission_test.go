@@ -133,7 +133,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil)
+	m := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.MFA{})
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	handler, err := server.NewRouter(cfg, manager, nil, m)
@@ -276,7 +276,7 @@ func TestPermissionSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx = request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
 	info, err := m.Info(ctx, "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -387,7 +387,7 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
 	check := func(method, path string, want bool) {
 		t.Helper()
 		_, allowed, err := m.CheckPermission(ctx, auth.PermissionTarget{Method: method, Path: path})
@@ -608,7 +608,7 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
 	limits, _ := pagination.New(100, 100)
 	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {

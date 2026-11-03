@@ -3,6 +3,14 @@ http:
   timeout: {{ or .Scaffold.http_timeout "30s" }}
   readHeaderTimeout: 5s
   idleTimeout: 2m
+  # JSON request limits in bytes. Restart after changes; each handler selects a category.
+  bodyLimits:
+    authChallenge: 1024
+    sliderChallenge: 2048
+    authVerification: 4096
+    auth: 16384
+    business: 1048576
+    dictionary: 2097152
   docs:
     enabled: false
     servers:

@@ -2,10 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
 )
 
 func TestJSONHelpers(t *testing.T) {
@@ -29,5 +31,34 @@ func TestJSONHelpers(t *testing.T) {
 	WriteJSON(recorder, http.StatusOK, func() {})
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("encoding failure status = %d", recorder.Code)
+	}
+}
+
+func TestPasswordResetErrorHeader(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+		want   string
+	}{
+		{"required", authn.ErrPasswordResetRequired, http.StatusForbidden, "true"},
+		{"wrapped", fmt.Errorf("restricted: %w", authn.ErrPasswordResetRequired), http.StatusForbidden, "true"},
+		{"unauthorized", apperror.Unauthorized, http.StatusUnauthorized, ""},
+		{"forbidden", apperror.Forbidden, http.StatusForbidden, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			WriteError(response, httptest.NewRequest("GET", "/msg/unread-count", nil), test.status, test.err)
+			if got := response.Header().Get(authn.PasswordResetRequiredHeader); got != test.want {
+				t.Fatalf("reset header = %q, want %q", got, test.want)
+			}
+			var body ErrorResponse
+			if response.Code != test.status || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.ErrorCode != apperror.Code(test.err) {
+				t.Fatal("error response contract changed")
+			}
+			if test.want != "" && response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("reset requirement response must not be cached")
+			}
+		})
 	}
 }

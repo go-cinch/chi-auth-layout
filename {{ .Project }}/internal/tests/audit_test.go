@@ -21,7 +21,7 @@ func TestAuditAggregationsAndIsolation(t *testing.T) {
 	localizer := testLocalization(t, store)
 	_ = localizer
 	limits, _ := pagination.New(100, 100)
-	m := audit.New(store, limits)
+	m := audit.New(store, limits, config.DefaultAudit())
 	ctx := t.Context()
 	at := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
 	for i := 0; i < 8; i++ {
@@ -69,7 +69,7 @@ func TestAuditSelectedCellAndSort(t *testing.T) {
 	localizer := testLocalization(t, store)
 	_ = localizer
 	limits, _ := pagination.New(100, 100)
-	m := audit.New(store, limits)
+	m := audit.New(store, limits, config.DefaultAudit())
 	ctx := t.Context()
 	at := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
 	for i := 0; i < 4; i++ {
@@ -166,7 +166,7 @@ func TestAuditReadExportPermissions(t *testing.T) {
 	}
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
-	handler, err := server.NewRouter(cfg, manager, nil, auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil), audit.New(store, limits))
+	handler, err := server.NewRouter(cfg, manager, nil, auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.MFA{}), audit.New(store, limits, config.DefaultAudit()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestAuditHeatmapCalendarBuckets(t *testing.T) {
 	localizer := testLocalization(t, store)
 	_ = localizer
 	limits, _ := pagination.New(100, 100)
-	m := audit.New(store, limits)
+	m := audit.New(store, limits, config.DefaultAudit())
 	location, _ := time.LoadLocation("Asia/Shanghai")
 	now := time.Date(2026, 10, 12, 14, 30, 0, 0, location)
 	for _, at := range []time.Time{now.Add(-time.Minute), now.AddDate(0, 0, -7), now.AddDate(0, 0, -14)} {
@@ -260,7 +260,7 @@ func TestAuditEpochStorageAndActorConstraint(t *testing.T) {
 		t.Fatal("negative actor accepted")
 	}
 	limits, _ := pagination.New(100, 100)
-	m := audit.New(store, limits)
+	m := audit.New(store, limits, config.DefaultAudit())
 	day, hour := int32(0), int32(8)
 	if _, err := m.List(t.Context(), audit.Filter{Kind: "operation", Timezone: "Local", Weekday: &day, Hour: &hour}); !errors.Is(err, audit.ErrFilter) {
 		t.Fatal("Local must return a filter error", err)
@@ -272,7 +272,7 @@ func TestAuditPayloadPersistenceAndHistory(t *testing.T) {
 	localizer := testLocalization(t, store)
 	_ = localizer
 	limits, _ := pagination.New(100, 100)
-	m := audit.New(store, limits)
+	m := audit.New(store, limits, config.DefaultAudit())
 	at := time.Now().UnixMilli()
 	request := json.RawMessage(`{"query":null,"body":{"name":"safe","password":"[redacted]"}}`)
 	response := json.RawMessage(`{"id":25,"name":"safe"}`)
@@ -305,7 +305,7 @@ func TestAuditHeaderPersistenceAndHistory(t *testing.T) {
 	localizer := testLocalization(t, store)
 	_ = localizer
 	limits, _ := pagination.New(100, 100)
-	m := audit.New(store, limits)
+	m := audit.New(store, limits, config.DefaultAudit())
 	at := time.Now().UnixMilli()
 	header := json.RawMessage(`{"Authorization":"[redacted]","X-Verified-Client-Ip":"203.0.113.5","X-Real-Ip":"203.0.113.6","X-Forwarded-For":["192.0.2.99","203.0.113.5"]}`)
 	for _, kind := range []string{"login", "operation"} {
@@ -347,7 +347,7 @@ func auditTime(value int64) *int64 { return &value }
 func TestAuditOneSidedBoundsAndSelectedPayloadsPostgres(t *testing.T) {
 	store := permissionDatabase(t)
 	limits, _ := pagination.New(100, 100)
-	m := audit.New(store, limits)
+	m := audit.New(store, limits, config.DefaultAudit())
 	ctx := t.Context()
 	for _, at := range []int64{1000, 2000, 3000} {
 		if err := m.RecordHTTP(ctx, auditctx.Event{Kind: "login", Username: "alice", Module: "auth", Method: "POST", Path: "/pub/login", Status: 200, OccurredAt: at, Header: json.RawMessage(`{"user_agent":"test"}`)}); err != nil {

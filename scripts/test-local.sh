@@ -25,6 +25,8 @@ setup_case() {
   printf 'old local override\n' > "$case_dir/demos/auth/.env.local"
   printf 'original binary\n' > "$case_dir/demos/auth/bin/auth"
   cp "$template_dir/Makefile" "$layout_dir/Makefile"
+  mkdir -p "$layout_dir/scripts"
+  cp "$template_dir/scripts/local-credentials.py" "$layout_dir/scripts/"
   for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data; do
     printf 'original %s\n' "$suffix" > "$sql_dir/2026010101-$suffix.sql"
   done
@@ -38,9 +40,19 @@ auth:
   jwt:
     key: "original-test-key"
     issuer: old
+  mfa:
+    encryptionKeyFile: 'keys/mfa secret.key'
+    totpPeriod: 30s
+  challengeEncryption:
+    privateKeyFile: keys/challenge.pem
+    keyId: original-challenge
   switches:
     enabled: true
 YAML
+  mkdir -p "$case_dir/demos/auth/keys"
+  printf 'original MFA key\n' > "$case_dir/demos/auth/keys/mfa secret.key"
+  printf 'original RSA key\n' > "$case_dir/demos/auth/keys/challenge.pem"
+  chmod 600 "$case_dir/demos/auth/keys/"*
   cp "$auth_config" "$case_dir/original-auth.yml"
   cat > "$layout_dir/fake-scaffold" <<'STUB'
 #!/bin/sh
@@ -69,6 +81,13 @@ auth:
   jwt:
     key: "generated-test-key"
     issuer: generated
+  mfa:
+    encryptionKeyFile: ""
+    totpPeriod: 1m
+    enrollmentTTL: 5m
+  challengeEncryption:
+    privateKeyFile: ""
+    keyId: generated-challenge
   switches:
     enabled: true
 YAML
@@ -109,13 +128,35 @@ assert_sql() {
 
 assert_jwt() {
   test "$(sed -n '/^    key:/p' "$auth_config")" = '    key: "original-test-key"'
+  rg -q 'issuer: "?old"?$' "$auth_config"
+  rg -q 'totpPeriod: "?30s"?$' "$auth_config"
+  rg -q 'keyId: "?original-challenge"?$' "$auth_config"
+  test "$(cat "$case_dir/demos/auth/keys/mfa secret.key")" = 'original MFA key'
+  test "$(cat "$case_dir/demos/auth/keys/challenge.pem")" = 'original RSA key'
   ! rg -q 'generated-test-key|original-test-key' "$case_dir/run.log"
+  ! rg -q 'original MFA key|original RSA key' "$case_dir/run.log"
 }
 
 assert_binary() {
   cat "$sql_dir"/*.sql > "$case_dir/expected-binary"
   cmp "$case_dir/expected-binary" "$case_dir/demos/auth/bin/auth"
 }
+
+setup_case historical-mfa
+printf 'historical MFA schema\n' > "$sql_dir/2026103020-05-user-mfa.sql"
+cp -p "$sql_dir/2026103020-05-user-mfa.sql" "$case_dir/expected/"
+if run_local DELETE_OLD_SQL=false; then
+  echo 'historical MFA schema unexpectedly survived baseline replacement' >&2
+  exit 1
+fi
+test ! -e "$layout_dir/scaffold-called"
+test "$(cat "$case_dir/demos/auth/bin/auth")" = 'original binary'
+cmp "$auth_config" "$case_dir/original-auth.yml"
+for migration in "$case_dir/expected"/*.sql; do
+  cmp "$migration" "$sql_dir/$(basename "$migration")"
+done
+rg -q 'historical MFA migrations cannot be preserved' "$case_dir/run.log"
+printf 'PASS incompatible historical MFA baseline fails before modifying the demo\n'
 
 setup_case preserve
 run_local DELETE_OLD_SQL=false
@@ -126,13 +167,44 @@ assert_sql
 assert_jwt
 assert_binary
 test -f "$case_dir/demos/auth/rebuilt"
-rg -q 'issuer: generated' "$auth_config"
+rg -q 'enrollmentTTL: 5m' "$auth_config"
 # Re-running in the same hour must not overwrite even newly added migrations.
 TEST_GENERATION=2 run_local DELETE_OLD_SQL=false
 assert_sql
 assert_jwt
 assert_binary
 printf 'PASS preserve historical SQL and append new migrations; repeated generation is stable\n'
+
+for sql_setting in true false; do
+  setup_case "replace-credentials-$sql_setting"
+  run_local "DELETE_OLD_SQL=$sql_setting" DELETE_OLD_CREDENTIALS=true
+  rg -q 'key: "generated-test-key"' "$auth_config"
+  rg -q 'issuer: generated' "$auth_config"
+  rg -q 'totpPeriod: 1m' "$auth_config"
+  test ! -e "$case_dir/demos/auth/keys"
+  printf 'PASS explicit credential replacement is independent of SQL mode (%s)\n' "$sql_setting"
+done
+
+for failure in failure build-failure early-failure; do
+  setup_case "replace-credentials-$failure"
+  if TEST_MODE=$failure run_local DELETE_OLD_SQL=false DELETE_OLD_CREDENTIALS=true; then
+    printf 'expected credential replacement failure to propagate\n' >&2
+    exit 1
+  fi
+  assert_jwt
+  test "$(cat "$case_dir/demos/auth/bin/auth")" = 'original binary'
+  printf 'PASS credential replacement rollback (%s)\n' "$failure"
+done
+
+setup_case invalid-credentials
+if run_local DELETE_OLD_CREDENTIALS=invalid; then
+  printf 'expected invalid credential flag to be rejected\n' >&2
+  exit 1
+fi
+test ! -e "$layout_dir/scaffold-called"
+cmp "$auth_config" "$case_dir/original-auth.yml"
+assert_jwt
+printf 'PASS reject invalid credential flag before changing files\n'
 
 for setting in true default; do
   setup_case "mode-$setting"

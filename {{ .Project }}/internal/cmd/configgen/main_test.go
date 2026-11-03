@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func TestRunGeneratesAndUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(configDir, "server.yml")
-	content := "http:\n  timeout: 5s\n  ratio: 0.5\n  profiler:\n    enabled: false\nitems:\n  - name: first\nauth:\n  refresh:\n    retryWindow: 10s\n"
+	content := "http:\n  timeout: 5s\n  ratio: 0.5\n  profiler:\n    enabled: false\nitems:\n  - name: first\nauth:\n  refresh:\n    retryWindow: 10s\n  mfa:\n    totpPeriod: 30s\n    enrollmentTTL: 5m\n    sensitiveLifetime: 1h\n    rateLimit:\n      window: 5m\n      maxAttempts: 10\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -28,9 +29,14 @@ func TestRunGeneratesAndUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"time.Duration", "float64", "HTTPProfilerConfig", "[]ItemsItemConfig", "AuthRefreshConfig", "`koanf:\"retryWindow\"`"} {
+	for _, expected := range []string{"time.Duration", "float64", "HTTPProfilerConfig", "[]ItemsItemConfig", "AuthRefreshConfig", "AuthMFARateLimitConfig", "TOTPPeriod", "EnrollmentTTL", "`koanf:\"retryWindow\"`"} {
 		if !bytes.Contains(generated, []byte(expected)) {
 			t.Fatalf("generated source missing %q:\n%s", expected, generated)
+		}
+	}
+	for _, field := range []string{"Window\\s+time\\.Duration\\s+`koanf:\"window\"`", "MaxAttempts\\s+int\\s+`koanf:\"maxAttempts\"`", "SensitiveLifetime\\s+time\\.Duration\\s+`koanf:\"sensitiveLifetime\"`"} {
+		if !regexp.MustCompile(field).Match(generated) {
+			t.Fatalf("incorrect MFA config type for %s:\n%s", field, generated)
 		}
 	}
 	if err := run(configDir, output); err != nil {
@@ -72,9 +78,9 @@ func TestRunErrors(t *testing.T) {
 }
 
 func TestDurationConversion(t *testing.T) {
-	source := []byte("package config\n\ntype Config struct {\n\tTimeout string `koanf:\"timeout\"`\n\tChallengeTTL string `koanf:\"challengeTTL\"`\n\tRetryWindow string `koanf:\"retryWindow\"`\n}\n")
+	source := []byte("package config\n\ntype Config struct {\n\tTimeout string `koanf:\"timeout\"`\n\tChallengeTTL string `koanf:\"challengeTTL\"`\n\tRetryWindow string `koanf:\"retryWindow\"`\n\tTOTPPeriod string `koanf:\"totpPeriod\"`\n\tWindow string `koanf:\"window\"`\n\tSensitiveLifetime string `koanf:\"sensitiveLifetime\"`\n}\n")
 	converted, err := addDurationTypes(source)
-	if err != nil || bytes.Count(converted, []byte("time.Duration")) != 3 {
+	if err != nil || bytes.Count(converted, []byte("time.Duration")) != 6 {
 		t.Fatalf("converted source = %s, %v", converted, err)
 	}
 	unchanged := []byte("package config\n\ntype Config struct { Name string }\n")

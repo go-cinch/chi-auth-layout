@@ -12,28 +12,32 @@ import (
 	"unicode"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
+	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
 
 var (
-	ErrFilter      = apperror.New("AUDIT_FILTER_INVALID", "invalid audit filter or time range (maximum 90 days)")
+	ErrFilter      = apperror.New("AUDIT_FILTER_INVALID", "invalid audit filter or time range; check the configured maximum window")
 	ErrNotFound    = apperror.New("AUDIT_NOT_FOUND", "audit event not found")
-	ErrExportLimit = apperror.New("AUDIT_EXPORT_LIMIT", "more than 10000 events; narrow the filters before exporting")
+	ErrExportLimit = apperror.New("AUDIT_EXPORT_LIMIT", "export exceeds the configured row limit; narrow the filters before exporting")
 )
 
 type Module struct {
+	settings     config.AuditConfig
 	authHTTPPath string
 	store        *db.Store
 	limits       pagination.Limits
 }
 
-func New(store *db.Store, limits pagination.Limits) *Module {
-	return &Module{store: store, limits: limits}
+func New(store *db.Store, limits pagination.Limits, settings config.AuditConfig) *Module {
+	return &Module{store: store, limits: limits, settings: settings}
 }
 
 type Event struct {
+	MFAFingerprint string `json:"mfa_fingerprint"`
+	MFAVerifiedAt  int64  `json:"mfa_verified_at"`
 	selectedFields report.Fields
 	Header         json.RawMessage `json:"header"`
 	Operation      string          `json:"operation"`
@@ -117,26 +121,26 @@ func (m *Module) RecordHTTP(ctx context.Context, event auditctx.Event) error {
 		}
 	}
 	_, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_audit_event
- (occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header)
- VALUES ($1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
-		event.OccurredAt, event.Kind, event.UserID, clean(event.Username, 256), clean(event.Module, 64), clean(event.Method, 16), clean(event.Path, 1024), clean(event.IP, 128), clean(event.UserAgent, 512), clean(event.TraceID, 128), clean(event.ErrorCode, 128), event.Status, max(int64(0), event.DurationMS), clean(event.Operation, 32), clean(event.ResourceType, 64), clean(event.ResourceID, 1024), jsonValue(event.RequestParams), jsonValue(event.ResponseParams), jsonValue(event.Header))
+ (occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header,mfa_fingerprint,mfa_verified_at)
+ VALUES ($1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NULLIF($21::bigint,0))`,
+		event.OccurredAt, event.Kind, event.UserID, clean(event.Username, 256), clean(event.Module, 64), clean(event.Method, 16), clean(event.Path, 1024), clean(event.IP, 128), clean(event.UserAgent, 512), clean(event.TraceID, 128), clean(event.ErrorCode, 128), event.Status, max(int64(0), event.DurationMS), clean(event.Operation, 32), clean(event.ResourceType, 64), clean(event.ResourceID, 1024), jsonValue(event.RequestParams), jsonValue(event.ResponseParams), jsonValue(event.Header), clean(event.MFAFingerprint, 128), event.MFAVerifiedAt)
 	return err
 }
 
-func normalize(f Filter) (Filter, error) {
+func normalize(f Filter, settings config.AuditConfig) (Filter, error) {
 	if f.Kind != "login" && f.Kind != "operation" {
 		return f, ErrFilter
 	}
-	// Preserve the existing seven-day default only when neither bound is supplied.
+	// Apply the configured default window only when neither bound is supplied.
 	if f.From == nil && f.To == nil {
 		to := time.Now().UnixMilli()
-		from := to - int64(7*24*time.Hour/time.Millisecond)
+		from := to - settings.DefaultWindow.Milliseconds()
 		f.From, f.To = &from, &to
 	}
 	const maxTimestamp int64 = 253402300799999
 	if (f.From != nil && (*f.From < 0 || *f.From > maxTimestamp)) ||
 		(f.To != nil && (*f.To < 0 || *f.To > maxTimestamp)) ||
-		(f.From != nil && f.To != nil && (*f.To <= *f.From || *f.To-*f.From > int64(90*24*time.Hour/time.Millisecond))) {
+		(f.From != nil && f.To != nil && (*f.To <= *f.From || *f.To-*f.From > settings.MaxWindow.Milliseconds())) {
 		return f, ErrFilter
 	}
 	f.Query = strings.TrimSpace(f.Query)
@@ -217,15 +221,15 @@ func order(f Filter) string {
 	}
 }
 
-const columns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header"
+const columns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header,mfa_fingerprint,COALESCE(mfa_verified_at,0)"
 
 // List and export carry metadata only; bounded payloads are loaded by detail.
-const listColumns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,'null'::jsonb,'null'::jsonb,'null'::jsonb"
+const listColumns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,'null'::jsonb,'null'::jsonb,'null'::jsonb,mfa_fingerprint,COALESCE(mfa_verified_at,0)"
 
 func scan(row interface{ Scan(...any) error }) (Event, error) {
 	var e Event
 	var at int64
-	err := row.Scan(&e.ID, &at, &e.Kind, &e.UserID, &e.Username, &e.Module, &e.Method, &e.Path, &e.IP, &e.UserAgent, &e.TraceID, &e.ErrorCode, &e.Status, &e.DurationMS, &e.Operation, &e.ResourceType, &e.ResourceID, &e.RequestParams, &e.ResponseParams, &e.Header)
+	err := row.Scan(&e.ID, &at, &e.Kind, &e.UserID, &e.Username, &e.Module, &e.Method, &e.Path, &e.IP, &e.UserAgent, &e.TraceID, &e.ErrorCode, &e.Status, &e.DurationMS, &e.Operation, &e.ResourceType, &e.ResourceID, &e.RequestParams, &e.ResponseParams, &e.Header, &e.MFAFingerprint, &e.MFAVerifiedAt)
 	e.OccurredAt = at
 	return e, err
 }
@@ -234,7 +238,7 @@ func (m *Module) List(ctx context.Context, f Filter) (*Page, error) {
 	if err := f.Fields.Validate(listFields...); err != nil {
 		return nil, err
 	}
-	f, err := normalize(f)
+	f, err := normalize(f, m.settings)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +287,7 @@ func (m *Module) Get(ctx context.Context, kind string, id int64) (*Event, error)
 }
 
 func (m *Module) Options(ctx context.Context, f Filter) ([]string, error) {
-	f, err := normalize(f)
+	f, err := normalize(f, m.settings)
 	if err != nil {
 		return nil, err
 	}
@@ -305,12 +309,13 @@ func (m *Module) Options(ctx context.Context, f Filter) ([]string, error) {
 }
 
 func (m *Module) Export(ctx context.Context, f Filter) ([]Event, error) {
-	f, err := normalize(f)
+	f, err := normalize(f, m.settings)
 	if err != nil {
 		return nil, err
 	}
 	clause, args := where(f)
-	rows, err := m.store.SQL(ctx).QueryContext(ctx, "SELECT "+listColumns+" FROM t_audit_event"+clause+order(f)+" LIMIT 10001", args...)
+	args = append(args, m.settings.ExportMaxRows+1)
+	rows, err := m.store.SQL(ctx).QueryContext(ctx, "SELECT "+listColumns+" FROM t_audit_event"+clause+order(f)+fmt.Sprintf(" LIMIT $%d", len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +327,7 @@ func (m *Module) Export(ctx context.Context, f Filter) ([]Event, error) {
 			return nil, err
 		}
 		items = append(items, e)
-		if len(items) > 10000 {
+		if len(items) > m.settings.ExportMaxRows {
 			return nil, ErrExportLimit
 		}
 	}

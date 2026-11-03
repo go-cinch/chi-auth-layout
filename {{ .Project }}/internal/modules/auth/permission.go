@@ -56,6 +56,10 @@ func (m *Module) CheckPermission(ctx context.Context, target PermissionTarget) (
 	if identity.PasswordResetRequired && (target.Resource != "" || !PasswordResetAllowedHTTP(target.Method, target.Path, m.httpPath)) {
 		return identity, false, authn.ErrPasswordResetRequired
 	}
+    if target.Method == "POST" && target.Resource == "" && matchRouteTemplate(m.httpPath+"/mfa/reset/{id}", target.Path) {
+        allowed, err := m.canResetMFA(ctx)
+        return identity, allowed, err
+    }
 	protocol := "http"
 	if target.Resource != "" {
 		protocol = "grpc"

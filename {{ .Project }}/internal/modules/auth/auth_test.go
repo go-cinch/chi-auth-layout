@@ -21,7 +21,21 @@ const authTestKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789a
 // Keep the branded fixture below bcrypt's 72-byte limit, even for long names.
 const authTestPassword = "{{ printf "%.64s" (fromJSON .Computed.brand).slug }}123"
 
+func TestNewRequiresExplicitMFA(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("missing MFA dependency silently disabled enforcement")
+		}
+	}()
+	New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+}
+
 func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) {
+	t.Helper()
+	return newAuthTestModuleWithMFA(t, func(*db.Store) *MFA { return &MFA{} })
+}
+
+func newAuthTestModuleWithMFA(t *testing.T, createMFA func(*db.Store) *MFA) (*Module, *authn.Manager, sqlmock.Sqlmock) {
 	localizer := localization.New()
 	installAuthCatalog(t, localizer)
 	t.Helper()
@@ -64,7 +78,8 @@ func newAuthTestModule(t *testing.T) (*Module, *authn.Manager, sqlmock.Sqlmock) 
 	if sliderErr != nil {
 		t.Fatal(sliderErr)
 	}
-	return New(&db.Store{DB: database}, authenticator, credentials, sessions, captcha, slider, passwordGuard, localizer, defaultPermissionsStub{}), authenticator, mock
+	store := &db.Store{DB: database}
+	return New(store, authenticator, credentials, sessions, captcha, slider, passwordGuard, localizer, defaultPermissionsStub{}, createMFA(store)), authenticator, mock
 }
 
 func passwordHash(t *testing.T, password string) string {
@@ -471,6 +486,135 @@ func TestCurrentUser(t *testing.T) {
 	}
 }
 
+func TestLogoutClearsOnlyItsSensitiveGrant(t *testing.T) {
+	for _, mode := range []string{"current", "rotated", "corrupt", "mfa-disabled"} {
+		t.Run(mode, func(t *testing.T) {
+			m, _, ctx, identity, state := newMFATest(t)
+			record, err := m.sessions.read(ctx, identity.SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := m.sessions.token(record).RefreshToken
+			other, err := m.sessions.Issue(ctx, identity, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := "sensitive:" + identity.SessionID
+			otherKey := "sensitive:" + other.SessionID
+			state.values[key], state.values[otherKey] = "current grant", "other grant"
+			if _, err := state.Attempt(ctx, mfaAttemptKey(identity), time.Minute, 10); err != nil {
+				t.Fatal(err)
+			}
+			deadline := state.attemptExpires[mfaAttemptKey(identity)]
+			switch mode {
+			case "rotated":
+				refresh, err := m.sessions.ReadRefresh(ctx, token)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := m.sessions.Renew(ctx, refresh, identity); err != nil {
+					t.Fatal(err)
+				}
+			case "corrupt":
+				if changed, err := m.sessions.store.Rotate(ctx, m.sessions.storageID(identity.SessionID), record.raw, "corrupt", time.UnixMilli(record.ExpiredAt)); err != nil || !changed {
+					t.Fatal("could not prepare corrupt record", err)
+				}
+			case "mfa-disabled":
+				m.mfa.config.Enabled = false
+			}
+			if err := m.Logout(ctx, token+"!"); err != nil {
+				t.Fatal(err)
+			}
+			if state.values[key] != "current grant" {
+				t.Fatal("unverified token cleared a grant")
+			}
+			for range 2 {
+				if err := m.Logout(context.Background(), token); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := m.sessions.read(ctx, identity.SessionID); !errors.Is(err, ErrSessionNotFound) {
+				t.Fatal("logout left the session active", err)
+			}
+			if _, exists := state.values[key]; exists {
+				t.Fatal("logout left the sensitive grant")
+			}
+			if state.values[otherKey] != "other grant" {
+				t.Fatal("logout cleared another session's grant")
+			}
+			if err := m.sessions.ValidateSession(ctx, other.SessionID); err != nil {
+				t.Fatal("logout revoked another session", err)
+			}
+			if state.attempts[mfaAttemptKey(identity)] != 1 || state.attemptExpires[mfaAttemptKey(identity)] != deadline || len(state.resetAttempts) != 0 {
+				t.Fatal("logout changed the shared MFA rate limit")
+			}
+		})
+	}
+}
+
+type logoutFailSessionStore struct {
+	SessionStore
+	failure error
+}
+
+func (s *logoutFailSessionStore) Delete(ctx context.Context, key string) error {
+	if s.failure != nil {
+		return s.failure
+	}
+	return s.SessionStore.Delete(ctx, key)
+}
+
+func TestLogoutRetriesPartialCleanup(t *testing.T) {
+	for _, failed := range []string{"session", "grant", "both"} {
+		t.Run(failed, func(t *testing.T) {
+			m, _, ctx, identity, state := newMFATest(t)
+			record, err := m.sessions.read(ctx, identity.SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := m.sessions.token(record).RefreshToken
+			key := "sensitive:" + identity.SessionID
+			state.values[key] = "grant"
+			sessionFailure, grantFailure := errors.New("session delete unavailable"), errors.New("grant delete unavailable")
+			store := &logoutFailSessionStore{SessionStore: m.sessions.store}
+			m.sessions.store = store
+			if failed != "grant" {
+				store.failure = sessionFailure
+			}
+			if failed != "session" {
+				state.fail = grantFailure
+			}
+			err = m.Logout(ctx, token)
+			if failed != "grant" && !errors.Is(err, sessionFailure) {
+				t.Fatal("lost session revocation failure", err)
+			}
+			if failed != "session" && !errors.Is(err, grantFailure) {
+				t.Fatal("lost grant cleanup failure", err)
+			}
+			if failed == "grant" {
+				if err := m.sessions.ValidateSession(ctx, identity.SessionID); !errors.Is(err, ErrSessionNotFound) {
+					t.Fatal("grant error prevented session revocation", err)
+				}
+			}
+			if failed == "session" {
+				if _, exists := state.values[key]; exists {
+					t.Fatal("session error prevented grant cleanup")
+				}
+			}
+			store.failure, state.fail = nil, nil
+			if err := m.Logout(ctx, token); err != nil {
+				t.Fatal("cleanup retry failed", err)
+			}
+			if _, exists := state.values[key]; exists {
+				t.Fatal("cleanup retry left grant")
+			}
+			if err := m.sessions.ValidateSession(ctx, identity.SessionID); !errors.Is(err, ErrSessionNotFound) {
+				t.Fatal("cleanup retry left session", err)
+			}
+		})
+	}
+}
+
 type changingInfoCatalog struct {
 	before       localization.Catalog
 	after        localization.Catalog
@@ -557,6 +701,40 @@ func TestRefreshRejectsStaleCredential(t *testing.T) {
 		if err := m.sessions.ValidateSession(t.Context(), session.SessionID); !errors.Is(err, ErrSessionNotFound) {
 			t.Fatalf("stale session not revoked: %v", err)
 		}
+	}
+}
+
+func TestLoginResolvesMFAStateOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		enabled, bound bool
+	}{
+		{"enrollment required", true, false},
+		{"bound factor", true, true},
+		{"MFA disabled", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, mock, _, _, _ := newMFATest(t)
+			m.mfa.config.Enabled = tc.enabled
+			mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WithArgs("readonly").WillReturnRows(loginRows(t, userStatusActive))
+			if tc.enabled { expectMFAEnabled(mock, tc.bound) }
+			if !tc.enabled || !tc.bound {
+				mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(2))
+			}
+			// The mock permits one factor lookup for password login, and none
+			// during session issuance or after the login counter update.
+			result, err := m.Login(t.Context(), LoginInput{Username: "readonly", Password: authTestPassword, SliderProof: validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly")})
+			if err != nil { t.Fatal(err) }
+			if tc.enabled && tc.bound {
+				if !result.MFARequired || result.MFATicket == "" || result.AccessToken != "" { t.Fatal("bound login skipped MFA") }
+				return
+			}
+			if result.AccessToken == "" || result.PasswordResetRequired || result.MFAEnrollmentRequired != tc.enabled { t.Fatal("incorrect login restrictions") }
+			identity, err := m.authenticator.Parse(result.AccessToken)
+			if err != nil { t.Fatal(err) }
+			allowed, err := m.canEnrollWithoutPassword(t.Context(), identity)
+			if err != nil || allowed != tc.enabled { t.Fatal("incorrect enrollment grant", err) }
+		})
 	}
 }
 

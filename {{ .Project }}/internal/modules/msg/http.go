@@ -1,9 +1,7 @@
 package msg
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -74,13 +72,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input CreateInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyBusiness); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -200,13 +192,7 @@ func (m *Module) read(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Read *bool `json:"read"`
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyBusiness); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}

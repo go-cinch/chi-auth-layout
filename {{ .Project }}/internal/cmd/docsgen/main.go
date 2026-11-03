@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/pmezard/go-difflib/difflib"
@@ -47,6 +48,7 @@ type route struct {
 }
 
 type response struct {
+	headers     []string
 	contentType string
 	description string
 	schema      *schema
@@ -65,23 +67,10 @@ type docServer struct {
 	Description string `koanf:"description"`
 }
 
-type docsFileConfig struct {
-	Pagination struct {
-		MaxP int `koanf:"maxP"`
-		MaxS int `koanf:"maxS"`
-	} `koanf:"pagination"`
-	HTTP docsHTTPConfig `koanf:"http"`
-}
-
-type docsHTTPConfig struct {
-	Docs docsConfig `koanf:"docs"`
-}
-
-type docsConfig struct {
-	Servers []docServer `koanf:"servers"`
-}
-
 type schema struct {
+	description          string
+	anyOf                []*schema
+	closedObject         bool
 	nullable             bool
 	anyJSON              bool
 	paginationKey        string
@@ -98,10 +87,13 @@ type schema struct {
 }
 
 type generator struct {
-	limits      pagination.Limits
-	components  map[string]*schema
-	visiting    map[string]bool
-	schemaNames map[*sourcePackage]map[string]string
+	audit          config.AuditConfig
+	bodyLimits     config.HTTPBodyLimitsConfig
+	loginTicketTTL time.Duration
+	limits         pagination.Limits
+	components     map[string]*schema
+	visiting       map[string]bool
+	schemaNames    map[*sourcePackage]map[string]string
 }
 
 var routeMethods = map[string]string{
@@ -143,9 +135,13 @@ func main() {
 }
 
 func run(source, configDir, output, title string) error {
-	servers, limits, err := loadSettings(configDir)
+	cfg, limits, err := loadSettings(configDir)
 	if err != nil {
 		return err
+	}
+	var servers []docServer
+	for _, value := range cfg.HTTP.Docs.Servers {
+		servers = append(servers, docServer{URL: value.URL, Description: value.Description})
 	}
 	packages, err := loadPackages(source)
 	if err != nil {
@@ -155,7 +151,7 @@ func run(source, configDir, output, title string) error {
 		return err
 	}
 	routes := discoverRoutes(packages)
-	gen := &generator{limits: limits, components: make(map[string]*schema), visiting: make(map[string]bool)}
+	gen := &generator{audit: cfg.Audit, bodyLimits: cfg.HTTP.BodyLimits, loginTicketTTL: cfg.Auth.MFA.LoginTicketTTL, limits: limits, components: make(map[string]*schema), visiting: make(map[string]bool)}
 	gen.registerSchemaNames(packages, source)
 	for index := range routes {
 		gen.describeRoute(&routes[index])
@@ -191,6 +187,9 @@ func run(source, configDir, output, title string) error {
 			}
 		}
 
+		gen.describeMFAHeaders(&routes[index])
+		gen.describePasswordResetHeaders(&routes[index])
+		gen.describeBodyLimit(&routes[index])
 	}
 	data := render(title, servers, routes, gen.components)
 	if err := showDiff(output, data); err != nil {
@@ -204,17 +203,13 @@ func routeRequiresAuthentication(path string) bool {
 		!strings.Contains(path, "/pub/") && !strings.HasSuffix(path, "/pub")
 }
 
-func loadSettings(configDir string) ([]docServer, pagination.Limits, error) {
-	values, _, err := config.LoadValues(configDir)
+func loadSettings(configDir string) (*config.Config, pagination.Limits, error) {
+	cfg, _, err := config.LoadDir(configDir)
 	if err != nil {
 		return nil, pagination.Limits{}, err
 	}
-	var cfg docsFileConfig
-	if err := values.Unmarshal("", &cfg); err != nil {
-		return nil, pagination.Limits{}, fmt.Errorf("decode docs configuration: %w", err)
-	}
 	limits, err := pagination.New(cfg.Pagination.MaxP, cfg.Pagination.MaxS)
-	return cfg.HTTP.Docs.Servers, limits, err
+	return cfg, limits, err
 }
 
 func loadPackages(root string) ([]*sourcePackage, error) {
@@ -407,6 +402,13 @@ func (g *generator) describeRoute(route *route) {
 			return true
 		}
 		switch functionName(call.Fun) {
+		case "writeMFAError":
+			g.describeMFAErrors(route)
+		case "WriteHTTPSecurityError":
+			g.ensureErrorResponse()
+			for _, status := range []int{400, 401, 403, 429, 500, 503} {
+				addErrorResponse(route, status, http.StatusText(status))
+			}
 		case "WriteOK":
 			result := response{description: http.StatusText(http.StatusOK)}
 			if len(call.Args) >= 2 {
@@ -649,7 +651,30 @@ func (g *generator) structSchema(pkg *sourcePackage, value *ast.StructType) *sch
 	properties := make(map[string]*schema)
 	var required []string
 	for _, field := range value.Fields.List {
-		if len(field.Names) == 0 || !field.Names[0].IsExported() {
+		if len(field.Names) == 0 {
+			// Untagged exported embeddings flatten into the JSON object. The
+			// existing type visitor bounds recursive references.
+			typ := field.Type
+			if pointer, ok := typ.(*ast.StarExpr); ok {
+				typ = pointer.X
+			}
+			name, ok := typ.(*ast.Ident)
+			if !ok || !name.IsExported() || field.Tag != nil {
+				continue
+			}
+			embedded := g.typeSchema(pkg, field.Type)
+			if embedded.ref != "" {
+				embedded = g.components[strings.TrimPrefix(embedded.ref, "#/components/schemas/")]
+			}
+			if embedded != nil {
+				for name, property := range embedded.properties {
+					properties[name] = property
+				}
+				required = append(required, embedded.required...)
+			}
+			continue
+		}
+		if !field.Names[0].IsExported() {
 			continue
 		}
 		name := lowerFirst(field.Names[0].Name)
@@ -885,6 +910,12 @@ func render(title string, servers []docServer, routes []route, components map[st
 		for _, status := range statuses {
 			value := item.responses[status]
 			fmt.Fprintf(&output, "        %q:\n          description: %s\n", strconv.Itoa(status), strconv.Quote(value.description))
+			if len(value.headers) > 0 {
+				output.WriteString("          headers:\n")
+				for _, header := range value.headers {
+					fmt.Fprintf(&output, "            %s:\n              schema:\n                type: string\n", header)
+				}
+			}
 			if value.schema != nil {
 				contentType := value.contentType
 				if contentType == "" {
@@ -920,6 +951,18 @@ func render(title string, servers []docServer, routes []route, components map[st
 
 func renderSchema(output *strings.Builder, value *schema, indent int) {
 	spaces := strings.Repeat(" ", indent)
+	if value.description != "" {
+		output.WriteString(spaces + "description: " + strconv.Quote(value.description) + "\n")
+	}
+	if len(value.anyOf) > 0 {
+		output.WriteString(spaces + "anyOf:\n")
+		for _, alternative := range value.anyOf {
+			var rendered strings.Builder
+			renderSchema(&rendered, alternative, indent+4)
+			output.WriteString(spaces + "  - " + strings.TrimPrefix(rendered.String(), spaces+"    "))
+		}
+		return
+	}
 	if value.anyJSON {
 		for _, line := range []string{"oneOf:", "  - type: object", "  - type: array", "    items: {}", "  - type: string", "    nullable: true", "  - type: number", "  - type: boolean"} {
 			output.WriteString(spaces + line + "\n")
@@ -958,6 +1001,9 @@ func renderSchema(output *strings.Builder, value *schema, indent int) {
 	if value.additionalProperties != nil {
 		output.WriteString(spaces + "additionalProperties:\n")
 		renderSchema(output, value.additionalProperties, indent+2)
+	}
+	if value.closedObject {
+		output.WriteString(spaces + "additionalProperties: false\n")
 	}
 	if len(value.required) > 0 {
 		output.WriteString(spaces + "required: [")

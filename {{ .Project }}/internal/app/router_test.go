@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
+	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
 
 	"time"
 
@@ -25,6 +26,7 @@ import (
 func TestNewRouter(t *testing.T) {
 	application := &Application{
 		localization: localization.New(),
+		mfa: &authmodule.MFA{},
 
 		authenticator:   testAuthenticator(t),
 		idempotencyKeys: idempotency.NewMemoryStore(),

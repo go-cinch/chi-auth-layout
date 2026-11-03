@@ -7,6 +7,7 @@ OUTPUT_DIR ?= ..
 HTTP_ROUTER ?= chi
 ENABLE_GRPC ?= true
 DELETE_OLD_SQL ?= false
+DELETE_OLD_CREDENTIALS ?= false
 
 ifneq ($(ENABLE_GRPC),true)
 ifneq ($(ENABLE_GRPC),false)
@@ -32,13 +33,15 @@ test-local:
 full:
 	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(OUTPUT_DIR)" --run-hooks=always --no-prompt --preset=full "Project=$(PROJECT)" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))'
 
-# Use DELETE_OLD_SQL=false when retaining an initialized local database.
+# SQL history and authentication credentials are preserved independently by default.
 # Recreate the demo directory to remove obsolete source files. In preserve mode,
 # restore the SQL backup, append new migrations and rebuild the embedded binary.
 local:
 	@set -eu; \
 	delete_old_sql='$(DELETE_OLD_SQL)'; \
 	case "$$delete_old_sql" in true|false) ;; *) printf 'DELETE_OLD_SQL must be true or false\n' >&2; exit 2 ;; esac; \
+	delete_old_credentials='$(DELETE_OLD_CREDENTIALS)'; \
+	case "$$delete_old_credentials" in true|false) ;; *) printf 'DELETE_OLD_CREDENTIALS must be true or false\n' >&2; exit 2 ;; esac; \
 	auth_dir="$(CURDIR)/../demos/auth"; \
 	migrations_dir="$$auth_dir/internal/infra/db/migrations"; \
 	auth_config="$$auth_dir/conf/auth.yml"; \
@@ -52,18 +55,22 @@ local:
 				exit 1; \
 			fi; \
 		done; \
+		for migration in "$$migrations_dir"/*-05-user-mfa.sql "$$migrations_dir"/*-06-mfa-catalog.sql "$$migrations_dir"/*-07-mfa-inline-verification.sql "$$migrations_dir"/*-08-mfa-test.sql; do \
+			if [ -f "$$migration" ]; then \
+				printf 'historical MFA migrations cannot be preserved with the four-file baseline; use DELETE_OLD_SQL=true for a fresh local schema, or upgrade retained data separately\n' >&2; \
+				exit 2; \
+			fi; \
+		done; \
 	fi; \
 	backup_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/chi-auth-layout-state.XXXXXX"); \
 	mkdir "$$backup_dir/sql"; \
 	if [ -f "$$app_binary" ]; then cp -p "$$app_binary" "$$backup_dir/original-binary"; fi; \
 	if [ -f "$$auth_config" ]; then \
 		cp -p "$$auth_config" "$$backup_dir/original-auth.yml"; \
-		awk ' \
-			$$0 == "  jwt:" { in_jwt = 1; next } \
-			in_jwt && /^  [^ ]/ { in_jwt = 0 } \
-			in_jwt && /^    key:/ { print; matches++ } \
-			END { if (matches != 1) exit 1 } \
-		' "$$auth_config" > "$$backup_dir/jwt-key-line"; \
+	fi; \
+	if ! cp "$(CURDIR)/scripts/local-credentials.py" "$$backup_dir/local-credentials.py" || \
+		! python3 "$$backup_dir/local-credentials.py" snapshot "$$auth_dir" "$$backup_dir"; then \
+		rm -r "$$backup_dir"; exit 1; \
 	fi; \
 	if [ -d "$$migrations_dir" ]; then \
 		find "$$migrations_dir" -maxdepth 1 -type f -name '*.sql' \
@@ -102,23 +109,8 @@ local:
 				find "$$backup_dir/new-sql" -maxdepth 1 -type f -name '*.sql' -exec cp -p {} "$$migrations_dir/" \;; \
 			fi; \
 		fi; \
-		if [ -f "$$backup_dir/jwt-key-line" ]; then \
-			if [ ! -f "$$auth_config" ]; then \
-				mkdir -p "$$auth_dir/conf"; \
-				cp -p "$$backup_dir/original-auth.yml" "$$auth_config"; \
-			fi; \
-			awk -v replacement_file="$$backup_dir/jwt-key-line" ' \
-				BEGIN { \
-					if ((getline replacement < replacement_file) <= 0) exit 1; \
-					close(replacement_file); \
-				} \
-				$$0 == "  jwt:" { in_jwt = 1; print; next } \
-				in_jwt && /^  [^ ]/ { in_jwt = 0 } \
-				in_jwt && /^    key:/ { print replacement; replaced++; next } \
-				{ print } \
-				END { if (replaced != 1) exit 1 } \
-			' "$$auth_config" > "$$backup_dir/auth.yml"; \
-			mv "$$backup_dir/auth.yml" "$$auth_config"; \
+		if [ "$$status" -eq 0 ] && [ "$$delete_old_credentials" = false ]; then \
+			if python3 "$$backup_dir/local-credentials.py" restore "$$auth_dir" "$$backup_dir"; then :; else status=1; fi; \
 		fi; \
 		if [ "$$status" -eq 0 ] && [ "$$delete_old_sql" = false ]; then \
 			if make -C "$(CURDIR)/../demos/auth" build; then :; else \
@@ -128,6 +120,18 @@ local:
 			fi; \
 		fi; \
 		if [ "$$status" -ne 0 ]; then \
+			mkdir -p "$$migrations_dir"; \
+			find "$$migrations_dir" -maxdepth 1 -type f -name '*.sql' -exec rm -f {} +; \
+			find "$$backup_dir/sql" -maxdepth 1 -type f -name '*.sql' -exec cp -p {} "$$migrations_dir/" \;; \
+			if [ -f "$$backup_dir/original-auth.yml" ]; then \
+				mkdir -p "$$auth_dir/conf"; \
+				cp -p "$$backup_dir/original-auth.yml" "$$auth_config"; \
+			fi; \
+			if ! python3 "$$backup_dir/local-credentials.py" restore "$$auth_dir" "$$backup_dir"; then \
+				printf 'credential restoration failed; backup retained at %s\n' "$$backup_dir" >&2; \
+				if [ -f "$$backup_dir/original-binary" ]; then mkdir -p "$$auth_dir/bin"; cp -p "$$backup_dir/original-binary" "$$app_binary"; else rm -f "$$app_binary"; fi; \
+				exit 1; \
+			fi; \
 			if [ -f "$$backup_dir/original-binary" ]; then \
 				mkdir -p "$$auth_dir/bin"; \
 				cp -p "$$backup_dir/original-binary" "$$app_binary"; \

@@ -2,11 +2,26 @@ package audit
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/DATA-DOG/go-sqlmock"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestConfiguredAuditChartWindow(t *testing.T) {
+	m, mock := setup(t)
+	m.settings.MaxWindow = 4 * time.Hour
+	from, to := int64(1000), int64(1000)+int64(4*time.Hour/time.Millisecond)+1
+	if _, err := m.Summary(t.Context(), Filter{Kind: "login", From: &from, To: &to}, "trend"); !errors.Is(err, ErrFilter) {
+		t.Fatal("paired chart range ignored maximum", err)
+	}
+	mock.ExpectQuery("SELECT MIN.*MAX").WillReturnRows(sqlmock.NewRows([]string{"first", "last"}).AddRow(from, to))
+	if _, err := m.Summary(t.Context(), Filter{Kind: "login", From: &from}, "trend"); !errors.Is(err, ErrFilter) {
+		t.Fatal("derived chart range ignored maximum", err)
+	}
+}
 
 func expectSummary(mock sqlmock.Sqlmock, fail int) {
 	queries := []string{"SELECT COUNT", "SELECT .*occurred_at /", "SELECT width_bucket", "SELECT module", "SELECT username", "SELECT username", "SELECT ip"}

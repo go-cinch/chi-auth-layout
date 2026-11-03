@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"{{ .Computed.module_name_final }}/internal/common/config"
 
 	"{{ .Computed.module_name_final }}/internal/common/redact"
 )
@@ -19,7 +20,7 @@ func TestAuditHeaderRedactionAndLimits(t *testing.T) {
 	r.Header.Set("Referer", "https://user:never-store@example.com/login?token=never-store&view=logs#never-store")
 	r.Header.Set("X-Original-URI", "/login?password=never-store&q=safe")
 	r.Header.Set("X-Debug", `{"password":"never-store","value":"safe"}`)
-	encoded := auditHeaders(r, policy)
+	encoded := auditHeaders(r, policy, config.DefaultAudit().PayloadLimit)
 	if strings.Contains(string(encoded), "never-store") || !strings.Contains(string(encoded), "safe") {
 		t.Fatalf("unsafe header snapshot: %s", encoded)
 	}
@@ -34,10 +35,10 @@ func TestAuditHeaderRedactionAndLimits(t *testing.T) {
 	if got := auditHeaderURL("Referer", "https://example.com/?q=safe", policy); got != "https://example.com/?q=safe" {
 		t.Fatalf("safe URL changed: %s", got)
 	}
-	for _, value := range []string{strings.Repeat("x", auditPayloadLimit+1), strings.Repeat("\x01", auditPayloadLimit/2)} {
+	for _, value := range []string{strings.Repeat("x", config.DefaultAudit().PayloadLimit+1), strings.Repeat("\x01", config.DefaultAudit().PayloadLimit/2)} {
 		r.Header.Set("X-Large", value)
-		encoded = auditHeaders(r, policy)
-		if len(encoded) > auditPayloadLimit || !json.Valid(encoded) || !strings.Contains(string(encoded), "size limit") {
+		encoded = auditHeaders(r, policy, config.DefaultAudit().PayloadLimit)
+		if len(encoded) > config.DefaultAudit().PayloadLimit || !json.Valid(encoded) || !strings.Contains(string(encoded), "size limit") {
 			t.Fatalf("unbounded header snapshot: %d bytes", len(encoded))
 		}
 	}
@@ -57,21 +58,21 @@ func TestAuditPayloadBoundaries(t *testing.T) {
 	}
 	for _, c := range cases {
 		header := http.Header{"Content-Type": []string{c.media}}
-		buffer := &auditBuffer{}
+		buffer := &auditBuffer{limit: config.DefaultAudit().PayloadLimit}
 		_, _ = buffer.Write([]byte(c.body))
 		if got := string(auditResponse(header, buffer, policy)); got != c.want {
 			t.Fatalf("%s: %s", c.media, got)
 		}
 	}
-	buffer := &auditBuffer{}
-	data := []byte(strings.Repeat("x", auditPayloadLimit+1))
+	buffer := &auditBuffer{limit: config.DefaultAudit().PayloadLimit}
+	data := []byte(strings.Repeat("x", config.DefaultAudit().PayloadLimit+1))
 	n, err := buffer.Write(data)
-	if err != nil || n != len(data) || len(buffer.data) != auditPayloadLimit || string(auditResponse(http.Header{}, buffer, policy)) != `"[omitted: size limit]"` {
+	if err != nil || n != len(data) || len(buffer.data) != config.DefaultAudit().PayloadLimit || string(auditResponse(http.Header{}, buffer, policy)) != `"[omitted: size limit]"` {
 		t.Fatal("capture not bounded")
 	}
-	for _, query := range []string{"bad=%ZZ", strings.Repeat("q", auditPayloadLimit+1)} {
+	for _, query := range []string{"bad=%ZZ", strings.Repeat("q", config.DefaultAudit().PayloadLimit+1)} {
 		req := httptest.NewRequest("POST", "/test?"+query, nil)
-		if !strings.Contains(string(auditRequest(req, &auditBuffer{}, policy)), "omitted") {
+		if !strings.Contains(string(auditRequest(req, &auditBuffer{limit: config.DefaultAudit().PayloadLimit}, policy)), "omitted") {
 			t.Fatal("unsafe query")
 		}
 	}
@@ -82,7 +83,7 @@ func TestAuditInlineFiles(t *testing.T) {
 	if !auditFile(header) {
 		t.Fatal("inline file must be omitted")
 	}
-	buffer := &auditBuffer{}
+	buffer := &auditBuffer{limit: config.DefaultAudit().PayloadLimit}
 	_, _ = buffer.Write([]byte("file contents"))
 	if string(auditResponse(header, buffer, redact.New())) != `"file"` {
 		t.Fatal("file captured")

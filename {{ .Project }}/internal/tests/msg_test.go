@@ -151,7 +151,7 @@ func TestMessageHTTPPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
+	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute
@@ -526,7 +526,7 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	actions := action.New(store, limits, localizer)
-	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, localizer, actions)
+	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, localizer, actions, &auth.MFA{})
 	if err := authentication.Register(ctx, auth.RegisterInput{Username: "clock-registered", Password: "secret123"}); err != nil {
 		t.Fatal(err)
 	}

@@ -36,6 +36,47 @@ func TestEmbeddedMigrations(t *testing.T) {
 	}
 }
 
+func TestDefaultCatalogIncludesCurrentMFAEndpoints(t *testing.T) {
+	seed := readSeedMigration(t, "04-dictionary-default-data")
+	pattern := regexp.MustCompile(`'I18N_CATALOG',\s*'[^']+',\s*'((?:[^']|'')*)'::(?i:jsonb)`)
+	match := pattern.FindStringSubmatch(seed)
+	if len(match) != 2 {
+		t.Fatal("localization catalog missing")
+	}
+	catalog, err := localization.Parse([]byte(strings.ReplaceAll(match[1], "''", "'")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature, ok := catalog.ResourceCatalog.Buttons["admin:default:session:access"]
+	if !ok {
+		t.Fatal("default session access feature missing")
+	}
+	seen := map[string]int{}
+	for _, endpoint := range feature.HTTP {
+		seen[endpoint.Method+" "+endpoint.Path]++
+	}
+	for _, endpoint := range []string{
+		"GET /auth/mfa", "POST /auth/mfa/challenge", "POST /auth/mfa/setup",
+		"POST /auth/mfa/confirm", "POST /auth/mfa/test",
+	} {
+		if seen[endpoint] != 1 {
+			t.Errorf("default session access must grant %s exactly once, got %d", endpoint, seen[endpoint])
+		}
+	}
+	for endpoint := range seen {
+		if strings.Contains(endpoint, "/mfa/reset") {
+			t.Errorf("default session access grants administrator MFA reset: %s", endpoint)
+		}
+	}
+	for key, feature := range catalog.ResourceCatalog.Buttons {
+		for _, endpoint := range feature.HTTP {
+			if endpoint.Path == "/auth/mfa/verify" {
+				t.Errorf("retired standalone verification remains in %s", key)
+			}
+		}
+	}
+}
+
 func TestMigrateUpPreservesDatabaseError(t *testing.T) {
 	database, mock, err := sqlmock.New()
 	if err != nil {

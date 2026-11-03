@@ -3,10 +3,12 @@ package main
 import (
 	"go/ast"
 	"go/token"
+	"reflect"
 	"strconv"
 )
 
-// Use the first JSON decode; a trailing-data check does not define the request schema.
+// Keep distinct decoded inputs from alternative branches. Anonymous trailing-data
+// checks must not widen a typed request into arbitrary JSON.
 func (g *generator) requestSchema(pkg *sourcePackage, handler *ast.FuncDecl) *schema {
 	decoders := map[string]bool{}
 	ast.Inspect(handler.Body, func(node ast.Node) bool {
@@ -22,22 +24,48 @@ func (g *generator) requestSchema(pkg *sourcePackage, handler *ast.FuncDecl) *sc
 		}
 		return true
 	})
-	var result *schema
+	var alternatives []*schema
+	var trailingOnly *schema
+	add := func(expression ast.Expr, strict bool) {
+		if address, ok := expression.(*ast.UnaryExpr); ok && address.Op == token.AND {
+			expression = address.X
+		}
+		if call, ok := expression.(*ast.CallExpr); ok {
+			if function, ok := call.Fun.(*ast.Ident); ok && function.Name == "new" && len(call.Args) == 1 {
+				value := g.typeSchema(pkg, call.Args[0])
+				if value.anyJSON {
+					trailingOnly = value
+					return
+				}
+			}
+		}
+		value := g.expressionSchema(pkg, handler, expression)
+		if name, ok := expression.(*ast.Ident); ok && rejectsNilRequest(handler, name.Name) {
+			value.nullable = false
+		}
+		// A strict decoder accepts exactly {} for an inline empty struct. Preserve
+		// this constraint so it cannot swallow the other request alternatives.
+		if strict && value.typeName == "object" && value.properties != nil && len(value.properties) == 0 {
+			value.closedObject = true
+		}
+		for _, previous := range alternatives {
+			if reflect.DeepEqual(previous, value) {
+				return
+			}
+		}
+		alternatives = append(alternatives, value)
+	}
 	ast.Inspect(handler.Body, func(node ast.Node) bool {
-		if result != nil {
+		if _, closure := node.(*ast.FuncLit); closure {
 			return false
 		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		// Dictionary writes share a bounded, strict JSON decoder.
-		if function, ok := call.Fun.(*ast.Ident); ok && function.Name == "decodeDictionaryInput" && len(call.Args) == 3 {
-			expression := call.Args[2]
-			if address, ok := expression.(*ast.UnaryExpr); ok && address.Op == token.AND {
-				expression = address.X
-			}
-			result = g.expressionSchema(pkg, handler, expression)
+		// Business boundaries share bounded, strict JSON decoders.
+		if functionName(call.Fun) == "DecodeJSON" && len(call.Args) == 4 {
+			add(call.Args[2], true)
 			return false
 		}
 		if len(call.Args) != 1 {
@@ -74,15 +102,47 @@ func (g *generator) requestSchema(pkg *sourcePackage, handler *ast.FuncDecl) *sc
 			}
 		}
 		if body {
-			expression := call.Args[0]
-			if address, ok := expression.(*ast.UnaryExpr); ok && address.Op == token.AND {
-				expression = address.X
-			}
-			result = g.expressionSchema(pkg, handler, expression)
+			add(call.Args[0], false)
 		}
 		return true
 	})
-	return result
+	switch len(alternatives) {
+	case 0:
+		return trailingOnly
+	case 1:
+		return alternatives[0]
+	default:
+		return &schema{anyOf: alternatives}
+	}
+}
+
+// A pointer is a decoding detail when the handler explicitly rejects JSON null.
+// Recognize the direct nil guard without changing nullability of nested fields.
+func rejectsNilRequest(handler *ast.FuncDecl, name string) bool {
+	rejected := false
+	ast.Inspect(handler.Body, func(node ast.Node) bool {
+		if _, closure := node.(*ast.FuncLit); closure {
+			return false
+		}
+		guard, ok := node.(*ast.IfStmt)
+		if !ok || len(guard.Body.List) == 0 {
+			return true
+		}
+		condition, ok := guard.Cond.(*ast.BinaryExpr)
+		if !ok || condition.Op != token.EQL {
+			return true
+		}
+		left, leftOK := condition.X.(*ast.Ident)
+		right, rightOK := condition.Y.(*ast.Ident)
+		if !leftOK || !rightOK || !((left.Name == name && right.Name == "nil") || (left.Name == "nil" && right.Name == name)) {
+			return true
+		}
+		if _, returns := guard.Body.List[len(guard.Body.List)-1].(*ast.ReturnStmt); returns {
+			rejected = true
+		}
+		return true
+	})
+	return rejected
 }
 
 func jsonBodyDecoder(expression ast.Expr) bool {

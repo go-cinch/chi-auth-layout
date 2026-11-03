@@ -96,12 +96,12 @@ func (a *Application) Run(ctx context.Context) error {
 		}()
 		defer func() { stopWorker(); <-workerDone }()
 	}
-	if a.dictionaryModule != nil {
+	if a.dictionaryModule != nil && a.localizationRefreshInterval > 0 {
 		workerCtx, stopWorker := context.WithCancel(ctx)
 		workerDone := make(chan struct{})
 		go func() {
 			defer close(workerDone)
-			ticker := time.NewTicker(5 * time.Second)
+			ticker := time.NewTicker(a.localizationRefreshInterval)
 			defer ticker.Stop()
 			for {
 				select {

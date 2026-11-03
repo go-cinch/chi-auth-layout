@@ -50,7 +50,10 @@ type LoginInput struct {
 }
 
 type LoginResult struct {
-	PasswordResetRequired bool   `json:"password_reset_required"`
+	MFARequired           bool   `json:"-"`
+	MFATicket             string `json:"-"`
+	MFAEnrollmentRequired bool   `json:"-"`
+	PasswordResetRequired bool   `json:"-"`
 	AccessToken           string `json:"access_token"`
 	RefreshToken          string `json:"refresh_token"`
 	ExpiredAt             int64  `json:"expired_at"`
@@ -146,6 +149,7 @@ type CatalogSource interface {
 }
 
 type Module struct {
+	mfa                    *MFA
 	httpPath               string
 	defaultUserPermissions DefaultUserPermissions
 	catalogSource          CatalogSource
@@ -159,7 +163,10 @@ type Module struct {
 	passwordGuard          *PasswordChangeGuard
 }
 
-func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, catalog CatalogSource, defaults DefaultUserPermissions, paths ...string) *Module {
+func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, catalog CatalogSource, defaults DefaultUserPermissions, mfa *MFA, paths ...string) *Module {
+	if mfa == nil {
+		panic("auth: MFA dependency is required; provide an explicitly disabled MFA when not enforcing it")
+	}
 	prefix := ""
 	if len(paths) > 0 {
 		prefix = paths[0]
@@ -167,7 +174,7 @@ func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials
 	if prefix == "/" {
 		prefix = ""
 	}
-	return &Module{httpPath: prefix, defaultUserPermissions: defaults, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard}
+	return &Module{httpPath: prefix, defaultUserPermissions: defaults, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, mfa: mfa}
 }
 
 func (m *Module) Register(ctx context.Context, input RegisterInput) error {
@@ -509,14 +516,27 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 		}
 		return nil, &loginFailure{cause: ErrLoginFailed, captchaRequired: m.captcha.Required(wrong)}
 	}
-	result, sessionID, err := m.issueLoginResult(ctx, user.identity, input.RememberMe)
+	enrollmentRequired, err := m.mfaEnrollmentRequired(ctx, user.identity)
+	if err != nil {
+		return nil, err
+	}
+	if m.mfaEnabled() && !enrollmentRequired {
+		return m.beginMFALogin(ctx, user.identity, input.RememberMe)
+	}
+	return m.finishLogin(ctx, user.identity, input.RememberMe, enrollmentRequired)
+}
+
+// The password or MFA continuation flow has already established enrollment state.
+// Session issuance does not query or overwrite that business decision.
+func (m *Module) finishLogin(ctx context.Context, identity authn.Identity, rememberMe, enrollmentRequired bool) (*LoginResult, error) {
+	result, sessionID, err := m.issueLoginResult(ctx, identity, rememberMe)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UnixMilli()
 	var loginCount int64
 	const query = `UPDATE t_user SET last_logged_in_at = CASE WHEN login_count > 0 THEN $1 ELSE last_logged_in_at END, login_count = CASE WHEN login_count > 0 THEN login_count + 1 ELSE 0 END, wrong = 0, updated_at = $1 WHERE id = $2 AND credential_version = $3 AND status = $4 RETURNING login_count`
-	err = m.store.SQL(ctx).QueryRowContext(ctx, query, now, user.identity.UserID, user.identity.CredentialVersion, userStatusActive).Scan(&loginCount)
+	err = m.store.SQL(ctx).QueryRowContext(ctx, query, now, identity.UserID, identity.CredentialVersion, userStatusActive).Scan(&loginCount)
 	if err != nil {
 		_ = m.sessions.Revoke(context.WithoutCancel(ctx), sessionID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -524,8 +544,15 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 		}
 		return nil, fmt.Errorf("update user login: %w", err)
 	}
-	auditctx.Identity(ctx, user.identity.UserID, user.identity.Username)
+	auditctx.Identity(ctx, identity.UserID, identity.Username)
 	result.PasswordResetRequired = loginCount == 0
+	result.MFAEnrollmentRequired = enrollmentRequired
+	if enrollmentRequired {
+		if err := m.grantMFAEnrollment(ctx, identity, sessionID); err != nil {
+			_ = m.sessions.Revoke(context.WithoutCancel(ctx), sessionID)
+			return nil, err
+		}
+	}
 	return result, nil
 }
 
@@ -560,7 +587,11 @@ func (m *Module) Refresh(ctx context.Context, refreshToken string) (*LoginResult
 	if err != nil {
 		return nil, fmt.Errorf("renew login session: %w", err)
 	}
-	return &LoginResult{AccessToken: token, RefreshToken: refresh.RefreshToken, ExpiredAt: expiredAt.UnixMilli(), PasswordResetRequired: identity.PasswordResetRequired}, nil
+	required, err := m.mfaEnrollmentRequired(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{AccessToken: token, RefreshToken: refresh.RefreshToken, ExpiredAt: expiredAt.UnixMilli(), PasswordResetRequired: identity.PasswordResetRequired, MFAEnrollmentRequired: required}, nil
 }
 
 func (m *Module) refreshIdentity(ctx context.Context, identity authn.Identity) (authn.Identity, error) {
@@ -673,5 +704,17 @@ func (m *Module) Info(ctx context.Context, scopes ...string) (*UserInfo, error) 
 }
 
 func (m *Module) Logout(ctx context.Context, refreshToken string) error {
-	return m.sessions.RevokeRefresh(ctx, refreshToken)
+	// Authenticate the token itself, not the stored record: older generations and
+	// repeated logout must still be able to finish a previously failed cleanup.
+	sessionID, _, err := m.sessions.parseRefresh(refreshToken)
+	if errors.Is(err, ErrSessionNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// Revoke first so no new request can use this grant. Attempt both operations
+	// even when one fails; a retry with the same signed token can finish either.
+	revokeErr := m.sessions.Revoke(ctx, sessionID)
+	return errors.Join(revokeErr, m.clearSensitiveMFA(ctx, sessionID))
 }

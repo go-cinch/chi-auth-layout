@@ -25,6 +25,8 @@ with tempfile.TemporaryDirectory(prefix='auth-branding-') as temporary:
             '--run-hooks=never', '--no-prompt', '--preset=full',
             f'Project={project.name}', f'brand_name={name}',
         ], check=True, capture_output=True, text=True)
+        auth_config = (project / 'conf/auth.yml').read_text()
+        assert f'accountNamePrefix: "{lower} admin"' in auth_config
         sql = (project / 'internal/infra/db/migrations/YYYYMMDDHH-04-dictionary-default-data.sql').read_text()
         values = re.findall(r"'((?:''|[^'])*)'::jsonb", sql)
         catalogs = [json.loads(value.replace("''", "'")) for value in values]

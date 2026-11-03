@@ -722,6 +722,9 @@ func TestAuthHTTPPathMappingsCoverRegisteredRoutes(t *testing.T) {
 		}
 		registered := map[string]bool{}
 		for _, route := range m.permissionRoutes {
+			if method := authHTTPMethod(strings.TrimPrefix(route.Path, prefix)); method != route.Method {
+				t.Fatalf("auth policy method %s does not match registered route %s %s", method, route.Method, route.Path)
+			}
 			if !mapped[route.Path] {
 				t.Fatalf("registered auth route %s has no configured-path mapping", route.Path)
 			}
@@ -732,5 +735,58 @@ func TestAuthHTTPPathMappingsCoverRegisteredRoutes(t *testing.T) {
 				t.Fatalf("mapped path %s is not registered", path)
 			}
 		}
+	}
+}
+
+func TestLoginMFAUsesOriginalEndpointAndHeaders(t *testing.T) {
+	m, mock, _, _, _ := newMFATest(t)
+	handler := mfaTestHTTP(m)
+	input := encryptedLoginInputWithProof(t, m.credentials, "readonly", authTestPassword, validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly"))
+	body, _ := json.Marshal(input)
+	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WillReturnRows(loginRows(t, userStatusActive))
+	expectMFAEnabled(mock, true)
+	out := httptest.NewRecorder()
+	handler.ServeHTTP(out, httptest.NewRequest("POST", "/pub/login", strings.NewReader(string(body))))
+	ticket := out.Header().Get(authn.MFATicketHeader)
+	if out.Code != 403 || out.Header().Get(authn.MFARequiredHeader) != "true" || len(ticket) < 32 || out.Header().Get(authn.MFAExpiresAtHeader) == "" {
+		t.Fatal("missing MFA handshake headers", out.Code)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Body.Bytes(), &payload); err != nil || len(payload) != 2 || payload["error_code"] != "AUTH_STEP_UP_REQUIRED" {
+		t.Fatal("MFA changed the error JSON contract", err)
+	}
+	retry := func(code string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/pub/login", strings.NewReader(`{}`))
+		r.Header.Set(authn.MFATicketHeader, ticket)
+		r.Header.Set(authn.MFACodeHeader, code)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	if w := retry(""); w.Code != 403 || w.Header().Get(authn.MFARequiredHeader) != "true" {
+		t.Fatal("missing code bypass", w.Code)
+	}
+	secret, _ := newTOTPSecret()
+	code, _ := totpCode(secret, time.Now().Unix()/30)
+	expectMFALock(mock, 1)
+	expectMFAFactor(t, m, mock, secret, -1)
+	mock.ExpectExec("UPDATE t_user_totp SET last_used_step").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(2))
+	out = retry(code)
+	if out.Code != 200 || out.Header().Get(authn.MFARequiredHeader) != "" {
+		t.Fatal("same-endpoint verification failed", out.Code)
+	}
+	payload = nil
+	if err := json.Unmarshal(out.Body.Bytes(), &payload); err != nil || len(payload) != 3 || payload["access_token"] == "" {
+		t.Fatal("login JSON changed", err)
+	}
+	for _, field := range []string{"mfa_required", "mfa_ticket", "mfa_enrollment_required", "password_reset_required"} {
+		if _, ok := payload[field]; ok {
+			t.Fatal("authentication metadata leaked into JSON", field)
+		}
+	}
+	if w := retry(code); w.Code != 400 {
+		t.Fatal("ticket replay accepted", w.Code)
 	}
 }

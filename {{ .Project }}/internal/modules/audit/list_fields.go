@@ -2,7 +2,7 @@ package audit
 
 import "{{ .Computed.module_name_final }}/internal/common/report"
 
-var listFields = []string{"id", "occurred_at", "kind", "user_id", "username", "module", "method", "path", "ip", "user_agent", "trace_id", "error_code", "status", "duration_ms", "operation", "resource_type", "resource_id"}
+var listFields = []string{"mfa_fingerprint", "mfa_verified_at", "id", "occurred_at", "kind", "user_id", "username", "module", "method", "path", "ip", "user_agent", "trace_id", "error_code", "status", "duration_ms", "operation", "resource_type", "resource_id"}
 
 func listProjection(value *Event, fields report.Fields) report.Projection {
 	value.selectedFields = fields
@@ -24,6 +24,8 @@ func listProjection(value *Event, fields report.Fields) report.Projection {
 	p.Add("operation", "operation", &value.Operation)
 	p.Add("resource_type", "resource_type", &value.ResourceType)
 	p.Add("resource_id", "resource_id", &value.ResourceID)
+	p.Add("mfa_fingerprint", "mfa_fingerprint", &value.MFAFingerprint)
+	p.Add("mfa_verified_at", "COALESCE(mfa_verified_at,0)", &value.MFAVerifiedAt)
 	return p
 }
 

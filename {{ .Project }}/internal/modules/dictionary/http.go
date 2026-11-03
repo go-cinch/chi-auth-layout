@@ -1,9 +1,7 @@
 package dictionary
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -95,7 +93,8 @@ func (m *Module) create(c *gin.Context) {
 func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	var input CreateDictionaryInput
-	if !decodeDictionaryInput(w, r, &input) {
+	if err := server.DecodeJSON(w, r, &input, server.BodyDictionary); err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
 	}
 	value, err := m.Create(r.Context(), input)
@@ -128,7 +127,8 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input UpdateDictionaryInput
-	if !decodeDictionaryInput(w, r, &input) {
+	if err := server.DecodeJSON(w, r, &input, server.BodyDictionary); err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
 	}
 	value, err := m.Update(r.Context(), id, input)
@@ -154,20 +154,6 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	server.WriteOK(w, value)
-}
-
-func decodeDictionaryInput(w http.ResponseWriter, r *http.Request, input any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return false
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return false
-	}
-	return true
 }
 
 {{ if eq .Computed.http_router_final "gin" -}}

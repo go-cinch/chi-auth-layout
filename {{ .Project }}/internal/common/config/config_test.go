@@ -87,6 +87,65 @@ func TestAuthSwitchEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+func TestMFARateLimitEnvironmentOverrides(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("auth:\n  mfa:\n    totpPeriod: 1m\n    enrollmentTTL: 5m\n    sensitiveLifetime: 1h\n    rateLimit:\n      window: 5m\n      maxAttempts: 10\n")
+	if err := os.WriteFile(filepath.Join(dir, "auth.yml"), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.MFA.RateLimit.Window != 5*time.Minute || cfg.Auth.MFA.RateLimit.MaxAttempts != 10 {
+		t.Fatalf("default MFA rate limit = %#v", cfg.Auth.MFA.RateLimit)
+	}
+	t.Setenv("SERVICE_AUTH_MFA_RATELIMIT_WINDOW", "2m30s")
+	t.Setenv("SERVICE_AUTH_MFA_RATELIMIT_MAXATTEMPTS", "4")
+	cfg, overrides, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.MFA.RateLimit.Window != 150*time.Second || cfg.Auth.MFA.RateLimit.MaxAttempts != 4 {
+		t.Fatalf("overridden MFA rate limit = %#v", cfg.Auth.MFA.RateLimit)
+	}
+	if cfg.Auth.MFA.TOTPPeriod != time.Minute || cfg.Auth.MFA.EnrollmentTTL != 5*time.Minute || cfg.Auth.MFA.SensitiveLifetime != time.Hour {
+		t.Fatal("rate-limit overrides changed authenticator, enrollment or sensitive timing")
+	}
+	if len(overrides) != 2 {
+		t.Fatalf("MFA rate-limit overrides = %#v", overrides)
+	}
+}
+
+func TestMFASensitiveLifetimeEnvironmentOverride(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("auth:\n  mfa:\n    totpPeriod: 1m\n    enrollmentTTL: 5m\n    sensitiveLifetime: 1h\n    rateLimit:\n      window: 5m\n      maxAttempts: 10\n")
+	if err := os.WriteFile(filepath.Join(dir, "auth.yml"), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.MFA.SensitiveLifetime != time.Hour {
+		t.Fatalf("default MFA sensitive lifetime = %v", cfg.Auth.MFA.SensitiveLifetime)
+	}
+	t.Setenv("SERVICE_AUTH_MFA_SENSITIVELIFETIME", "20m30s")
+	cfg, overrides, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.MFA.SensitiveLifetime != 20*time.Minute+30*time.Second {
+		t.Fatalf("overridden MFA sensitive lifetime = %v", cfg.Auth.MFA.SensitiveLifetime)
+	}
+	if cfg.Auth.MFA.TOTPPeriod != time.Minute || cfg.Auth.MFA.EnrollmentTTL != 5*time.Minute || cfg.Auth.MFA.RateLimit.Window != 5*time.Minute || cfg.Auth.MFA.RateLimit.MaxAttempts != 10 {
+		t.Fatal("sensitive lifetime override changed unrelated MFA timing or rate limits")
+	}
+	if len(overrides) != 1 || overrides[0].Environment != "SERVICE_AUTH_MFA_SENSITIVELIFETIME" {
+		t.Fatalf("MFA sensitive lifetime overrides = %#v", overrides)
+	}
+}
+
 {{ if .Computed.enable_redis_final -}}
 func TestRedisPrefixEnvironmentOverride(t *testing.T) {
 	dir := t.TempDir()
@@ -140,5 +199,36 @@ func TestYAMLFiles(t *testing.T) {
 	paths, err := yamlFiles(dir)
 	if err != nil || len(paths) != 2 || filepath.Base(paths[0]) != "a.yml" {
 		t.Fatalf("yaml files = %#v, %v", paths, err)
+	}
+}
+
+func TestDictionaryLocalizationRefreshInterval(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want time.Duration
+		invalid bool
+	}{
+		{"5s", 5 * time.Second, false},
+		{"1m", time.Minute, false},
+		{"0s", 0, false},
+		{"-1s", 0, true},
+		{"invalid", 0, true},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "dictionary.yml"), []byte("dictionary:\n  localizationRefreshInterval: 5s\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("SERVICE_DICTIONARY_LOCALIZATIONREFRESHINTERVAL", tc.value)
+			cfg, _, err := LoadDir(dir)
+			if tc.invalid {
+				if err == nil { t.Fatal("invalid interval accepted") }
+				return
+			}
+			if err != nil { t.Fatal(err) }
+			if cfg.Dictionary.LocalizationRefreshInterval != tc.want {
+				t.Fatalf("interval = %v, want %v", cfg.Dictionary.LocalizationRefreshInterval, tc.want)
+			}
+		})
 	}
 }

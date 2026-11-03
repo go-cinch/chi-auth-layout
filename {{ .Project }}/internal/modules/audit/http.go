@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/csv"
+"{{ .Computed.module_name_final }}/internal/common/config"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -64,15 +65,15 @@ func kind(r *http.Request) string {
 	return "operation"
 }
 
-func parse(r *http.Request) (Filter, error) {
+func parse(r *http.Request, settings config.AuditConfig) (Filter, error) {
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		return Filter{}, ErrFilter
 	}
-	return parseQuery(r, query)
+	return parseQuery(r, query, settings)
 }
 
-func parseQuery(r *http.Request, q url.Values) (Filter, error) {
+func parseQuery(r *http.Request, q url.Values, settings config.AuditConfig) (Filter, error) {
 	f := Filter{Kind: kind(r)}
 	for _, key := range []string{"q", "module", "result", "from", "to", "time_zone", "p", "s", "weekday", "hour", "username", "ip", "path", "sort"} {
 		if v, ok := q[key]; ok && (len(v) != 1 || v[0] == "") {
@@ -106,7 +107,7 @@ func parseQuery(r *http.Request, q url.Values) (Filter, error) {
 			*target = &i
 		}
 	}
-	return normalize(f)
+	return normalize(f, settings)
 }
 
 func replyError(w http.ResponseWriter, r *http.Request, err error) {
@@ -137,7 +138,7 @@ func (m *Module) list(w http.ResponseWriter, r *http.Request) {
 		replyError(w, r, ErrFilter)
 		return
 	}
-	f, err := parseQuery(r, query)
+	f, err := parseQuery(r, query, m.settings)
 	if err != nil {
 		replyError(w, r, err)
 		return
@@ -172,7 +173,7 @@ func (m *Module) summary(w http.ResponseWriter, r *http.Request) {
 		replyError(w, r, ErrFilter)
 		return
 	}
-	f, err := parseQuery(r, query)
+	f, err := parseQuery(r, query, m.settings)
 	if err != nil {
 		replyError(w, r, err)
 		return
@@ -192,7 +193,7 @@ func (m *Module) options(c *gin.Context) {
 func (m *Module) options(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 
-	f, err := parse(r)
+	f, err := parse(r, m.settings)
 	if err != nil {
 		replyError(w, r, err)
 		return
@@ -252,7 +253,7 @@ func (m *Module) export(c *gin.Context) {
 func (m *Module) export(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 
-	f, err := parse(r)
+	f, err := parse(r, m.settings)
 	if err != nil {
 		replyError(w, r, err)
 		return
@@ -301,10 +302,15 @@ func (m *Module) AuditTarget(method, path string) auditctx.Target {
 			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "change_password", ResourceType: "user"}
 		case "/auth/reset/pwd":
 			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_password", ResourceType: "user"}
-		case "/auth/logout":
+		case "/auth/mfa/confirm":
+            target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "bind_mfa", ResourceType: "user"}
+        case "/auth/logout":
 			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "logout", ResourceType: "session"}
 		}
 	}
+    if authEndpoint && strings.HasPrefix(path, "/auth/mfa/reset/") {
+        target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_mfa", ResourceType: "user"}
+    }
 	if target.Kind == "" {
 		return target
 	}

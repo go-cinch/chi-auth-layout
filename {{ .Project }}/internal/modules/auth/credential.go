@@ -523,3 +523,18 @@ func (c *Credentials) OpenPasswordReset(ctx context.Context, userID int64, input
 	}
 	return PasswordResetInput{NewPassword: payload.NewPassword}, nil
 }
+
+const mfaSetupCredentialType = "mfa-setup+jwe"
+
+func (c *Credentials) MFASetupChallenge(ctx context.Context, userID int64) (*CredentialChallenge, error) {
+    return c.challenge(ctx, mfaSetupCredentialType, userID)
+}
+
+func (c *Credentials) OpenMFASetup(ctx context.Context, userID int64, input EncryptedLoginInput) (string, error) {
+    plaintext, err := c.decrypt(input.ChallengeID, input.Credential, mfaSetupCredentialType, ErrInvalidCredential)
+    if err != nil { return "", err }
+    payload, err := decodeRegistrationPasswordCredential(plaintext)
+    if err != nil || subtle.ConstantTimeCompare([]byte(payload.ChallengeID), []byte(input.ChallengeID)) != 1 { return "", ErrInvalidCredential }
+    if err := c.consumeChallenge(ctx, input.ChallengeID, mfaSetupCredentialType, userID, ErrInvalidCredential); err != nil { return "", err }
+    return payload.Password, nil
+}

@@ -8,6 +8,31 @@ auth:
     # Optional live switch file. Only trimmed "true" enables E2E; read errors disable it.
     # When set, the file overrides enableE2ETest on every captcha validation.
     enableE2ETestFile: ""
+  mfa:
+    # Lifetime of the password-verified, one-use login/recovery ticket.
+    loginTicketTTL: 5m
+    # When true, login requires MFA verification or enrollment before password reset.
+    # When false, skip MFA checks, including for already-bound users.
+    # Existing authenticators and recovery codes are retained for re-enabling.
+    enabled: true
+    # Must match the period configured in authenticator apps. Existing accounts
+    # need re-enrollment when this value changes.
+    totpPeriod: 1m
+    # Lifetime of a pending authenticator enrollment and its QR code.
+    enrollmentTTL: 5m
+    # Fixed session-scoped grant after successful sensitive-operation verification.
+    # Login, recovery, enrollment and refresh do not extend this deadline.
+    sensitiveLifetime: 1h
+    # Attempts are shared by sessions of the same user and credential version.
+    # Independent of the login ticket lifetime and enrollment/TOTP timing.
+    rateLimit:
+      window: 5m
+      maxAttempts: 10
+    # Display label only; independent of the JWT issuer and MFA encryption key.
+    accountNamePrefix: "{{ (fromJSON .Computed.brand).lower }} admin"
+    # Empty derives a separate MFA key from the persisted JWT key and issuer.
+    # Production: mount a persistent base64 32-byte key independently of JWT rotation.
+    encryptionKeyFile: ""
   jwt:
     issuer: "{{ .Computed.service_name_final }}"
     key: "{{ randAlphaNum 64 }}"

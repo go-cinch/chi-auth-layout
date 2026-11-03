@@ -31,11 +31,12 @@ func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &Application{localization: localization.New(), db: &db.Store{DB: database}, pagination: limits, authenticator: testAuthenticator(t)}
+	a := &Application{localization: localization.New(), db: &db.Store{DB: database}, pagination: limits, authenticator: testAuthenticator(t), mfa: &authmodule.MFA{}}
 	a.dictionaryModule, err = dictionarymodule.New(a.db, dictionarymodule.NewMemoryValueCache(), dictionarymodule.CacheTTL, limits, a.localization)
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.auditSettings = config.DefaultAudit()
 	a.wireBusinessModules()
 	want := map[string]modules.HTTPModule{
 		"/audit":      a.auditModule,
@@ -95,7 +96,8 @@ func TestBusinessModuleWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	a := &Application{localization: localization.New(), db: &db.Store{DB: database}, authenticator: testAuthenticator(t), idempotencyKeys: idempotency.NewMemoryStore()}
+	a := &Application{localization: localization.New(), db: &db.Store{DB: database}, authenticator: testAuthenticator(t), idempotencyKeys: idempotency.NewMemoryStore(), mfa: &authmodule.MFA{}}
+	a.auditSettings = config.DefaultAudit()
 	a.wireBusinessModules()
 	cfg := &config.Config{}
 	cfg.Idempotency.TTL = time.Minute
@@ -135,11 +137,13 @@ func TestSignalContextCanBeCanceled(t *testing.T) {
 func TestBusinessHTTPAlwaysRequiresAuthentication(t *testing.T) {
 	a := &Application{
 		localization: localization.New(),
+		mfa: &authmodule.MFA{},
 
 		db:              &db.Store{},
 		authenticator:   testAuthenticator(t),
 		idempotencyKeys: idempotency.NewMemoryStore(),
 	}
+	a.auditSettings = config.DefaultAudit()
 	a.wireBusinessModules()
 	httpModules{{ if .Computed.enable_grpc_final }}, _{{ end }} := a.generatedModules()
 	cfg := &config.Config{}

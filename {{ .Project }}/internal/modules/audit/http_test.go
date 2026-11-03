@@ -77,12 +77,12 @@ func TestHTTP(t *testing.T) {
 	call("/audit/operation/summary", 200)
 	expectSummary(mock, 0)
 	call("/audit/operation/summary", 500)
-	mock.ExpectQuery("SELECT .* LIMIT 10001").WillReturnRows(row())
+	mock.ExpectQuery("SELECT .* LIMIT").WillReturnRows(row())
 	body := call("/audit/login/export", 200)
 	if !strings.Contains(body, "alice") || strings.Contains(body, "password") {
 		t.Fatal(body)
 	}
-	mock.ExpectQuery("SELECT .* LIMIT 10001").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectQuery("SELECT .* LIMIT").WillReturnError(sqlmock.ErrCancelled)
 	call("/audit/login/export", 500)
 	for _, s := range []string{"=SUM(1)", " +1", "-1", "@cmd"} {
 		if !strings.HasPrefix(csvSafe(s), "'") {

@@ -7,7 +7,9 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"strings"
 	"testing"
+	"time"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
+	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
@@ -25,15 +27,15 @@ func setup(t *testing.T) (*Module, sqlmock.Sqlmock) {
 		database.Close()
 	})
 	limits, _ := pagination.New(100, 100)
-	return New(&db.Store{DB: database}, limits), mock
+	return New(&db.Store{DB: database}, limits, config.DefaultAudit()), mock
 }
 
 func eventRows() *sqlmock.Rows {
-	return sqlmock.NewRows(strings.Split(strings.ReplaceAll(columns, "COALESCE(user_id,0)", "user_id"), ","))
+	return sqlmock.NewRows(strings.Split(strings.NewReplacer("COALESCE(user_id,0)", "user_id", "COALESCE(mfa_verified_at,0)", "mfa_verified_at").Replace(columns), ","))
 }
 
 func row() *sqlmock.Rows {
-	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"), []byte("null"))
+	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"), []byte("null"), "", 0)
 }
 
 func TestRecordAndRead(t *testing.T) {
@@ -97,12 +99,12 @@ func TestRecordAndRead(t *testing.T) {
 	if _, err = m.Options(ctx, f); err == nil {
 		t.Fatal("options failure")
 	}
-	mock.ExpectQuery("SELECT .* LIMIT 10001").WillReturnRows(row())
+	mock.ExpectQuery("SELECT .* LIMIT").WillReturnRows(row())
 	items, err := m.Export(ctx, f)
 	if err != nil || len(items) != 1 {
 		t.Fatal(items, err)
 	}
-	mock.ExpectQuery("SELECT .* LIMIT 10001").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectQuery("SELECT .* LIMIT").WillReturnError(sqlmock.ErrCancelled)
 	if _, err = m.Export(ctx, f); err == nil {
 		t.Fatal("export failure")
 	}
@@ -111,11 +113,11 @@ func TestRecordAndRead(t *testing.T) {
 func TestFilters(t *testing.T) {
 	for _, f := range []Filter{
 		{Kind: "login", From: auditTime(253402300799999), To: auditTime(253402300800000)}, {Kind: "login", Timezone: "Local"}, {Kind: "bad"}, {Kind: "login", From: auditTime(-1)}, {Kind: "login", From: auditTime(2), To: auditTime(1)}, {Kind: "login", From: auditTime(1), To: auditTime(1000000000000)}, {Kind: "login", Result: "bad"}, {Kind: "login", Timezone: "missing/zone"}, {Kind: "login", Query: strings.Repeat("x", 257)}} {
-		if _, err := normalize(f); !errors.Is(err, ErrFilter) {
+		if _, err := normalize(f, config.DefaultAudit()); !errors.Is(err, ErrFilter) {
 			t.Fatal(f, err)
 		}
 	}
-	f, err := normalize(Filter{Kind: "operation", Result: "success"})
+	f, err := normalize(Filter{Kind: "operation", Result: "success"}, config.DefaultAudit())
 	if err != nil || f.Timezone != "UTC" {
 		t.Fatal(f, err)
 	}
@@ -142,7 +144,7 @@ func TestFilters(t *testing.T) {
 
 func TestInvestigationFilters(t *testing.T) {
 	day, hour := int32(0), int32(8)
-	f, err := normalize(Filter{Kind: "login", Weekday: &day, Hour: &hour, Timezone: "Asia/Shanghai", Username: "alice", IP: "127.0.0.1", Path: "/pub/login", Sort: "failure"})
+	f, err := normalize(Filter{Kind: "login", Weekday: &day, Hour: &hour, Timezone: "Asia/Shanghai", Username: "alice", IP: "127.0.0.1", Path: "/pub/login", Sort: "failure"}, config.DefaultAudit())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,31 +165,73 @@ func TestInvestigationFilters(t *testing.T) {
 		t.Fatal(order(f))
 	}
 	f.Sort = "bad"
-	if _, err := normalize(f); err == nil {
+	if _, err := normalize(f, config.DefaultAudit()); err == nil {
 		t.Fatal("invalid sort")
 	}
 	f.Sort = ""
 	f.Hour = nil
-	if _, err := normalize(f); err == nil {
+	if _, err := normalize(f, config.DefaultAudit()); err == nil {
 		t.Fatal("incomplete cell")
 	}
 	f.Hour = &hour
 	day = 7
-	if _, err := normalize(f); err == nil {
+	if _, err := normalize(f, config.DefaultAudit()); err == nil {
 		t.Fatal("invalid weekday")
 	}
 	day = 0
 	hour = 24
-	if _, err := normalize(f); err == nil {
+	if _, err := normalize(f, config.DefaultAudit()); err == nil {
 		t.Fatal("invalid hour")
 	}
 }
 
 func auditTime(value int64) *int64 { return &value }
 
+func TestConfiguredAuditWindowAndExportLimit(t *testing.T) {
+	m, mock := setup(t)
+	m.settings.DefaultWindow = 2 * time.Hour
+	m.settings.MaxWindow = 4 * time.Hour
+	m.settings.ExportMaxRows = 2
+	f, err := normalize(Filter{Kind: "login"}, m.settings)
+	if err != nil || *f.To-*f.From != int64(2*time.Hour/time.Millisecond) {
+		t.Fatal("default window ignored", err)
+	}
+	from := int64(1000)
+	to := from + int64(4*time.Hour/time.Millisecond)
+	f = Filter{Kind: "login", From: &from, To: &to}
+	if _, err := normalize(f, m.settings); err != nil {
+		t.Fatal("configured boundary rejected", err)
+	}
+	to++
+	if _, err := m.List(t.Context(), f); !errors.Is(err, ErrFilter) {
+		t.Fatal("list ignored maximum window", err)
+	}
+	if _, err := m.Options(t.Context(), f); !errors.Is(err, ErrFilter) {
+		t.Fatal("options ignored maximum window", err)
+	}
+	if _, err := m.Export(t.Context(), f); !errors.Is(err, ErrFilter) {
+		t.Fatal("export ignored maximum window", err)
+	}
+	to--
+	for _, count := range []int{2, 3} {
+		rows := eventRows()
+		for i := 0; i < count; i++ {
+			rows.AddRow(i+1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"), []byte("null"), "", 0)
+		}
+		mock.ExpectQuery("SELECT .* LIMIT \\$4").WithArgs("login", from, to, 3).WillReturnRows(rows)
+		items, err := m.Export(t.Context(), f)
+		if count == 2 && (err != nil || len(items) != 2) {
+			t.Fatal("export boundary rejected", err)
+		}
+		if count == 3 && !errors.Is(err, ErrExportLimit) {
+			t.Fatal("extra row did not trigger export limit", err)
+		}
+	}
+}
+
 func TestOptionalTimeBoundsAndBlankKeyword(t *testing.T) {
 	for _, input := range []Filter{ {Kind: "login", From: auditTime(123), Query: "   "}, {Kind: "login", To: auditTime(456), Query: "  alice  "}} {
-		value, err := normalize(input)
+		value, err := normalize(input, config.DefaultAudit())
 		if err != nil {
 			t.Fatal(err)
 		}

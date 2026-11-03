@@ -1,14 +1,13 @@
 package auth
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+    "strconv"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
@@ -108,6 +107,12 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.POST("/captcha/verify", m.verifyPasswordChangeCaptcha)
 	r.PATCH("/change/pwd", m.changePassword)
 	r.PATCH("/reset/pwd", m.resetPassword)
+	r.GET("/mfa", m.mfaStatus)
+	r.POST("/mfa/challenge", m.mfaChallenge)
+	r.POST("/mfa/setup", m.mfaSetup)
+	r.POST("/mfa/confirm", m.mfaConfirm)
+	r.POST("/mfa/test", m.mfaTest)
+	r.POST("/mfa/reset/:id", m.mfaReset)
 	r.GET("/info", m.info)
 }
 {{ else -}}
@@ -131,6 +136,12 @@ func (m *Module) HTTP() http.Handler {
 	r.Post("/captcha/verify", m.verifyPasswordChangeCaptcha)
 	r.Patch("/change/pwd", m.changePassword)
 	r.Patch("/reset/pwd", m.resetPassword)
+	r.Get("/mfa", m.mfaStatus)
+	r.Post("/mfa/challenge", m.mfaChallenge)
+	r.Post("/mfa/setup", m.mfaSetup)
+	r.Post("/mfa/confirm", m.mfaConfirm)
+	r.Post("/mfa/test", m.mfaTest)
+	r.Post("/mfa/reset/{id}", m.mfaReset)
 	r.Get("/info", m.info)
 	return r
 }
@@ -164,6 +175,13 @@ func (m *Module) checkPermission(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusForbidden, apperror.Forbidden)
 		return
 	}
+    target := PermissionTargetFromRequest(r)
+    if target.Resource == "" {
+        if err := m.checkMFARequest(r, target.Method, target.Path); err != nil {
+            server.WriteHTTPSecurityError(w, r, err)
+            return
+        }
+    }
 	w.Header().Set(permissionResponseCode, identity.Code)
 	server.WriteOK(w)
 }
@@ -205,13 +223,7 @@ func (m *Module) publicChallenge(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input ChallengeInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuthChallenge); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -244,13 +256,7 @@ func (m *Module) sliderChallenge(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input SliderChallengeInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodySliderChallenge); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -275,13 +281,7 @@ func (m *Module) verifySlider(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input SliderCaptchaVerification
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuth); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -305,14 +305,8 @@ func (m *Module) register(c *gin.Context) {
 func (m *Module) register(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	var encrypted EncryptedRegisterInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&encrypted); err != nil {
-		server.WriteJSON(w, http.StatusBadRequest, PasswordChangeFailureResponse{ErrorCode: apperror.Code(apperror.InvalidBody), Msg: server.ErrorMessage(r, apperror.InvalidBody)})
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		server.WriteJSON(w, http.StatusBadRequest, PasswordChangeFailureResponse{ErrorCode: apperror.Code(apperror.InvalidBody), Msg: server.ErrorMessage(r, apperror.InvalidBody)})
+	if err := server.DecodeJSON(w, r, &encrypted, server.BodyAuth); err != nil {
+		server.WriteJSON(w, http.StatusBadRequest, PasswordChangeFailureResponse{ErrorCode: apperror.Code(err), Msg: server.ErrorMessage(r, err)})
 		return
 	}
 	input, err := m.credentials.OpenRegistration(r.Context(), encrypted)
@@ -355,13 +349,7 @@ func (m *Module) passwordChangeChallenge(w http.ResponseWriter, r *http.Request)
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input ChallengeInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuthChallenge); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -405,13 +393,7 @@ func (m *Module) changePassword(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var encrypted EncryptedPasswordChangeInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&encrypted); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &encrypted, server.BodyAuth); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -529,13 +511,7 @@ func (m *Module) verifyPasswordChangeCaptcha(w http.ResponseWriter, r *http.Requ
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input VerifyPointCaptchaInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuthVerification); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -560,13 +536,7 @@ func (m *Module) verifyLoginCaptcha(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input VerifyLoginPointCaptchaInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuthVerification); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -591,13 +561,7 @@ func (m *Module) refreshPasswordChangeCaptcha(w http.ResponseWriter, r *http.Req
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input RefreshPointCaptchaInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuthChallenge); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -626,13 +590,7 @@ func (m *Module) refreshLoginCaptcha(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input RefreshPointCaptchaInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuthChallenge); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -657,13 +615,7 @@ func (m *Module) refresh(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input RefreshTokenInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF || strings.TrimSpace(input.RefreshToken) == "" {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuthVerification); err != nil || strings.TrimSpace(input.RefreshToken) == "" {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -677,6 +629,7 @@ func (m *Module) refresh(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
+    writeLoginHeaders(w, refreshResult)
 	server.WriteOK(w, refreshResult)
 }
 
@@ -687,14 +640,31 @@ func (m *Module) login(c *gin.Context) {
 func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
+    ticket := strings.TrimSpace(r.Header.Get(authn.MFATicketHeader))
+    recoveryHeaders := r.Header.Values(authn.MFARecoveryCodeHeader)
+    if len(recoveryHeaders) > 0 && (len(recoveryHeaders) != 1 || ticket == "" || len(r.Header.Values(authn.MFATicketHeader)) != 1 || len(r.Header.Values(authn.MFACodeHeader)) > 0) {
+        writeMFAError(w, r, ErrMFAInvalid)
+        return
+    }
+    if ticket != "" {
+        var continuation *struct{}
+        if err := server.DecodeJSON(w, r, &continuation, server.BodyAuth); err != nil { server.WriteError(w, r, http.StatusBadRequest, err); return }
+        if continuation == nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody); return }
+        var result *LoginResult
+        var err error
+        if len(recoveryHeaders) > 0 {
+            result, err = m.RecoverMFALogin(r.Context(), ticket, recoveryHeaders[0])
+        } else {
+            result, err = m.CompleteMFALogin(r.Context(), ticket, r.Header.Get(authn.MFACodeHeader))
+        }
+        if err != nil { writeMFAError(w, r, err); return }
+        writeLoginHeaders(w, result)
+        server.WriteOK(w, result)
+        return
+    }
+
 	var encrypted EncryptedLoginInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&encrypted); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &encrypted, server.BodyAuth); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -746,6 +716,25 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
+    if loginResult.MFARequired {
+        if code := strings.TrimSpace(r.Header.Get(authn.MFACodeHeader)); code != "" {
+            verified, verifyErr := m.CompleteMFALogin(r.Context(), loginResult.MFATicket, code)
+            if verifyErr == nil {
+                writeLoginHeaders(w, verified)
+                server.WriteOK(w, verified)
+                return
+            }
+            w.Header().Set(authn.MFATicketHeader, loginResult.MFATicket)
+            w.Header().Set(authn.MFAExpiresAtHeader, strconv.FormatInt(loginResult.ExpiredAt, 10))
+            writeMFAError(w, r, verifyErr)
+            return
+        }
+        w.Header().Set(authn.MFATicketHeader, loginResult.MFATicket)
+        w.Header().Set(authn.MFAExpiresAtHeader, strconv.FormatInt(loginResult.ExpiredAt, 10))
+        writeMFAError(w, r, ErrMFARequired)
+        return
+    }
+    writeLoginHeaders(w, loginResult)
 	server.WriteOK(w, loginResult)
 }
 
@@ -791,13 +780,7 @@ func (m *Module) logout(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var input RefreshTokenInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF || strings.TrimSpace(input.RefreshToken) == "" {
+	if err := server.DecodeJSON(w, r, &input, server.BodyAuthVerification); err != nil || strings.TrimSpace(input.RefreshToken) == "" {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -817,9 +800,7 @@ func (m *Module) resetPassword(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	var encrypted EncryptedPasswordResetInput
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&encrypted) != nil || decoder.Decode(new(any)) != io.EOF {
+	if err := server.DecodeJSON(w, r, &encrypted, server.BodyAuth); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -831,6 +812,9 @@ func (m *Module) resetPassword(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, ErrUnauthorized):
 		server.WriteError(w, r, http.StatusUnauthorized, err)
+	case errors.Is(err, ErrMFAEnrollmentRequired):
+        server.SetMFAErrorHeaders(w, err)
+		server.WriteError(w, r, http.StatusForbidden, err)
 	case errors.Is(err, ErrPasswordResetNotRequired):
 		server.WriteError(w, r, http.StatusConflict, err)
 	case errors.Is(err, ErrInvalidPasswordCredential), errors.Is(err, ErrInvalidPasswordReset), errors.Is(err, ErrSamePassword):
@@ -839,6 +823,7 @@ func (m *Module) resetPassword(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "reset current password failed: "+err.Error(), "operation", "reset_current_password", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 	default:
-		server.WriteOK(w, result)
+		writeLoginHeaders(w, result)
+	server.WriteOK(w, result)
 	}
 }

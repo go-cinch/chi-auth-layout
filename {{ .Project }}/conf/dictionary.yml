@@ -1,0 +1,7 @@
+dictionary:
+  # Lifetime of cached dictionary values, in both Redis and memory stores.
+  cacheTTL: 10m
+  # Reload I18N_CATALOG from the database to pick up other instances/SQL edits.
+  # 0s disables polling; startup loading and refresh after writes still run.
+  # Change this value and restart the service to apply it.
+  localizationRefreshInterval: 5s

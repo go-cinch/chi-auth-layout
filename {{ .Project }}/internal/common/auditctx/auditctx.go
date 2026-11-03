@@ -17,6 +17,8 @@ type Target struct {
 }
 
 type Event struct {
+	MFAFingerprint string          `json:"mfa_fingerprint"`
+	MFAVerifiedAt  int64           `json:"mfa_verified_at"`
 	Header         json.RawMessage `json:"header"`
 	Operation      string          `json:"operation"`
 	ResourceType   string          `json:"resource_type"`
@@ -67,3 +69,13 @@ func Error(ctx context.Context, code string) {
 }
 
 func (s *State) Snapshot() Event { s.mu.Lock(); defer s.mu.Unlock(); return s.event }
+
+// MFA records a server-generated verification reference, never client data.
+func MFA(ctx context.Context, fingerprint string, verifiedAt int64) {
+	if s, ok := ctx.Value(key{}).(*State); ok {
+		s.mu.Lock()
+		s.event.MFAFingerprint = fingerprint
+		s.event.MFAVerifiedAt = verifiedAt
+		s.mu.Unlock()
+	}
+}

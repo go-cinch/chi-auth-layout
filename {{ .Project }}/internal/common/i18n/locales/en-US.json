@@ -74,13 +74,20 @@
   "MSG_INVALID": "Invalid message fields: title up to 200 characters, content up to 20000, and expiry must be in the future",
   "MSG_INVALID_RECIPIENT": "Choose 1–1000 existing users for targeted messages; broadcasts cannot specify recipients",
   "MSG_NOT_FOUND": "Message not found or unavailable",
-  "AUDIT_FILTER_INVALID": "Invalid audit filter or time range (maximum 90 days).",
+  "AUDIT_FILTER_INVALID": "Invalid audit filter or time range. Check the configured maximum window.",
   "AUDIT_NOT_FOUND": "Audit event not found.",
-  "AUDIT_EXPORT_LIMIT": "More than 10,000 events. Narrow the filters before exporting.",
+  "AUDIT_EXPORT_LIMIT": "The export exceeds the configured row limit. Narrow the filters before exporting.",
   "AUTH_INFO_SCOPE_REQUIRED": "Please specify a permission scope",
   "AUTH_INFO_SCOPE_INVALID": "Invalid permission scope",
   "AUTH_PERMISSION_ADMIN_REQUIRED": "Only an administrator with all permissions in the current scope can change permission definitions or account credentials",
   "AUTH_PERMISSION_GRANT_REQUIRED": "All permissions or the permission management grant in the current scope is required",
   "DICTIONARY_VERSION_CONFLICT": "The catalog changed. Compare the latest online version before submitting.",
-  "DICTIONARY_GROUP_NOT_EMPTY": "Only empty permission groups can be deleted"
+  "DICTIONARY_GROUP_NOT_EMPTY": "Only empty permission groups can be deleted",
+  "AUTH_MFA_INVALID": "invalid or already used verification code; use a new code",
+  "AUTH_STEP_UP_REQUIRED": "verify two-factor authentication before this operation",
+  "AUTH_MFA_ENROLLMENT_REQUIRED": "bind an authenticator before continuing",
+  "AUTH_MFA_ALREADY_ENABLED": "two-factor authentication is already enabled",
+  "AUTH_MFA_RATE_LIMITED": "too many verification attempts; try again later",
+  "AUTH_MFA_UNAVAILABLE": "two-factor authentication is temporarily unavailable",
+  "AUTH_MFA_USER_NOT_FOUND": "user not found"
 }

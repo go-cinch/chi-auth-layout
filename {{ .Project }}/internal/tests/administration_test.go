@@ -58,7 +58,7 @@ func TestPermissionAdministrationPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := verified.Context()
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
 	limits, _ := pagination.New(100, 100)
 	actions := action.New(store, limits, localizer)
 	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)

@@ -1,0 +1,10 @@
+audit:
+  # Used only when both query bounds are omitted. Durations use Go syntax (hours, not days).
+  defaultWindow: 168h
+  # Applies to paired bounds and to chart ranges derived from matching records.
+  maxWindow: 2160h
+  exportMaxRows: 10000
+  # Persistence budget after the HTTP response; independent of request cancellation.
+  recordTimeout: 1s
+  # Maximum captured bytes per header/request/response snapshot. Oversize content is omitted.
+  payloadLimit: 65536

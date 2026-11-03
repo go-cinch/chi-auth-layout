@@ -63,7 +63,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "HTTP_INVALID_PAGE": "p must be one int32 value",
                 "HTTP_UNAUTHORIZED": "Unauthorized",
                 "USERGROUP_INVALID": "invalid user group",
-                "AUDIT_EXPORT_LIMIT": "More than 10,000 events. Narrow the filters before exporting.",
+                "AUDIT_EXPORT_LIMIT": "The export exceeds the configured row limit. Narrow the filters before exporting.",
                 "AUTH_SAME_PASSWORD": "new password must differ from current password",
                 "DICTIONARY_INVALID": "invalid dictionary",
                 "HTTP_INVALID_QUERY": "invalid query parameters",
@@ -71,7 +71,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "DICTIONARY_CONFLICT": "dictionary key already exists",
                 "USERGROUP_NOT_FOUND": "user group not found",
                 "USER_ROLE_NOT_FOUND": "user role not found",
-                "AUDIT_FILTER_INVALID": "Invalid audit filter or time range (maximum 90 days).",
+                "AUDIT_FILTER_INVALID": "Invalid audit filter or time range. Check the configured maximum window.",
                 "AUTH_USERNAME_EXISTS": "username already exists",
                 "DICTIONARY_NOT_FOUND": "dictionary not found",
                 "HTTP_CAPTCHA_EXPIRED": "point selection challenge expired",
@@ -1761,7 +1761,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "HTTP_INVALID_PAGE": "页码 p 必须为单个 32 位整数",
                 "HTTP_UNAUTHORIZED": "登录状态无效或已过期，请重新登录",
                 "USERGROUP_INVALID": "用户组参数无效",
-                "AUDIT_EXPORT_LIMIT": "超过 10,000 条记录，请缩小筛选范围后导出。",
+                "AUDIT_EXPORT_LIMIT": "超过配置的导出记录上限，请缩小筛选范围后导出。",
                 "AUTH_SAME_PASSWORD": "新密码不能与当前密码相同",
                 "DICTIONARY_INVALID": "数据字典参数无效",
                 "HTTP_INVALID_QUERY": "查询参数格式无效",
@@ -1769,7 +1769,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "DICTIONARY_CONFLICT": "数据字典键已存在",
                 "USERGROUP_NOT_FOUND": "用户组不存在",
                 "USER_ROLE_NOT_FOUND": "用户关联的角色不存在",
-                "AUDIT_FILTER_INVALID": "审计筛选条件或时间范围无效（最长 90 天）。",
+                "AUDIT_FILTER_INVALID": "审计筛选条件或时间范围无效，请检查配置的最大时间范围。",
                 "AUTH_USERNAME_EXISTS": "用户名已存在",
                 "DICTIONARY_NOT_FOUND": "数据字典不存在",
                 "HTTP_CAPTCHA_EXPIRED": "验证码已过期，请重新验证",
@@ -3849,6 +3849,26 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     {
                         "path": "/auth/reset/pwd",
                         "method": "PATCH"
+                    },
+                    {
+                        "path": "/auth/mfa",
+                        "method": "GET"
+                    },
+                    {
+                        "path": "/auth/mfa/challenge",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/mfa/setup",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/mfa/confirm",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/mfa/test",
+                        "method": "POST"
                     }
                 ]
             },

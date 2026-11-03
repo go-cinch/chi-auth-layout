@@ -83,6 +83,14 @@ jobs:
           go install "github.com/hay-kot/scaffold@${SCAFFOLD_COMMIT_SHA}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install local generation dependencies
+        run: python3 -m pip install -r chi-auth-layout/scripts/requirements-local.txt
+
       - name: Generate auth demo with make local
         working-directory: chi-auth-layout
         shell: bash

@@ -46,6 +46,7 @@ type IdentityValidator interface {
 }
 
 type Manager struct {
+	httpSecurityPolicy    func(*http.Request) error
 	restrictedHTTPAllowed func(method, path string) bool
 	issuer                string
 	key                   []byte
@@ -155,4 +156,17 @@ func (m *Manager) AuthenticateRequest(r *http.Request) (*http.Request, error) {
 func FromContext(ctx context.Context) (Identity, bool) {
 	identity, ok := ctx.Value(identityContextKey{}).(Identity)
 	return identity, ok
+}
+
+// SetHTTPSecurityPolicy installs a business-owned guard enforced independently
+// of permission switches, before idempotency or business side effects.
+func (m *Manager) SetHTTPSecurityPolicy(policy func(*http.Request) error) {
+	m.httpSecurityPolicy = policy
+}
+
+func (m *Manager) CheckHTTPSecurity(r *http.Request) error {
+	if m.httpSecurityPolicy == nil {
+		return nil
+	}
+	return m.httpSecurityPolicy(r)
 }

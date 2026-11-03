@@ -58,6 +58,15 @@ make full PROJECT=my-service OUTPUT_DIR=/path/to/projects
 
 ## Regenerate the Local Demo
 
+Credential preservation uses Python 3 and PyYAML. Install the helper dependency
+in the Python environment used by `python3`:
+
+```bash
+python3 -m pip install -r scripts/requirements-local.txt
+```
+
+Missing dependencies abort before the existing demo is removed.
+
 ```bash
 make local
 ```
@@ -78,9 +87,29 @@ To replace the existing SQL with the newly generated SQL, explicitly run:
 make local DELETE_OLD_SQL=true
 ```
 
-Existing JWT keys are preserved in both modes. If generation or the final rebuild
-fails, the previous SQL, JWT key and binary are restored; obsolete source files
-remain removed.
+`DELETE_OLD_CREDENTIALS=false` is a separate default: both SQL modes preserve
+`auth.jwt.key`, `auth.jwt.issuer`, `auth.mfa.encryptionKeyFile`,
+`auth.mfa.totpPeriod`, `auth.challengeEncryption.privateKeyFile` and
+`auth.challengeEncryption.keyId`. Existing values, including explicitly empty
+paths, override the generated defaults; other fields receive the current template
+defaults. Referenced key files inside `demos/auth` are backed up and restored with
+their permissions, including paths supplied by the corresponding `SERVICE_`
+environment overrides. Relative key paths resolve from `demos/auth`. External key
+files remain in place and are never overwritten. Credential values are not printed.
+
+Explicitly discard the old credential settings and use newly generated defaults:
+
+```bash
+make local DELETE_OLD_CREDENTIALS=true
+```
+
+This rotates the JWT key and can make existing MFA factors unusable; it does not
+reset the database. Retained factors require their original key and TOTP period,
+or an explicit migration/reset. If generation or the final rebuild fails, the
+previous SQL, authentication configuration, local key files and binary are restored
+even with `DELETE_OLD_CREDENTIALS=true`; obsolete source files remain removed.
+If credential restoration itself fails, the backup directory is retained and
+reported for recovery.
 
 The command does not reset PostgreSQL or Redis. With `DELETE_OLD_SQL=true`, an
 existing database may need migration reconciliation before the service starts.

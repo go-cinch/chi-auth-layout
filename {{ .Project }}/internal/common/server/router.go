@@ -24,6 +24,11 @@ import (
 
 func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys idempotency.Store, mounted ...modules.Module) (http.Handler, error) {
 
+    bodyLimits, err := config.ResolveHTTPBodyLimits(cfg.HTTP.BodyLimits)
+    if err != nil { return nil, err }
+    auditSettings, err := config.ResolveAudit(cfg.Audit)
+    if err != nil { return nil, err }
+
 	permissionAuthorizer, permissionEndpoint, err := newHTTPPermissionAuthorizer(cfg, mounted)
 	if err != nil {
 		return nil, err
@@ -41,7 +46,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(ClientIP(), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
+	r.Use(RequestBodyLimits(bodyLimits), ClientIP(), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy, auditSettings), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
 	r.NoRoute(func(c *gin.Context) {
 		WriteError(c.Writer, c.Request, http.StatusNotFound, apperror.NotFound)
 	})
@@ -144,6 +149,11 @@ func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.H
 				return
 			}
 		}
+        if err := authenticator.CheckHTTPSecurity(request); err != nil {
+            c.Abort()
+            WriteHTTPSecurityError(c.Writer, request, err)
+            return
+        }
 		c.Next()
 	}
 }
@@ -214,6 +224,11 @@ import (
 
 func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys idempotency.Store, mounted ...modules.Module) (http.Handler, error) {
 
+    bodyLimits, err := config.ResolveHTTPBodyLimits(cfg.HTTP.BodyLimits)
+    if err != nil { return nil, err }
+    auditSettings, err := config.ResolveAudit(cfg.Audit)
+    if err != nil { return nil, err }
+
 	permissionAuthorizer, permissionEndpoint, err := newHTTPPermissionAuthorizer(cfg, mounted)
 	if err != nil {
 		return nil, err
@@ -224,7 +239,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(ClientIP(), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy), Recoverer())
+	r.Use(RequestBodyLimits(bodyLimits), ClientIP(), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy, auditSettings), Recoverer())
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, http.StatusNotFound, apperror.NotFound)
@@ -350,6 +365,10 @@ func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.H
 				return
 			}
 		}
+        if err := authenticator.CheckHTTPSecurity(request); err != nil {
+            WriteHTTPSecurityError(w, request, err)
+            return
+        }
 		next.ServeHTTP(w, request)
 	})
 }

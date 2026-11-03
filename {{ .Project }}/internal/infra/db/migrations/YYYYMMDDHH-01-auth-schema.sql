@@ -215,6 +215,48 @@ COMMENT ON COLUMN t_user.login_count IS 'Completed logins since the last adminis
 
 CREATE INDEX idx_user_role_id ON t_user (role_id);
 
+CREATE TABLE t_user_totp (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    user_id BIGINT NOT NULL,
+    secret_ciphertext TEXT NOT NULL,
+    last_used_step BIGINT NOT NULL,
+    CONSTRAINT uk_user_totp_user UNIQUE (user_id),
+    CONSTRAINT fk_user_totp_user FOREIGN KEY (user_id) REFERENCES t_user (id) ON DELETE CASCADE,
+    CONSTRAINT ck_user_totp_secret CHECK (CHAR_LENGTH(secret_ciphertext) > 0),
+    CONSTRAINT ck_user_totp_step CHECK (last_used_step >= 0)
+);
+
+COMMENT ON TABLE t_user_totp IS 'One confirmed authenticator per user; pending enrollment is stored separately in Redis';
+
+COMMENT ON COLUMN t_user_totp.created_at IS 'Authenticator binding time in Unix milliseconds; the row is created only after a valid TOTP';
+
+COMMENT ON COLUMN t_user_totp.updated_at IS 'Last accepted authenticator verification time in Unix milliseconds';
+
+COMMENT ON COLUMN t_user_totp.secret_ciphertext IS 'AES-256-GCM encrypted TOTP secret, authenticated against its user ID; never return in user APIs';
+
+COMMENT ON COLUMN t_user_totp.last_used_step IS 'Last accepted counter at the configured TOTP period; initialized by enrollment and updated under row lock to reject replay';
+
+CREATE TABLE t_user_recovery_code (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    user_id BIGINT NOT NULL,
+    code_hash TEXT NOT NULL,
+    CONSTRAINT fk_user_recovery_code_user FOREIGN KEY (user_id) REFERENCES t_user (id) ON DELETE CASCADE,
+    CONSTRAINT uk_user_recovery_code UNIQUE (user_id, code_hash),
+    CONSTRAINT ck_user_recovery_code_hash CHECK (code_hash ~ '^[a-f0-9]{64}$')
+);
+
+COMMENT ON TABLE t_user_recovery_code IS 'Current authenticator recovery codes; successful recovery deletes the entire set and the bound factor in one transaction';
+
+COMMENT ON COLUMN t_user_recovery_code.created_at IS 'Recovery code issuance time in Unix milliseconds';
+
+COMMENT ON COLUMN t_user_recovery_code.updated_at IS 'Issuance time in Unix milliseconds; recovery codes are replaced or deleted, never updated';
+
+COMMENT ON COLUMN t_user_recovery_code.code_hash IS 'SHA-256 digest of a cryptographically random 128-bit recovery code; plaintext shown only at enrollment';
+
 CREATE TABLE t_user_user_group_relation (
     id BIGSERIAL PRIMARY KEY,
     created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
@@ -387,6 +429,8 @@ CREATE TABLE t_audit_event (
     request_params JSONB NOT NULL DEFAULT 'null'::jsonb,
     response_params JSONB NOT NULL DEFAULT 'null'::jsonb,
     header JSONB NOT NULL DEFAULT 'null'::jsonb,
+    mfa_fingerprint TEXT NOT NULL DEFAULT '',
+    mfa_verified_at BIGINT NULL,
     CONSTRAINT ck_audit_event_kind CHECK (kind IN ('login', 'operation')),
     CONSTRAINT ck_audit_event_user CHECK (user_id IS NULL OR user_id > 0),
     CONSTRAINT ck_audit_event_status CHECK (status BETWEEN 100 AND 599),
@@ -440,6 +484,10 @@ COMMENT ON COLUMN t_audit_event.response_params IS 'Sanitized response body; sec
 
 COMMENT ON COLUMN t_audit_event.header IS 'Request headers for login and operation audit; sensitive values fully redacted; historical rows have no snapshot';
 
+COMMENT ON COLUMN t_audit_event.mfa_fingerprint IS 'Opaque identifier of the sensitive-operation verification reused by this session; never derived from a secret or OTP';
+
+COMMENT ON COLUMN t_audit_event.mfa_verified_at IS 'Unix milliseconds of the sensitive-operation verification, not login verification';
+
 CREATE INDEX idx_audit_event_kind_time ON t_audit_event (kind, occurred_at DESC, id DESC);
 
 CREATE INDEX idx_audit_event_username_time ON t_audit_event (username, occurred_at DESC);
@@ -456,6 +504,10 @@ DROP TABLE t_msg;
 DROP TABLE t_dictionary;
 
 DROP TABLE t_user_user_group_relation;
+
+DROP TABLE t_user_recovery_code;
+
+DROP TABLE t_user_totp;
 
 DROP TABLE t_user;
 

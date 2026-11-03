@@ -1,9 +1,7 @@
 package user
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -123,13 +121,7 @@ func (m *Module) create(c *gin.Context) {
 func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	var request CreateUserRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &request, server.BodyBusiness); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
@@ -195,13 +187,7 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request UpdateUserRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
-		return
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if err := server.DecodeJSON(w, r, &request, server.BodyBusiness); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}

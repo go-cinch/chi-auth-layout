@@ -323,3 +323,18 @@ func TestPackageQualifiedSchemasAndAnyJSON(t *testing.T) {
 		t.Fatal(output.String())
 	}
 }
+
+func TestEmbeddedLoginResultSchema(t *testing.T) {
+	base := &ast.StructType{Fields: &ast.FieldList{List: []*ast.Field{
+		{Names: []*ast.Ident{ast.NewIdent("AccessToken")}, Type: ast.NewIdent("string"), Tag: &ast.BasicLit{Kind: token.STRING, Value: "`json:\"access_token\"`"}},
+	}}}
+	pkg := &sourcePackage{name: "auth", types: map[string]ast.Expr{"LoginResult": base}}
+	g := &generator{components: map[string]*schema{}, visiting: map[string]bool{}}
+	result := g.structSchema(pkg, &ast.StructType{Fields: &ast.FieldList{List: []*ast.Field{
+		{Type: &ast.StarExpr{X: ast.NewIdent("LoginResult")}},
+		{Names: []*ast.Ident{ast.NewIdent("RecoveryCodes")}, Type: &ast.ArrayType{Elt: ast.NewIdent("string")}, Tag: &ast.BasicLit{Kind: token.STRING, Value: "`json:\"recovery_codes\"`"}},
+	}}})
+	if result.properties["access_token"] == nil || result.properties["recovery_codes"] == nil {
+		t.Fatal("embedded enrollment session fields missing")
+	}
+}

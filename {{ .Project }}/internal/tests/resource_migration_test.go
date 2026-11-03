@@ -116,7 +116,7 @@ func TestDeveloperPublishRefreshesFiltersAndStoredProjections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil)
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
 	actions.SetPermissionAdministration(policy)
 	dictionaries.SetPermissionAdministration(policy)
 	var identity authn.Identity

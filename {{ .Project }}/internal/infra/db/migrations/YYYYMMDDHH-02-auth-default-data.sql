@@ -53,6 +53,8 @@ TRUNCATE TABLE
     t_msg_recipient,
     t_msg,
     t_user_user_group_relation,
+    t_user_recovery_code,
+    t_user_totp,
     t_user,
     t_user_group,
     t_role

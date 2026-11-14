@@ -142,19 +142,15 @@ func TestMigrateUpDoesNotReplayAppliedMigrations(t *testing.T) {
 }
 
 func TestDefaultUserPasswordsMatchUsernames(t *testing.T) {
-	names, err := fs.Glob(SQLFiles, SQLRoot+"/*-02-auth-default-data.sql")
-	if err != nil || len(names) != 1 {
-		t.Fatalf("default data migration = %#v, %v", names, err)
-	}
-	contents, err := SQLFiles.ReadFile(names[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	contents := readSeedMigration(t, "02-auth-default-data")
 	pattern := regexp.MustCompile(`(?m)^\s*\(\d+,\s*(\d+|NULL),\s*'([^']+)',\s*'[^']+',\s*'([^']+)',\s*1,\s*'[^']*'\)[,;]$`)
-	matches := pattern.FindAllSubmatch(contents, -1)
+	matches := pattern.FindAllSubmatch([]byte(contents), -1)
 	expectedRoles := map[string]string{
-		"super": "1", "guest": "2", "readonly": "NULL", "write": "NULL",
+		"super": "1",
+{{ if not .Computed.only_super_final }}
+		"guest": "2", "readonly": "NULL", "write": "NULL",
 		"nodelete": "NULL", "admin": "3", "developer": "4", "operator": "5",
+{{ end }}
 	}
 	if len(matches) != len(expectedRoles) {
 		t.Fatalf("seed users = %d, want %d", len(matches), len(expectedRoles))
@@ -205,8 +201,9 @@ func TestDefaultAssignmentsReferenceSplitActionCatalog(t *testing.T) {
 		t.Fatalf("seed action codes = %d, want 35", len(codes))
 	}
 	assignments := regexp.MustCompile(`(?m)^\s*\(\d+,\s*'[^']+',\s*'[^']+',\s*'([^']+)'\)[,;]$`).FindAllStringSubmatch(accounts, -1)
-	if len(assignments) != 8 {
-		t.Fatalf("seed role/group assignments = %d, want 8", len(assignments))
+	const expectedAssignments = {{ if .Computed.only_super_final }}1{{ else }}8{{ end }}
+	if len(assignments) != expectedAssignments {
+		t.Fatalf("seed role/group assignments = %d, want %d", len(assignments), expectedAssignments)
 	}
 	for _, assignment := range assignments {
 		for _, code := range strings.Split(assignment[1], ",") {

@@ -294,8 +294,93 @@ func TestPublishEmptyResourcesKeepsAssociations(t *testing.T) {
 	}
 }
 
+func TestAuthSeedSelectionPostgres(t *testing.T) {
+	store := migrationDatabase(t)
+	assertCounts := func(users, roles, groups, relations int) {
+		t.Helper()
+		var gotUsers, gotRoles, gotGroups, gotRelations, statuses int
+		err := store.DB.QueryRowContext(t.Context(), `SELECT
+    (SELECT COUNT(*) FROM t_user), (SELECT COUNT(*) FROM t_role),
+    (SELECT COUNT(*) FROM t_user_group), (SELECT COUNT(*) FROM t_user_user_group_relation),
+    (SELECT COUNT(*) FROM t_user_msg_status)`).Scan(&gotUsers, &gotRoles, &gotGroups, &gotRelations, &statuses)
+		if err != nil || gotUsers != users || gotRoles != roles || gotGroups != groups || gotRelations != relations || statuses != users {
+			t.Fatalf("seed counts: users=%d roles=%d groups=%d relations=%d statuses=%d err=%v", gotUsers, gotRoles, gotGroups, gotRelations, statuses, err)
+		}
+	}
+{{ if .Computed.only_super_final }}
+	assertCounts(1, 1, 0, 0)
+{{ else }}
+	assertCounts(8, 5, 3, 3)
+{{ end }}
+	files, err := fs.Glob(migrationdb.SQLFiles, migrationdb.SQLRoot+"/*-02-auth-default-data.sql")
+	if err != nil || len(files) != 1 {
+		t.Fatal("auth seed migration lookup", files, err)
+	}
+	raw, err := migrationdb.SQLFiles.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, down, found := strings.Cut(string(raw), "-- +migrate Down")
+	if !found {
+		t.Fatal("auth seed migration missing Down")
+	}
+	// An unrelated sequence must not be reset by rolling back account seeds.
+	if _, err := store.DB.ExecContext(t.Context(), `SELECT setval(pg_get_serial_sequence('t_msg', 'id'), 7, TRUE)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB.ExecContext(t.Context(), down); err != nil {
+		t.Fatal("roll back auth seeds", err)
+	}
+	assertCounts(0, 0, 0, 0)
+	for _, table := range []string{"t_user", "t_role", "t_user_group", "t_user_user_group_relation", "t_user_msg_status", "t_msg"} {
+		var lastValue int64
+		var isCalled bool
+		// Table names are fixed test constants.
+		if err := store.DB.QueryRowContext(t.Context(), "SELECT last_value, is_called FROM "+table+"_id_seq").Scan(&lastValue, &isCalled); err != nil {
+			t.Fatal(err)
+		}
+		wantValue, wantCalled := int64(1), false
+		if table == "t_msg" {
+			wantValue, wantCalled = 7, true
+		}
+		if lastValue != wantValue || isCalled != wantCalled {
+			t.Fatalf("%s sequence after rollback = (%d, %t), want (%d, %t)", table, lastValue, isCalled, wantValue, wantCalled)
+		}
+	}
+	if _, err := store.DB.ExecContext(t.Context(), up); err != nil {
+		t.Fatal("restore auth seeds", err)
+	}
+{{ if .Computed.only_super_final }}
+	assertCounts(1, 1, 0, 0)
+{{ else }}
+	assertCounts(8, 5, 3, 3)
+{{ end }}
+	var superHasAll bool
+	if err := store.DB.QueryRowContext(t.Context(), `SELECT EXISTS (
+    SELECT 1 FROM t_user u JOIN t_role r ON r.id = u.role_id
+    JOIN t_action a ON a.code = r.action
+    WHERE u.username = 'super' AND r.word = 'super'
+        AND a.scope = 'admin' AND a.config->>'permission_scope' = '*'
+)`).Scan(&superHasAll); err != nil || !superHasAll {
+		t.Fatal("super lost its all permission", superHasAll, err)
+	}
+	for _, test := range []struct {
+		query string
+		want  int
+	}{
+		{`INSERT INTO t_user (username, code, password) VALUES ('new-user', 'NEWUSER1', 'unused') RETURNING id`, {{ if .Computed.only_super_final }}2{{ else }}9{{ end }}},
+		{`INSERT INTO t_role (name, word) VALUES ('New role', 'new-role') RETURNING id`, {{ if .Computed.only_super_final }}2{{ else }}6{{ end }}},
+		{`INSERT INTO t_user_group (name, word) VALUES ('New group', 'new-group') RETURNING id`, {{ if .Computed.only_super_final }}1{{ else }}4{{ end }}},
+	} {
+		var id int
+		if err := store.DB.QueryRowContext(t.Context(), test.query).Scan(&id); err != nil || id != test.want {
+			t.Fatalf("next seed id = %d, want %d: %v", id, test.want, err)
+		}
+	}
+}
+
 func TestResourcePermissionMigrationsAreReversible(t *testing.T) {
-	store := permissionDatabase(t)
+	store := migrationDatabase(t)
 	files, err := fs.Glob(migrationdb.SQLFiles, migrationdb.SQLRoot+"/*.sql")
 	if err != nil || len(files) == 0 {
 		t.Fatal("migration lookup", err)
@@ -340,7 +425,7 @@ func TestResourcePermissionMigrationsAreReversible(t *testing.T) {
 		t.Fatalf("reapply auth migrations: %v", err)
 	}
 	var users, actions int
-	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM t_user),(SELECT COUNT(*) FROM t_action)`).Scan(&users, &actions); err != nil || users != 8 || actions != 35 {
+	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM t_user),(SELECT COUNT(*) FROM t_action)`).Scan(&users, &actions); err != nil || users != {{ if .Computed.only_super_final }}1{{ else }}8{{ end }} || actions != 35 {
 		t.Fatalf("seed restoration: users=%d actions=%d err=%v", users, actions, err)
 	}
 }

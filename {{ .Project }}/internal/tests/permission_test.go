@@ -31,7 +31,7 @@ import (
 )
 
 // CHI_AUTH_TEST_DSN must point to an isolated PostgreSQL test database.
-func permissionDatabase(t *testing.T) *db.Store {
+func migrationDatabase(t *testing.T) *db.Store {
 	t.Helper()
 	dsn := os.Getenv("CHI_AUTH_TEST_DSN")
 	if dsn == "" {
@@ -70,6 +70,29 @@ func permissionDatabase(t *testing.T) *db.Store {
 		t.Fatal(err)
 	}
 
+	return &db.Store{DB: database}
+}
+
+func permissionDatabase(t *testing.T) *db.Store {
+	t.Helper()
+	store := migrationDatabase(t)
+	database := store.DB
+{{ if .Computed.only_super_final }}
+	// Business tests create their own participants when demo seeds are excluded.
+	if _, err := database.ExecContext(t.Context(), `
+INSERT INTO t_user (id, username, code, password, status, action)
+SELECT id, username, 'TESTUSR' || id, 'unused', 1,
+    (SELECT code FROM t_action WHERE word = 'admin:default:system:default')
+FROM (VALUES (2, 'guest'), (3, 'readonly'), (4, 'write'), (5, 'nodelete'),
+    (6, 'admin'), (7, 'developer'), (8, 'operator')) AS fixture(id, username);
+INSERT INTO t_user_group (id, name, word) VALUES (1, 'Test group', 'test-group');
+INSERT INTO t_user_msg_status (user_id) SELECT id FROM t_user WHERE id > 1;
+SELECT setval(pg_get_serial_sequence('t_user', 'id'), (SELECT MAX(id) FROM t_user), TRUE);
+SELECT setval(pg_get_serial_sequence('t_user_group', 'id'), (SELECT MAX(id) FROM t_user_group), TRUE);
+`); err != nil {
+		t.Fatal(err)
+	}
+{{ end }}
 	if _, err := database.ExecContext(t.Context(), `UPDATE t_user SET status=2, metadata='{"lock_expired_at":1790000000000}', last_logged_in_at=1788220800000 WHERE id=3`); err != nil {
 		t.Fatal(err)
 	}
@@ -615,9 +638,11 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 		codes                 int
 	}{
 		{"super", true, true, true, 1},
+{{ if not .Computed.only_super_final }}
 		{"admin", false, false, true, 25},
 		{"developer", false, true, true, 30},
 		{"operator", false, false, false, 2},
+{{ end }}
 	} {
 		t.Run(test.word, func(t *testing.T) {
 			var roleID int64

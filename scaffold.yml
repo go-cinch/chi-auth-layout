@@ -89,6 +89,13 @@ questions:
       type: string
       default: "true"
 
+  - name: only_super
+    prompt:
+      message: Seed only the super user and role (false includes demo accounts and groups)?
+      type: select
+      options: ["true", "false"]
+      default: "true"
+
 computed:
   brand_domain_final: '{{ $domain := toLower (trim (or .Scaffold.brand_domain "go-cinch.top")) }}{{ if or (gt (len $domain) 253) (not (regexMatch "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])$" $domain)) }}{{ template "brand_domain must be a valid domain without scheme, port or path" . }}{{ end }}{{ $domain }}'
   # JSON preserves string names such as "true"; Scaffold coerces scalar computed values.
@@ -105,6 +112,7 @@ computed:
   enable_grpc_final: '{{ $enabled := or .Scaffold.enable_grpc "true" }}{{ if or (eq $enabled "true") (eq $enabled "false") }}{{ eq $enabled "true" }}{{ else }}{{ template "enable_grpc must be true or false" . }}{{ end }}'
   enable_redis_final: '{{ eq .Scaffold.enable_redis "true" }}'
   enable_trace_final: '{{ eq (or .Scaffold.enable_trace "true") "true" }}'
+  only_super_final: '{{ $enabled := or .Scaffold.only_super "true" }}{{ if or (eq $enabled "true") (eq $enabled "false") }}{{ eq $enabled "true" }}{{ else }}{{ template "only_super must be true or false" . }}{{ end }}'
 
 features:
   - value: '{{ eq .Computed.http_router_final "gin" }}'
@@ -162,3 +170,4 @@ presets:
     enable_grpc: "true"
     enable_redis: "true"
     enable_trace: "true"
+    only_super: "true"

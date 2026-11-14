@@ -1,8 +1,16 @@
 -- +migrate Up
--- Seed accounts, roles, user groups and other non-catalog defaults.
+-- Required super account and role in both seed modes.
 -- Assignment codes are resolved by the following action seed migration before startup completes.
 INSERT INTO t_role (id, name, word, action) VALUES
-    (1, 'Super', 'super', 'M6TG8SR9'),
+    (1, 'Super', 'super', 'M6TG8SR9');
+
+-- The initial super password is super.
+INSERT INTO t_user (id, role_id, username, code, password, status, action) VALUES
+    (1, 1, 'super', 'RWBAAHC5', '$2a$10$Wx41MADqB3kuLD/bdD8DIeph55Oeo9HABKGt2p2ilqdkHAfZ7EGPm', 1, 'B7RP4HYW');
+
+{{ if not .Computed.only_super_final -}}
+-- Additional example identities are included only when only_super=false.
+INSERT INTO t_role (id, name, word, action) VALUES
     (2, 'Guest', 'guest', '35VY9TRL'),
     (3, 'Admin', 'admin', 'B7RP4HYW,35VY9TRL,Y6RW5544,PMWSQYY5,R2LTBEEG,JBVF9YWV,F9PEAFVW,VLN9HX2E,K4AQMSC6,B2VYAELW,XXY567KR,3V5GWBQT,QYALLJEG,K5VF772F,E66VGBKA,5RNWYB4S,TW535HD8,V75R23SD,JJNWC246,9TS8JETG,SNP225K5,47WDGP7H,GW3JY8SJ,SKFRSH2E,HFSNA574'),
     (4, 'Developer', 'developer', 'B7RP4HYW,35VY9TRL,Y6RW5544,PMWSQYY5,R2LTBEEG,JBVF9YWV,F9PEAFVW,VLN9HX2E,K4AQMSC6,B2VYAELW,XXY567KR,3V5GWBQT,QYALLJEG,K5VF772F,E66VGBKA,5RNWYB4S,TW535HD8,V75R23SD,H3HW2LEB,HED6QQTL,E3WB6LE7,MCHJ3RY3,JJNWC246,9TS8JETG,SNP225K5,47WDGP7H,GW3JY8SJ,SKFRSH2E,HFSNA574,76JJGCBN'),
@@ -19,9 +27,7 @@ INSERT INTO t_user_group (id, name, word, action) VALUES
     (3, 'No Delete', 'nodelete', '35VY9TRL,SKFRSH2E,Y6RW5544,PMWSQYY5,R2LTBEEG,F9PEAFVW,VLN9HX2E,K4AQMSC6,XXY567KR,3V5GWBQT,QYALLJEG,E66VGBKA,5RNWYB4S,TW535HD8,H3HW2LEB,HED6QQTL,E3WB6LE7,JJNWC246,9TS8JETG,47WDGP7H,GW3JY8SJ');
 
 -- Local seed credentials intentionally use the username as the password.
--- Preserve the finalized seed accounts; group defaults only affect future creation.
 INSERT INTO t_user (id, role_id, username, code, password, status, action) VALUES
-    (1, 1, 'super', 'RWBAAHC5', '$2a$10$Wx41MADqB3kuLD/bdD8DIeph55Oeo9HABKGt2p2ilqdkHAfZ7EGPm', 1, 'B7RP4HYW'),
     (2, 2, 'guest', 'VWKNYWNF', '$2a$10$DzWbkb12WHoyj5UPIAdHBOYXFi6jn5gzQRUoOU8c6oZ9XJx9w6Tju', 1, 'B7RP4HYW'),
     (3, NULL, 'readonly', 'SWS8MCD6', '$2a$10$e5bhTbZUo8JLBWOfxWY7A.BpiGCTgvV3PxIhPozM9UolwFuENjIZi', 1, 'B7RP4HYW'),
     (4, NULL, 'write', 'C4FL7VGG', '$2a$10$SB4cqKKE5t9ACvMXtHaJuOafN1nvJgdK.5XxVAITBCSsU.gSNTbAm', 1, 'B7RP4HYW'),
@@ -35,6 +41,7 @@ INSERT INTO t_user_user_group_relation (user_id, user_group_id) VALUES
     (4, 2),
     (5, 3);
 
+{{ end -}}
 -- A fresh schema has no messages; initialize zero-count statistics for seed users.
 INSERT INTO t_user_msg_status (user_id)
 SELECT id
@@ -42,24 +49,32 @@ FROM t_user
 ORDER BY id;
 
 SELECT setval(pg_get_serial_sequence('t_role', 'id'), (SELECT MAX(id) FROM t_role), TRUE);
+{{ if not .Computed.only_super_final -}}
 SELECT setval(pg_get_serial_sequence('t_user_group', 'id'), (SELECT MAX(id) FROM t_user_group), TRUE);
+{{ end -}}
 SELECT setval(pg_get_serial_sequence('t_user', 'id'), (SELECT MAX(id) FROM t_user), TRUE);
 
 -- +migrate Down
--- Clear the non-catalog auth tables and reset their sequences.
-TRUNCATE TABLE
-    t_auth_email_code,
-    t_auth_email_cooldown,
-    t_sensitive_operation,
-    t_sensitive_scan,
-    t_audit_event,
-    t_user_msg_status,
-    t_msg_recipient,
-    t_msg,
-    t_user_user_group_relation,
-    t_user_recovery_code,
-    t_user_totp,
-    t_user,
-    t_user_group,
-    t_role
-RESTART IDENTITY;
+-- Undo only the tables seeded above. DELETE avoids requiring every table
+-- referencing t_user to participate in a TRUNCATE.
+DELETE FROM t_user_msg_status;
+
+{{ if not .Computed.only_super_final -}}
+DELETE FROM t_user_user_group_relation;
+
+{{ end -}}
+DELETE FROM t_user;
+
+{{ if not .Computed.only_super_final -}}
+DELETE FROM t_user_group;
+
+{{ end -}}
+DELETE FROM t_role;
+
+SELECT setval(pg_get_serial_sequence('t_user_msg_status', 'id'), 1, FALSE);
+{{ if not .Computed.only_super_final -}}
+SELECT setval(pg_get_serial_sequence('t_user_user_group_relation', 'id'), 1, FALSE);
+SELECT setval(pg_get_serial_sequence('t_user_group', 'id'), 1, FALSE);
+{{ end -}}
+SELECT setval(pg_get_serial_sequence('t_user', 'id'), 1, FALSE);
+SELECT setval(pg_get_serial_sequence('t_role', 'id'), 1, FALSE);

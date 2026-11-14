@@ -30,6 +30,14 @@ on:
           - default
           - "true"
           - "false"
+      only_super:
+        description: ONLY_SUPER (default seeds only the super user and role)
+        type: choice
+        default: default
+        options:
+          - default
+          - "true"
+          - "false"
 
 concurrency:
   group: sync-auth-to-demos
@@ -98,10 +106,11 @@ jobs:
           INPUT_DELETE_OLD_SQL: ${{ inputs.delete_old_sql }}
           INPUT_HTTP_ROUTER: ${{ inputs.http_router }}
           INPUT_ENABLE_GRPC: ${{ inputs.enable_grpc }}
+          INPUT_ONLY_SUPER: ${{ inputs.only_super }}
         run: |
           set -euo pipefail
           set --
-          for option in DELETE_OLD_SQL HTTP_ROUTER ENABLE_GRPC; do
+          for option in DELETE_OLD_SQL HTTP_ROUTER ENABLE_GRPC ONLY_SUPER; do
             input_name="INPUT_${option}"
             value="${!input_name}"
             if [ -n "$value" ] && [ "$value" != default ]; then

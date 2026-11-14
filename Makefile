@@ -7,10 +7,17 @@ PROJECT ?= auth-service
 OUTPUT_DIR ?= ..
 HTTP_ROUTER ?= chi
 ENABLE_GRPC ?= true
+ONLY_SUPER ?= true
 DELETE_OLD_SQL ?= false
 DELETE_OLD_CREDENTIALS ?= false
 LOCAL_EMAIL_AUDIT_URL ?= http://127.0.0.1:5666/audit/operation
 LOCAL_EMAIL_UNLINK_URL ?= http://127.0.0.1:5666/auth/unbind-email
+
+ifneq ($(ONLY_SUPER),true)
+ifneq ($(ONLY_SUPER),false)
+$(error ONLY_SUPER must be true or false)
+endif
+endif
 
 ifneq ($(ENABLE_GRPC),true)
 ifneq ($(ENABLE_GRPC),false)
@@ -34,7 +41,7 @@ test-local:
 	sh ./scripts/test-local.sh
 
 full:
-	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(OUTPUT_DIR)" --run-hooks=always --no-prompt --preset=full "Project=$(PROJECT)" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))' 'brand_domain=$(subst ','"'"',$(BRAND_DOMAIN))'
+	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(OUTPUT_DIR)" --run-hooks=always --no-prompt --preset=full "Project=$(PROJECT)" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" "only_super=$(ONLY_SUPER)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))' 'brand_domain=$(subst ','"'"',$(BRAND_DOMAIN))'
 
 # SQL history and authentication credentials are preserved independently by default.
 # Recreate the demo directory to remove obsolete source files. In preserve mode,
@@ -160,7 +167,7 @@ local:
 	trap 'exit 130' INT; \
 	trap 'exit 143' TERM; \
 	rm -rf -- "$$auth_dir"; \
-	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full "Project=auth" "http_port=8081" 'email_unlink_url=$(subst ','"'"',$(LOCAL_EMAIL_UNLINK_URL))' 'email_audit_url=$(subst ','"'"',$(LOCAL_EMAIL_AUDIT_URL))' "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))' 'brand_domain=$(subst ','"'"',$(BRAND_DOMAIN))'
+	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full "Project=auth" "http_port=8081" 'email_unlink_url=$(subst ','"'"',$(LOCAL_EMAIL_UNLINK_URL))' 'email_audit_url=$(subst ','"'"',$(LOCAL_EMAIL_AUDIT_URL))' "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" "only_super=$(ONLY_SUPER)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))' 'brand_domain=$(subst ','"'"',$(BRAND_DOMAIN))'
 
 # Exercise real rendering with custom brands without touching local demos.
 test-branding:

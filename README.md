@@ -58,6 +58,20 @@ Use `OUTPUT_DIR` to select another destination:
 make full PROJECT=my-service OUTPUT_DIR=/path/to/projects
 ```
 
+## Initial Accounts
+
+`ONLY_SUPER=true` (Scaffold: `only_super=true`) is the default: one super user,
+one super role and no user groups. Set `false` for the original 8 users, 5 roles
+and 3 groups.
+
+```bash
+make full PROJECT=my-service ONLY_SUPER=false
+# Direct Scaffold equivalent: append only_super=false
+```
+
+This selects initialization data; existing databases and SQL retained by
+`make local` with `DELETE_OLD_SQL=false` are unaffected.
+
 ## Regenerate the Local Demo
 
 Credential preservation uses Python 3 and PyYAML. Install the helper dependency
@@ -76,7 +90,7 @@ make local
 This deletes the entire `../demos/auth` directory and generates fresh source for
 the `auth` project on HTTP port 8081, removing obsolete packages and other local
 files. It also works when the demo does not exist yet.
-`HTTP_ROUTER` and `ENABLE_GRPC` select the same options as `make full`.
+`HTTP_ROUTER`, `ENABLE_GRPC` and `ONLY_SUPER` select the same options as `make full`.
 
 `DELETE_OLD_SQL=false` is the default, so `make local` retains SQL for an
 initialized database. It backs up the existing SQL before deleting the directory,
@@ -119,7 +133,7 @@ existing database may need migration reconciliation before the service starts.
 
 The **Sync Auth to Demos** workflow calls this same `make local` target.
 Push-triggered runs use the Makefile defaults. Manual runs can override
-`DELETE_OLD_SQL`, `HTTP_ROUTER` and `ENABLE_GRPC`; selecting `default` leaves
+`DELETE_OLD_SQL`, `HTTP_ROUTER`, `ENABLE_GRPC` and `ONLY_SUPER`; selecting `default` leaves
 the corresponding Makefile setting in control.
 
 ## Generate with Scaffold
@@ -251,7 +265,7 @@ make test
 ```
 
 This validates both routers with the full preset and with optional features
-disabled, generation without a preset, post-generation hooks, invalid selectors
+disabled, both seed modes, generation without a preset, post-generation hooks, invalid selectors
 and dependency isolation. Every combination must retain auth, PostgreSQL,
 business modules, migrations and the root font license.
 

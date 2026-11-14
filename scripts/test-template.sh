@@ -140,6 +140,7 @@ for router in chi gin; do
     grpc=true
     if [ "$variant" = minimal ]; then
       grpc=false
+      set -- "$@" only_super=false
       set -- "$@" enable_grpc=false enable_trace=false enable_redis=false enable_health_check=false
     fi
     # Omitting chi exercises the router default.
@@ -161,15 +162,17 @@ for router in chi gin; do
   mkdir -p "$output_dir"
   printf 'Generating %s through Make with hooks...\n' "$router"
   grpc=true
-  if [ "$router" = gin ]; then grpc=false; fi
-  make -C "$template_dir" full "PROJECT=$project" "OUTPUT_DIR=$output_dir" "HTTP_ROUTER=$router" "ENABLE_GRPC=$grpc"
+  only_super=true
+  expected_codes=36
+  if [ "$router" = gin ]; then grpc=false; only_super=false; expected_codes=43; fi
+  make -C "$template_dir" full "PROJECT=$project" "OUTPUT_DIR=$output_dir" "HTTP_ROUTER=$router" "ENABLE_GRPC=$grpc" "ONLY_SUPER=$only_super"
   test -f "$output_dir/$project/internal/common/config/config.gen.go"
   test -f "$output_dir/$project/internal/app/modules.gen.go"
   test -x "$output_dir/$project/bin/$project"
   test ! -e "$output_dir/$project/internal/cmd/seedcode"
   seed_files=$(find "$output_dir/$project/internal/infra/db/migrations" -maxdepth 1 -type f \( -name '*-02-auth-default-data.sql' -o -name '*-03-action-default-data.sql' \))
   seed_codes=$(rg --no-filename -o '\b[23456789ABCDEFGHJKLMNPQRSTVWXY]{8}\b' $seed_files | sort -u)
-  test "$(printf '%s\n' "$seed_codes" | wc -l | tr -d ' ')" = 43
+  test "$(printf '%s\n' "$seed_codes" | wc -l | tr -d ' ')" = "$expected_codes"
   if [ -n "$(printf '%s\n' "$template_seed_codes" "$seed_codes" | sort | uniq -d)" ]; then
     echo "default seed codes were not randomized" >&2
     exit 1
@@ -216,5 +219,19 @@ if scaffold new "$template_dir" --output-dir="$tmp_dir/invalid-grpc-scaffold" \
 fi
 rg -q 'enable_grpc must be true or false' "$tmp_dir/invalid-grpc-scaffold.log"
 test ! -e "$tmp_dir/invalid-grpc-scaffold/invalid/go.mod"
+
+printf 'Checking invalid seed selector values...\n'
+if make -C "$template_dir" full ONLY_SUPER=invalid "OUTPUT_DIR=$tmp_dir/invalid-seed-make" > "$tmp_dir/invalid-seed-make.log" 2>&1; then
+  cat "$tmp_dir/invalid-seed-make.log"
+  exit 1
+fi
+rg -q 'ONLY_SUPER must be true or false' "$tmp_dir/invalid-seed-make.log"
+if scaffold new "$template_dir" --output-dir="$tmp_dir/invalid-seed-scaffold" \
+  --run-hooks=never --no-prompt --preset=full Project=invalid only_super=invalid > "$tmp_dir/invalid-seed-scaffold.log" 2>&1; then
+  cat "$tmp_dir/invalid-seed-scaffold.log"
+  exit 1
+fi
+rg -q 'only_super must be true or false' "$tmp_dir/invalid-seed-scaffold.log"
+test ! -e "$tmp_dir/invalid-seed-scaffold/invalid/go.mod"
 
 printf 'All required-auth, PostgreSQL, router, optional-feature and hook checks passed.\n'

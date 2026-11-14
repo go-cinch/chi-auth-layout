@@ -60,14 +60,18 @@ YAML
 set -eu
 test "$1" = new
 output_dir=
+only_super=
 for arg in "$@"; do
   case "$arg" in
     --output-dir=*) output_dir=${arg#--output-dir=} ;;
+    only_super=*) only_super=${arg#only_super=} ;;
     --overwrite|--force) exit 9 ;;
   esac
 done
 test -n "$output_dir"
+case "$only_super" in true|false) ;; *) exit 10 ;; esac
 touch scaffold-called
+printf '%s\n' "$only_super" > scaffold-only-super
 sql_dir="$output_dir/auth/internal/infra/db/migrations"
 test ! -e "$output_dir/auth"
 if [ "${TEST_MODE:-success}" = early-failure ]; then exit 7; fi
@@ -199,6 +203,16 @@ assert_sql
 assert_jwt
 assert_binary
 printf 'PASS preserve historical SQL and append new migrations; repeated generation is stable\n'
+
+setup_case preserve-seed-selection
+run_local DELETE_OLD_SQL=false ONLY_SUPER=false
+test "$(cat "$layout_dir/scaffold-only-super")" = false
+for suffix in 12-new-feature 13-another-feature; do
+  printf 'generated 1 %s\n' "$suffix" > "$case_dir/expected/2026101920-$suffix.sql"
+done
+assert_sql
+assert_binary
+printf 'PASS seed selection reaches Scaffold without replacing preserved SQL\n'
 
 for sql_setting in true false; do
   setup_case "replace-credentials-$sql_setting"

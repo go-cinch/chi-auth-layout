@@ -44,6 +44,8 @@ auth:
   testing:
     # Local debugging only: accept fixed email verification code 000000.
     emailCode: false
+    # Local debugging only: accept reusable authenticator code 999999.
+    totpCode: false
     enableE2ETest: false
     # Optional live switch file. Only trimmed "true" enables E2E; read errors disable it.
     # When set, the file overrides enableE2ETest on every captcha validation.
@@ -64,8 +66,6 @@ auth:
     # Controls TOTP login verification and enrollment; email verification is independent.
     # Defaults to disabled when the generated project excludes Redis support.
     enabled: {{ .Computed.enable_redis_final }}
-    # Local debugging only: accept reusable authenticator code 999999.
-    debug: false
     # Previously bound users must re-enroll after recovery even when binding is optional.
     requireBinding: false
     hideOnboarding: true

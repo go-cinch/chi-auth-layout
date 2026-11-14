@@ -116,7 +116,7 @@ func (a *Application) initializeAuth(ctx context.Context, cfg *config.Config) er
 
 {{- end }}
 	verification, err := authmodule.NewVerification(a.db, verificationState, authmodule.VerificationConfig{
-		TOTPEnabled: cfg.Auth.TOTP.Enabled, TOTPDebug: cfg.Auth.TOTP.Debug, EmailEnabled: cfg.Email.Enabled,
+		TOTPEnabled: cfg.Auth.TOTP.Enabled, TOTPDebug: cfg.Auth.Testing.TOTPCode, EmailEnabled: cfg.Email.Enabled,
 		TOTPEnrollmentOptional: !cfg.Auth.TOTP.RequireBinding,
 		LoginTicketTTL:     cfg.Auth.MFA.LoginTicketTTL,
 		TOTPPeriod:         cfg.Auth.TOTP.Period, TOTPEnrollmentTTL: cfg.Auth.TOTP.EnrollmentTTL,

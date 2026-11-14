@@ -313,28 +313,28 @@ func TestOnboardingVisibilityConfiguration(t *testing.T) {
 
 func TestEmailAndTOTPDebugEnvironmentOverrides(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "debug.yml"), []byte("email:\n  enabled: true\n  skipDelivery: false\nauth:\n  totp:\n    enabled: true\n    debug: false\n  testing:\n    emailCode: false\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "debug.yml"), []byte("email:\n  enabled: true\n  skipDelivery: false\nauth:\n  totp:\n    enabled: true\n  testing:\n    emailCode: false\n    totpCode: false\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := LoadDir(dir)
-	if err != nil || cfg.Email.SkipDelivery || cfg.Auth.TOTP.Debug {
+	if err != nil || cfg.Email.SkipDelivery || cfg.Auth.Testing.TOTPCode || cfg.Auth.Testing.EmailCode {
 		t.Fatal("debug must default off", err)
 	}
 	t.Setenv("SERVICE_EMAIL_SKIPDELIVERY", "true")
 	cfg, _, err = LoadDir(dir)
-	if err != nil || !cfg.Email.SkipDelivery || cfg.Auth.TOTP.Debug || cfg.Auth.Testing.EmailCode {
+	if err != nil || !cfg.Email.SkipDelivery || cfg.Auth.Testing.TOTPCode || cfg.Auth.Testing.EmailCode {
 		t.Fatal("email debug must be independent", err)
 	}
 	t.Setenv("SERVICE_AUTH_TESTING_EMAILCODE", "true")
 	t.Setenv("SERVICE_EMAIL_SKIPDELIVERY", "false")
 	cfg, _, err = LoadDir(dir)
-	if err != nil || !cfg.Auth.Testing.EmailCode || cfg.Email.SkipDelivery {
+	if err != nil || !cfg.Auth.Testing.EmailCode || cfg.Auth.Testing.TOTPCode || cfg.Email.SkipDelivery {
 		t.Fatal("fixed OTP and SMTP suppression must be independent", err)
 	}
 	t.Setenv("SERVICE_EMAIL_SKIPDELIVERY", "true")
-	t.Setenv("SERVICE_AUTH_TOTP_DEBUG", "true")
+	t.Setenv("SERVICE_AUTH_TESTING_TOTPCODE", "true")
 	cfg, _, err = LoadDir(dir)
-	if err != nil || !cfg.Email.SkipDelivery || !cfg.Auth.TOTP.Debug || !cfg.Email.Enabled || !cfg.Auth.TOTP.Enabled {
+	if err != nil || !cfg.Email.SkipDelivery || !cfg.Auth.Testing.TOTPCode || !cfg.Email.Enabled || !cfg.Auth.TOTP.Enabled {
 		t.Fatal("debug overrides changed feature availability", err)
 	}
 }

@@ -30,6 +30,23 @@ func (value Role) MarshalJSON() ([]byte, error) {
 	return report.MarshalFields(plain(value), value.selectedFields)
 }
 
+func (m *Module) enrichSelected(ctx context.Context, items []Role, fields report.Fields) error {
+	if fields.Has("action_codes") || fields.Has("actions") || fields.Has("action_summaries") {
+		for i := range items {
+			items[i].ActionCodes = m.actions.SplitCodes(items[i].selectedActions)
+		}
+	}
+	if fields.Has("actions") {
+		if err := m.enrichList(ctx, items); err != nil {
+			return err
+		}
+	}
+	if fields.Has("action_summaries") {
+		return m.enrichSummaries(ctx, items, fields.Has("actions"))
+	}
+	return nil
+}
+
 func (m *Module) enrichList(ctx context.Context, items []Role) error {
 	codes := make([]string, 0)
 	for _, item := range items {

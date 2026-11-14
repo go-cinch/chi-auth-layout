@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/token"
 	"reflect"
-	"strconv"
 )
 
 // Keep distinct decoded inputs from alternative branches. Anonymous trailing-data
@@ -166,22 +165,4 @@ func jsonBodyDecoder(expression ast.Expr) bool {
 		return true
 	})
 	return body
-}
-
-func schemaExample(value *schema) string {
-	switch value.typeName {
-	case "integer":
-		if n, err := strconv.ParseInt(value.example, 10, 64); err == nil {
-			return strconv.FormatInt(n, 10)
-		}
-	case "number":
-		if n, err := strconv.ParseFloat(value.example, 64); err == nil {
-			return strconv.FormatFloat(n, 'g', -1, 64)
-		}
-	case "boolean":
-		if b, err := strconv.ParseBool(value.example); err == nil {
-			return strconv.FormatBool(b)
-		}
-	}
-	return strconv.Quote(value.example)
 }

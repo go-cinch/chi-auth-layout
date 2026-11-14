@@ -12,6 +12,9 @@ var defaultSensitiveKeys = []string{
 	"pwd",
 	"secret",
 	"token",
+	"x-totp-code",
+	"x-recovery-code",
+	"x-mfa-ticket",
 	"authorization",
 	"authentication",
 	"jwt",
@@ -140,16 +143,10 @@ func DSN(value string) string {
 		masked := strings.ReplaceAll(parsed.String(), "%2A", "*")
 		return strings.ReplaceAll(masked, "%2a", "*")
 	}
-	separator := strings.LastIndex(value, "@")
-	if separator < 0 {
-		return value
+	if strings.Contains(value, "@") {
+		return "***"
 	}
-	credentials := value[:separator]
-	password := strings.Index(credentials, ":")
-	if password < 0 {
-		return value
-	}
-	return credentials[:password+1] + Mask(credentials[password+1:]) + value[separator:]
+	return value
 }
 
 // Detect keyword DSNs from their first assignment, never from credential text.

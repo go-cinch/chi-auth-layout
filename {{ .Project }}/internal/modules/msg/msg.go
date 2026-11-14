@@ -327,24 +327,6 @@ func (m *Module) listMessages(ctx context.Context, userID int64, input ListInput
 	return value, nil
 }
 
-// UnreadStatus is a compact snapshot, independent of inbox pagination. The same
-// visibility predicate covers broadcasts, targeted delivery, deletion and expiry.
-// ObservedAt provides a server-clock anchor for local notification acknowledgements.
-type UnreadStatus struct {
-	UserID         int64  `json:"user_id"`
-	Count          int64  `json:"count"`
-	LatestUnreadAt *int64 `json:"latest_unread_at"`
-	ObservedAt     int64  `json:"observed_at"`
-}
-
-func (m *Module) UnreadCount(ctx context.Context, userID int64) (int64, error) {
-	value, err := m.Status(ctx, userID)
-	if err != nil {
-		return 0, err
-	}
-	return value.Count, nil
-}
-
 // Receipt writes and persisted statistics commit together. Locking precedes the
 // mutation so concurrent sends/reads cannot overwrite a newer aggregate.
 func (m *Module) Read(ctx context.Context, userID, id int64) error {

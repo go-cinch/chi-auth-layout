@@ -88,7 +88,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, localizer, nil, &auth.MFA{})
+	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, localizer, nil, &auth.Verification{})
 	actions := action.New(store, limits, localizer)
 	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions))
 
@@ -141,7 +141,7 @@ func TestFirstLoginPasswordReset(t *testing.T) {
 	state(0, 1, false)
 	a, b := login("old-secret"), login("old-secret")
 	for _, token := range []*auth.LoginResult{a, b} {
-		if _, err := authenticate(token.AccessToken, "/info"); !errors.Is(err, authn.ErrPasswordResetRequired) {
+		if _, err := authenticate(token.AccessToken, "/user"); !errors.Is(err, authn.ErrPasswordResetRequired) {
 			t.Fatalf("business bypass: %v", err)
 		}
 	}

@@ -41,15 +41,15 @@ func TestPasswordResetErrorHeader(t *testing.T) {
 		status int
 		want   string
 	}{
-		{"required", authn.ErrPasswordResetRequired, http.StatusForbidden, "true"},
-		{"wrapped", fmt.Errorf("restricted: %w", authn.ErrPasswordResetRequired), http.StatusForbidden, "true"},
+		{"required", authn.ErrPasswordResetRequired, http.StatusForbidden, ""},
+		{"wrapped", fmt.Errorf("restricted: %w", authn.ErrPasswordResetRequired), http.StatusForbidden, ""},
 		{"unauthorized", apperror.Unauthorized, http.StatusUnauthorized, ""},
 		{"forbidden", apperror.Forbidden, http.StatusForbidden, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
 			WriteError(response, httptest.NewRequest("GET", "/msg/unread-count", nil), test.status, test.err)
-			if got := response.Header().Get(authn.PasswordResetRequiredHeader); got != test.want {
+			if got := response.Header().Get("X-Password-Reset-Required"); got != test.want {
 				t.Fatalf("reset header = %q, want %q", got, test.want)
 			}
 			var body ErrorResponse

@@ -16,101 +16,9 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
     "permission_scope": "*"
 }'::JSONB),
     (2, 'admin:system:default', 'B7RP4HYW', 'admin:default:system:default', '{
-    "ui": [
-        {
-            "menu_key": "admin:menu:account:profile",
-            "menu_path": "/profile",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:account:profile:change-password"
-            ]
-        },
-        {
-            "menu_key": "admin:menu:msg:inbox",
-            "menu_path": "/msg/inbox",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:msg:inbox:query",
-                "admin:btn:msg:inbox:refresh",
-                "admin:btn:msg:inbox:view-detail",
-                "admin:btn:msg:inbox:mark-read",
-                "admin:btn:msg:inbox:mark-selected-read",
-                "admin:btn:msg:inbox:read-all",
-                "admin:btn:msg:inbox:delete",
-                "admin:btn:msg:inbox:delete-selected"
-            ]
-        },
-        {
-            "menu_key": "admin:menu:dashboard:overview",
-            "menu_path": "/dashboard/overview",
-            "page_entry": true,
-            "button_keys": [],
-            "parent_menu_key": "admin:menu:dashboard"
-        }
-    ],
+    "ui": [],
     "builtin": "default",
-    "endpoints": [
-        {
-            "path": "/auth/change/pwd",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/auth/captcha",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/auth/captcha/verify",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/msg/inbox/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        },
-        {
-            "path": "/msg/inbox",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/msg/inbox/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/msg/unread-count",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/msg/inbox/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/msg/inbox/read-all",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/auth/info",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/auth/reset/pwd",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/auth/challenge",
-            "method": "POST",
-            "protocol": "http"
-        }
-    ],
+    "endpoints": [],
     "feature_keys": [
         "admin:account:profile:default-access",
         "admin:msg:inbox:default-access",
@@ -1878,6 +1786,70 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
         }
     ],
     "feature_keys": null
+}'::JSONB);
+
+INSERT INTO t_action (id, action_group, code, word, config) VALUES
+    (38, 'admin:system:mail-template', '7MTRD234', 'admin:read:system:mail-template', '{
+    "ui": [],
+    "bindings": [
+        {
+            "operation": "read",
+            "feature_keys": [
+                "admin:system:mail-template:query",
+                "admin:system:mail-template:reset-query",
+                "admin:system:mail-template:refresh",
+                "admin:system:mail-template:view-detail"
+            ],
+            "resource_key": "admin:system:mail-template"
+        }
+    ],
+    "endpoints": []
+}'::JSONB);
+
+INSERT INTO t_action (id, action_group, code, word, config) VALUES
+    (39, 'admin:system:mail-template', '7MTCR234', 'admin:create:system:mail-template', '{
+    "ui": [],
+    "bindings": [
+        {
+            "operation": "create",
+            "feature_keys": [
+                "admin:system:mail-template:create"
+            ],
+            "resource_key": "admin:system:mail-template"
+        }
+    ],
+    "endpoints": []
+}'::JSONB);
+
+INSERT INTO t_action (id, action_group, code, word, config) VALUES
+    (40, 'admin:system:mail-template', '7MTED234', 'admin:update:system:mail-template', '{
+    "ui": [],
+    "bindings": [
+        {
+            "operation": "update",
+            "feature_keys": [
+                "admin:system:mail-template:edit",
+                "admin:system:mail-template:publish"
+            ],
+            "resource_key": "admin:system:mail-template"
+        }
+    ],
+    "endpoints": []
+}'::JSONB);
+
+INSERT INTO t_action (id, action_group, code, word, config) VALUES
+    (41, 'admin:system:mail-template', '7MTDL234', 'admin:delete:system:mail-template', '{
+    "ui": [],
+    "bindings": [
+        {
+            "operation": "delete",
+            "feature_keys": [
+                "admin:system:mail-template:delete"
+            ],
+            "resource_key": "admin:system:mail-template"
+        }
+    ],
+    "endpoints": []
 }'::JSONB);
 
 SELECT setval(pg_get_serial_sequence('t_action', 'id'), (SELECT MAX(id) FROM t_action), TRUE);

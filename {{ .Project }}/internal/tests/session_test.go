@@ -26,7 +26,8 @@ func sessionRedisClient(t *testing.T) *rds.Client {
 	}
 	var cfg config.Config
 	cfg.Redis.DSN = dsn
-	cfg.Redis.Prefix = fmt.Sprintf("test:session-%d:", time.Now().UnixNano())
+	cfg.Server.Env = "test"
+	cfg.Server.Name = fmt.Sprintf("session-%d", time.Now().UnixNano())
 	client, cleanup, err := rds.New(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +155,7 @@ func TestRedisSessionRefreshConvergesAndLogoutWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	identity := authn.Identity{UserID: 7, Username: "operator", Code: "CODE0007", CredentialVersion: 1}
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 7, Username: "operator", Code: "CODE0007", CredentialVersion: 1}
 	issued, err := sessions.Issue(ctx, identity, false)
 	if err != nil {
 		t.Fatal(err)

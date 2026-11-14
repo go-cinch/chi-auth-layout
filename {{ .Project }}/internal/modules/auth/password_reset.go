@@ -74,10 +74,10 @@ func (m *Module) ResetPassword(ctx context.Context, input PasswordResetInput) (*
 		if version != identity.CredentialVersion || status != userStatusActive {
 			return ErrUnauthorized
 		}
-		if required, err := m.mfaEnrollmentRequired(ctx, identity); err != nil {
+		if required, err := m.totpEnrollmentRequired(ctx, identity); err != nil {
 			return err
 		} else if required {
-			return ErrMFAEnrollmentRequired
+			return ErrTOTPEnrollmentRequired
 		}
 		if count != 0 {
 			return ErrPasswordResetNotRequired

@@ -200,7 +200,7 @@ func (m *Module) Create(ctx context.Context, input CreateRoleInput) (*Role, erro
 		return nil, ErrInvalid
 	}
 	var value *Role
-	err := m.store.Tx(ctx, func(ctx context.Context) error {
+	err := m.store.MutationTx(ctx, func(ctx context.Context) error {
 		if input.ActionBindings != nil {
 			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "role", "create", *input.ActionBindings)
 			if errors.Is(err, actionmodule.ErrInvalid) {
@@ -264,7 +264,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateRoleInput) (*
 		input.Word = &value
 	}
 	var value *Role
-	err := m.store.Tx(ctx, func(ctx context.Context) error {
+	err := m.store.MutationTx(ctx, func(ctx context.Context) error {
 		if input.ActionBindings != nil {
 			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "role", "update", *input.ActionBindings)
 			if errors.Is(err, actionmodule.ErrInvalid) {
@@ -373,7 +373,7 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 		}
 		return nil
 	}
-	return m.store.Tx(ctx, operation)
+	return m.store.MutationTx(ctx, operation)
 }
 
 func (m *Module) List(ctx context.Context, input ListRolesInput) (*ListRolesResult, error) {
@@ -399,20 +399,8 @@ func (m *Module) List(ctx context.Context, input ListRolesInput) (*ListRolesResu
 		if err != nil {
 			return nil, err
 		}
-		for i := range items {
-			if input.Fields.Has("actions") || input.Fields.Has("action_codes") || input.Fields.Has("action_summaries") {
-				items[i].ActionCodes = m.actions.SplitCodes(items[i].selectedActions)
-			}
-		}
-		if input.Fields.Has("actions") {
-			if err := m.enrichList(ctx, items); err != nil {
-				return nil, err
-			}
-		}
-		if input.Fields.Has("action_summaries") {
-			if err := m.enrichSummaries(ctx, items, input.Fields.Has("actions")); err != nil {
-				return nil, err
-			}
+		if err := m.enrichSelected(ctx, items, input.Fields); err != nil {
+			return nil, err
 		}
 		value.Items = items
 		return value, nil

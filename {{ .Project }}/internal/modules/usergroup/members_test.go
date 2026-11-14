@@ -11,6 +11,15 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/report"
 )
 
+func TestReplaceUsers(t *testing.T) {
+	m, mock := newTestModule(t)
+	mock.ExpectExec("DELETE FROM t_user_user_group_relation").WithArgs(int64(2)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO t_user_user_group_relation").WithArgs(int64(3), int64(2)).WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := replaceUsers(t.Context(), m.store.DB, 2, []int64{3}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSelectedGroupFields(t *testing.T) {
 	for _, fields := range []report.Fields{
 		{"member_count"}, {"member_preview"}, {"member_count", "member_preview"}, {"actions"}, {"users"}} {

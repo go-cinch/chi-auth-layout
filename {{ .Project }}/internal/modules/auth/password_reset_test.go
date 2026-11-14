@@ -152,7 +152,7 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
 	session, err := m.sessions.Issue(t.Context(), identity, true)
 	if err != nil {
 		t.Fatal(err)
@@ -194,10 +194,8 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 				t.Fatalf("%s %s = %d %s", method, path, w.Code, w.Body.String())
 			}
 			wantHeader := ""
-			if want == http.StatusForbidden {
-				wantHeader = "true"
-			}
-			if got := w.Header().Get(authn.PasswordResetRequiredHeader); got != wantHeader {
+
+			if got := w.Header().Get("X-Password-Reset-Required"); got != wantHeader {
 				t.Fatalf("%s %s reset header = %q, want %q", method, path, got, wantHeader)
 			}
 			return w
@@ -229,7 +227,7 @@ func TestResetHTTPRestrictedSession(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+token)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
-		if w.Code != 200 || w.Header().Get(authn.PasswordResetRequiredHeader) != "" {
+		if w.Code != 200 || w.Header().Get("X-Password-Reset-Required") != "" {
 			t.Fatalf("reset HTTP: %d %s", w.Code, w.Body.String())
 		}
 		var result LoginResult

@@ -42,7 +42,7 @@ func TestPermissionAdministrationPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var identity authn.Identity
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}}
 	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT id,username,code,credential_version FROM t_user WHERE id=2`).Scan(&identity.UserID, &identity.Username, &identity.Code, &identity.CredentialVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestPermissionAdministrationPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := verified.Context()
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.Verification{})
 	limits, _ := pagination.New(100, 100)
 	actions := action.New(store, limits, localizer)
 	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)

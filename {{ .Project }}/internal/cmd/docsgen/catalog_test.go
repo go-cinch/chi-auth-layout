@@ -39,7 +39,12 @@ func TestCatalogDocumentationMatchesHTTPContracts(t *testing.T) {
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/action/catalog", "/action/effective", "/dictionary/pub/i18n"} {
+	for path := range doc.Paths {
+		if strings.Contains(path, "/pub/") && !strings.HasPrefix(path, "/pub/") {
+			t.Fatalf("anonymous business endpoint outside the service public prefix: %s", path)
+		}
+	}
+	for _, path := range []string{"/action/catalog", "/action/effective", "/pub/i18n"} {
 		found := false
 		for _, parameter := range doc.Paths[path]["get"].Parameters {
 			if parameter.Name == "f" {

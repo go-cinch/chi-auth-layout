@@ -12,44 +12,29 @@ import (
 	"github.com/lib/pq"
 )
 
-func isMissingDatabase(err error, driver string) bool {
-	switch driver {
-	case "postgres":
-		var target *pq.Error
-		return errors.As(err, &target) && target.Code == "3D000"
-	default:
-		return false
-	}
+func isMissingDatabase(err error) bool {
+	var target *pq.Error
+	return errors.As(err, &target) && target.Code == "3D000"
 }
 
-func createDatabase(ctx context.Context, driver, dsn string) error {
-	var adminDSN string
-	var name string
-	var statement string
-	var err error
-	switch driver {
-	case "postgres":
-		adminDSN, name, err = postgresAdminDSN(dsn)
-		statement = "CREATE DATABASE " + quotePostgresIdentifier(name)
-	default:
-		return fmt.Errorf("unsupported database driver %q", driver)
-	}
+func createDatabase(ctx context.Context, dsn string) error {
+	adminDSN, name, err := postgresAdminDSN(dsn)
 	if err != nil {
 		return err
 	}
 
-	admin, err := sql.Open(driver, adminDSN)
+	admin, err := sql.Open(postgresDriver, adminDSN)
 	if err != nil {
 		return fmt.Errorf("open database server: %w", err)
 	}
 	defer admin.Close()
-	if _, err := admin.ExecContext(ctx, statement); err != nil {
+	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+quotePostgresIdentifier(name)); err != nil {
 		var target *pq.Error
-		if driver != "postgres" || !errors.As(err, &target) || target.Code != "42P04" {
+		if !errors.As(err, &target) || target.Code != "42P04" {
 			return fmt.Errorf("create database: %w", err)
 		}
 	}
-	slog.InfoContext(ctx, "database created: "+name, slog.String("operation", "database_create"), slog.String("outcome", "success"), slog.String("database", name), slog.String("driver", driver))
+	slog.InfoContext(ctx, "database created: "+name, slog.String("operation", "database_create"), slog.String("outcome", "success"), slog.String("database", name), slog.String("driver", postgresDriver))
 	return nil
 }
 

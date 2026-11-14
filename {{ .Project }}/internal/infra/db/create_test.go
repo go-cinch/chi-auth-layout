@@ -9,11 +9,8 @@ import (
 )
 
 func TestMissingDatabaseErrors(t *testing.T) {
-	if !isMissingDatabase(&pq.Error{Code: "3D000"}, "postgres") || isMissingDatabase(errors.New("x"), "postgres") {
+	if !isMissingDatabase(&pq.Error{Code: "3D000"}) || isMissingDatabase(errors.New("x")) {
 		t.Fatal("postgres missing database detection failed")
-	}
-	if isMissingDatabase(errors.New("x"), "sqlite") {
-		t.Fatal("unsupported driver reported missing database")
 	}
 }
 
@@ -30,10 +27,7 @@ func TestAdminDSNsAndIdentifiers(t *testing.T) {
 	if quotePostgresIdentifier(`a"b`) != `"a""b"` {
 		t.Fatal("identifier quoting failed")
 	}
-	if err := createDatabase(t.Context(), "sqlite", "dsn"); err == nil {
-		t.Fatal("unsupported driver was accepted")
-	}
-	if err := createDatabase(t.Context(), "postgres", "invalid"); err == nil {
+	if err := createDatabase(t.Context(), "invalid"); err == nil {
 		t.Fatal("invalid PostgreSQL DSN was accepted")
 	}
 }

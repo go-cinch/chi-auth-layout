@@ -27,7 +27,7 @@ setup_case() {
   cp "$template_dir/Makefile" "$layout_dir/Makefile"
   mkdir -p "$layout_dir/scripts"
   cp "$template_dir/scripts/local-credentials.py" "$layout_dir/scripts/"
-  for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data; do
+  for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data 05-mail-template-default-data; do
     printf 'original %s\n' "$suffix" > "$sql_dir/2026010101-$suffix.sql"
   done
   for suffix in 05-resource-permission-schema 11-sparse-default-groups 99-local-only; do
@@ -40,9 +40,10 @@ auth:
   jwt:
     key: "original-test-key"
     issuer: old
-  mfa:
-    encryptionKeyFile: 'keys/mfa secret.key'
-    totpPeriod: 30s
+  verification:
+    encryptionKeyFile: 'keys/totp secret.key'
+  totp:
+    period: 30s
   challengeEncryption:
     privateKeyFile: keys/challenge.pem
     keyId: original-challenge
@@ -50,7 +51,7 @@ auth:
     enabled: true
 YAML
   mkdir -p "$case_dir/demos/auth/keys"
-  printf 'original MFA key\n' > "$case_dir/demos/auth/keys/mfa secret.key"
+  printf 'original verification key\n' > "$case_dir/demos/auth/keys/totp secret.key"
   printf 'original RSA key\n' > "$case_dir/demos/auth/keys/challenge.pem"
   chmod 600 "$case_dir/demos/auth/keys/"*
   cp "$auth_config" "$case_dir/original-auth.yml"
@@ -73,22 +74,24 @@ if [ "${TEST_MODE:-success}" = early-failure ]; then exit 7; fi
 mkdir -p "$sql_dir" "$output_dir/auth/conf" "$output_dir/auth/bin"
 timestamp=2026101920
 if [ "${TEST_MODE:-success}" = out-of-order ]; then timestamp=2025010101; fi
-for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data 05-resource-permission-schema 11-sparse-default-groups 12-new-feature 13-another-feature; do
+for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data 05-mail-template-default-data 05-resource-permission-schema 11-sparse-default-groups 12-new-feature 13-another-feature; do
   printf 'generated %s %s\n' "${TEST_GENERATION:-1}" "$suffix" > "$sql_dir/$timestamp-$suffix.sql"
 done
 cat > "$output_dir/auth/conf/auth.yml" <<'YAML'
 auth:
-  jwt:
-    key: "generated-test-key"
-    issuer: generated
-  mfa:
+  session:
+    jwt:
+      key: "generated-test-key"
+      issuer: generated
+  verification:
     encryptionKeyFile: ""
-    totpPeriod: 1m
+  totp:
+    period: 1m
     enrollmentTTL: 5m
   challengeEncryption:
     privateKeyFile: ""
     keyId: generated-challenge
-  switches:
+  testing:
     enabled: true
 YAML
 cat > "$output_dir/auth/Makefile" <<'MAKE'
@@ -127,14 +130,14 @@ assert_sql() {
 }
 
 assert_jwt() {
-  test "$(sed -n '/^    key:/p' "$auth_config")" = '    key: "original-test-key"'
+  rg -q '^ +key: "original-test-key"$' "$auth_config"
   rg -q 'issuer: "?old"?$' "$auth_config"
-  rg -q 'totpPeriod: "?30s"?$' "$auth_config"
+  rg -q 'period: "?30s"?$' "$auth_config"
   rg -q 'keyId: "?original-challenge"?$' "$auth_config"
-  test "$(cat "$case_dir/demos/auth/keys/mfa secret.key")" = 'original MFA key'
+  test "$(cat "$case_dir/demos/auth/keys/totp secret.key")" = 'original verification key'
   test "$(cat "$case_dir/demos/auth/keys/challenge.pem")" = 'original RSA key'
   ! rg -q 'generated-test-key|original-test-key' "$case_dir/run.log"
-  ! rg -q 'original MFA key|original RSA key' "$case_dir/run.log"
+  ! rg -q 'original verification key|original RSA key' "$case_dir/run.log"
 }
 
 assert_binary() {
@@ -158,6 +161,28 @@ done
 rg -q 'historical MFA migrations cannot be preserved' "$case_dir/run.log"
 printf 'PASS incompatible historical MFA baseline fails before modifying the demo\n'
 
+setup_case incomplete-baseline
+rm "$sql_dir/2026010101-05-mail-template-default-data.sql"
+if run_local DELETE_OLD_SQL=false; then
+  echo 'incomplete baseline unexpectedly mixed with new seeds' >&2
+  exit 1
+fi
+test ! -e "$layout_dir/scaffold-called"
+rg -q 'retained SQL is missing the current auth baseline' "$case_dir/run.log"
+printf 'PASS incomplete baseline fails before generation\n'
+
+setup_case legacy-mail-baseline
+rm "$sql_dir/2026010101-05-mail-template-default-data.sql" "$case_dir/expected/2026010101-05-mail-template-default-data.sql"
+printf 'legacy mail history\n' > "$sql_dir/2026030303-32-email-linked-notice.sql"
+cp -p "$sql_dir/2026030303-32-email-linked-notice.sql" "$case_dir/expected/"
+run_local DELETE_OLD_SQL=false
+for suffix in 12-new-feature 13-another-feature; do
+  printf 'generated 1 %s\n' "$suffix" > "$case_dir/expected/2026101920-$suffix.sql"
+done
+assert_sql
+assert_binary
+printf 'PASS retained email history does not append fresh template seeds\n'
+
 setup_case preserve
 run_local DELETE_OLD_SQL=false
 for suffix in 12-new-feature 13-another-feature; do
@@ -180,7 +205,7 @@ for sql_setting in true false; do
   run_local "DELETE_OLD_SQL=$sql_setting" DELETE_OLD_CREDENTIALS=true
   rg -q 'key: "generated-test-key"' "$auth_config"
   rg -q 'issuer: generated' "$auth_config"
-  rg -q 'totpPeriod: 1m' "$auth_config"
+  rg -q 'period: 1m' "$auth_config"
   test ! -e "$case_dir/demos/auth/keys"
   printf 'PASS explicit credential replacement is independent of SQL mode (%s)\n' "$sql_setting"
 done
@@ -217,7 +242,7 @@ for setting in true default; do
   fi
   if [ "$effective_delete_old_sql" = true ]; then
     rm "$case_dir/expected"/*.sql
-    for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data 05-resource-permission-schema 11-sparse-default-groups 12-new-feature 13-another-feature; do
+    for suffix in 01-auth-schema 02-auth-default-data 03-action-default-data 04-dictionary-default-data 05-mail-template-default-data 05-resource-permission-schema 11-sparse-default-groups 12-new-feature 13-another-feature; do
       printf 'generated 1 %s\n' "$suffix" > "$case_dir/expected/2026101920-$suffix.sql"
     done
     test ! -e "$case_dir/demos/auth/rebuilt"
@@ -311,4 +336,32 @@ for setting in true false; do
   assert_binary
   test "$(cat "$case_dir/demos/another-demo/sentinel")" = 'keep sibling'
   printf 'PASS generate an absent demo (%s)\n' "$setting"
+done
+
+# A renamed runtime schema must retain pre-refactor keys and rollback bytes.
+for mode in success failure; do
+  setup_case "legacy-verification-$mode"
+  python3 - "$auth_config" <<'PY'
+import pathlib, sys, yaml
+path = pathlib.Path(sys.argv[1])
+config = yaml.safe_load(path.read_text())
+auth = config['auth']
+auth['mfa'] = {'encryptionKeyFile': auth.pop('verification')['encryptionKeyFile'], 'totpPeriod': auth.pop('totp')['period']}
+path.write_text(yaml.safe_dump(config, sort_keys=False))
+PY
+  cp -p "$auth_config" "$case_dir/legacy-auth.yml"
+  if [ "$mode" = success ]; then
+    run_local DELETE_OLD_SQL=true
+    assert_jwt
+    rg -q '^  verification:' "$auth_config"
+    rg -q '^  totp:' "$auth_config"
+  else
+    if TEST_MODE=failure run_local DELETE_OLD_SQL=true; then
+      echo 'expected failed generation for rollback' >&2
+      exit 1
+    fi
+    cmp "$case_dir/legacy-auth.yml" "$auth_config"
+    test "$(cat "$case_dir/demos/auth/keys/totp secret.key")" = 'original verification key'
+  fi
+  printf 'PASS legacy verification configuration preserves key material (%s)\n' "$mode"
 done

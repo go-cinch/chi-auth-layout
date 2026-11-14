@@ -3,6 +3,7 @@ package action
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
@@ -46,156 +47,14 @@ func (m *Module) ReconcileResourcePermissions(ctx context.Context, before, after
 		if err := rows.Scan(&current.id, &current.word, &current.group, &current.config); err != nil {
 			return false, err
 		}
-		converted, changed, err := MigrateConvertedResourceConfig(previous.ResourceCatalog, rc, current.config, resources, featureRenames)
+		config, changed, err := migrateResourceConfig(previous.ResourceCatalog, *catalog, current.word, current.config, resources, featureRenames)
+		if errors.Is(err, ErrInvalid) {
+			return false, nil
+		}
 		if err != nil {
 			return false, err
 		}
-		current.config = converted
-		var config map[string]json.RawMessage
-		if err := json.Unmarshal(current.config, &config); err != nil {
-			return false, err
-		}
-		if raw, exists := config["bindings"]; exists {
-			var bindings []map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &bindings); err != nil {
-				return false, err
-			}
-			bindingsChanged := false
-			for _, binding := range bindings {
-				var key string
-				if err := json.Unmarshal(binding["resource_key"], &key); err != nil {
-					return false, err
-				}
-				target := migratedKey(resources, key)
-				if target != key {
-					binding["resource_key"], err = json.Marshal(target)
-					if err != nil {
-						return false, err
-					}
-					bindingsChanged = true
-				}
-				var features []string
-				if rawFeatures, exists := binding["feature_keys"]; exists {
-					if err := json.Unmarshal(rawFeatures, &features); err != nil {
-						return false, err
-					}
-					featuresChanged := false
-					for i, feature := range features {
-						canonical := migratedKey(featureRenames, feature)
-						if canonical != feature {
-							features[i] = canonical
-							featuresChanged = true
-						}
-					}
-					if featuresChanged {
-						binding["feature_keys"], err = json.Marshal(features)
-						if err != nil {
-							return false, err
-						}
-						bindingsChanged = true
-					}
-				}
-			}
-			if bindingsChanged {
-				config["bindings"], err = json.Marshal(bindings)
-				if err != nil {
-					return false, err
-				}
-				changed = true
-			}
-		}
-		var resourceKey string
-		if raw, exists := config["resource_key"]; exists {
-			if err := json.Unmarshal(raw, &resourceKey); err != nil {
-				return false, err
-			}
-			if resourceKey != "" {
-				target := migratedKey(resources, resourceKey)
-				if target != resourceKey {
-					config["resource_key"], err = json.Marshal(target)
-					if err != nil {
-						return false, err
-					}
-					changed = true
-				}
-			}
-		}
-		for _, field := range []string{"resource_keys", "feature_keys"} {
-			raw, exists := config[field]
-			if !exists {
-				continue
-			}
-			var keys []string
-			if err := json.Unmarshal(raw, &keys); err != nil {
-				return false, err
-			}
-			fieldChanged := false
-			for i, key := range keys {
-				target := migratedKey(resources, key)
-				if field == "feature_keys" {
-					target = migratedKey(featureRenames, key)
-				}
-				if target != key {
-					keys[i] = target
-					fieldChanged = true
-				}
-			}
-			if fieldChanged {
-				encoded, err := json.Marshal(keys)
-				if err != nil {
-					return false, err
-				}
-				config[field] = encoded
-				changed = true
-			}
-		}
-		current.config, err = json.Marshal(config)
-		if err != nil {
-			return false, err
-		}
-		if !validStoredResourceSelection(rc, current.word, current.config) {
-			return false, nil
-		}
-		// Transport and UI edits also invalidate the projection when identifiers stay unchanged.
-		var stored Config
-		if err := json.Unmarshal(current.config, &stored); err != nil {
-			return false, err
-		}
-		projected := stored
-		if err := resolveStoredConfig(*catalog, current.word, &projected); err != nil {
-			return false, nil
-		}
-		if !reflect.DeepEqual(stored.UI, projected.UI) || !reflect.DeepEqual(stored.Endpoints, projected.Endpoints) || stored.PermissionScope != projected.PermissionScope || !reflect.DeepEqual(stored.PermissionScopes, projected.PermissionScopes) {
-			if len(projected.PermissionScopes) == 0 {
-				delete(config, "permission_scopes")
-			} else {
-				config["permission_scopes"], err = json.Marshal(projected.PermissionScopes)
-				if err != nil {
-					return false, err
-				}
-			}
-			if projected.PermissionScope == "" {
-				delete(config, "permission_scope")
-			} else {
-				config["permission_scope"], err = json.Marshal(projected.PermissionScope)
-				if err != nil {
-					return false, err
-				}
-			}
-			config["ui"], err = json.Marshal(projected.UI)
-			if err != nil {
-				return false, err
-			}
-			config["endpoints"], err = json.Marshal(projected.Endpoints)
-			if err != nil {
-				return false, err
-			}
-			current.config, err = json.Marshal(config)
-			if err != nil {
-				return false, err
-			}
-			changed = true
-		}
+		current.config = config
 		if changed {
 			changes = append(changes, current)
 		}
@@ -212,6 +71,190 @@ func (m *Module) ReconcileResourcePermissions(ctx context.Context, before, after
 		}
 	}
 	return true, nil
+}
+
+// migrateResourceConfig transforms one definition without database access. ErrInvalid
+// rejects the catalog update; malformed stored JSON remains an operational error.
+func migrateResourceConfig(before localization.ResourceCatalog, after localization.Catalog, word string, raw json.RawMessage, resources, featureRenames map[string]string) (json.RawMessage, bool, error) {
+	converted, changed, err := MigrateConvertedResourceConfig(before, after.ResourceCatalog, raw, resources, featureRenames)
+	if err != nil {
+		return nil, false, err
+	}
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(converted, &config); err != nil {
+		return nil, false, err
+	}
+	renamedBindings, err := renameResourceBindings(config, resources, featureRenames)
+	if err != nil {
+		return nil, false, err
+	}
+	renamedKeys, err := renameResourceSelectionKeys(config, resources, featureRenames)
+	if err != nil {
+		return nil, false, err
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return nil, false, err
+	}
+	if !validStoredResourceSelection(after.ResourceCatalog, word, encoded) {
+		return nil, false, ErrInvalid
+	}
+	var stored Config
+	if err := json.Unmarshal(encoded, &stored); err != nil {
+		return nil, false, err
+	}
+	refreshed, err := refreshResourceProjection(after, word, config, stored)
+	if err != nil {
+		return nil, false, err
+	}
+	if refreshed {
+		encoded, err = json.Marshal(config)
+	}
+	return encoded, changed || renamedBindings || renamedKeys || refreshed, err
+}
+
+// Preserve unknown fields and the distinction between absent, null and empty selections.
+func renameResourceBindings(config map[string]json.RawMessage, resources, featureRenames map[string]string) (bool, error) {
+	var err error
+	changed := false
+	if raw, exists := config["bindings"]; exists {
+		var bindings []map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &bindings); err != nil {
+			return false, err
+		}
+		bindingsChanged := false
+		for _, binding := range bindings {
+			var key string
+			if err := json.Unmarshal(binding["resource_key"], &key); err != nil {
+				return false, err
+			}
+			target := migratedKey(resources, key)
+			if target != key {
+				binding["resource_key"], err = json.Marshal(target)
+				if err != nil {
+					return false, err
+				}
+				bindingsChanged = true
+			}
+			var features []string
+			if rawFeatures, exists := binding["feature_keys"]; exists {
+				if err := json.Unmarshal(rawFeatures, &features); err != nil {
+					return false, err
+				}
+				featuresChanged := false
+				for i, feature := range features {
+					canonical := migratedKey(featureRenames, feature)
+					if canonical != feature {
+						features[i] = canonical
+						featuresChanged = true
+					}
+				}
+				if featuresChanged {
+					binding["feature_keys"], err = json.Marshal(features)
+					if err != nil {
+						return false, err
+					}
+					bindingsChanged = true
+				}
+			}
+		}
+		if bindingsChanged {
+			config["bindings"], err = json.Marshal(bindings)
+			if err != nil {
+				return false, err
+			}
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
+func renameResourceSelectionKeys(config map[string]json.RawMessage, resources, featureRenames map[string]string) (bool, error) {
+	var err error
+	changed := false
+	var resourceKey string
+	if raw, exists := config["resource_key"]; exists {
+		if err := json.Unmarshal(raw, &resourceKey); err != nil {
+			return false, err
+		}
+		if resourceKey != "" {
+			target := migratedKey(resources, resourceKey)
+			if target != resourceKey {
+				config["resource_key"], err = json.Marshal(target)
+				if err != nil {
+					return false, err
+				}
+				changed = true
+			}
+		}
+	}
+	for _, field := range []string{"resource_keys", "feature_keys"} {
+		raw, exists := config[field]
+		if !exists {
+			continue
+		}
+		var keys []string
+		if err := json.Unmarshal(raw, &keys); err != nil {
+			return false, err
+		}
+		fieldChanged := false
+		for i, key := range keys {
+			target := migratedKey(resources, key)
+			if field == "feature_keys" {
+				target = migratedKey(featureRenames, key)
+			}
+			if target != key {
+				keys[i] = target
+				fieldChanged = true
+			}
+		}
+		if fieldChanged {
+			encoded, err := json.Marshal(keys)
+			if err != nil {
+				return false, err
+			}
+			config[field] = encoded
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
+// Transport and UI edits also invalidate the projection when identifiers stay unchanged.
+func refreshResourceProjection(catalog localization.Catalog, word string, config map[string]json.RawMessage, stored Config) (bool, error) {
+	projected := stored
+	if err := resolveStoredConfig(catalog, word, &projected); err != nil {
+		return false, ErrInvalid
+	}
+	var err error
+	if !reflect.DeepEqual(stored.UI, projected.UI) || !reflect.DeepEqual(stored.Endpoints, projected.Endpoints) || stored.PermissionScope != projected.PermissionScope || !reflect.DeepEqual(stored.PermissionScopes, projected.PermissionScopes) {
+		if len(projected.PermissionScopes) == 0 {
+			delete(config, "permission_scopes")
+		} else {
+			config["permission_scopes"], err = json.Marshal(projected.PermissionScopes)
+			if err != nil {
+				return false, err
+			}
+		}
+		if projected.PermissionScope == "" {
+			delete(config, "permission_scope")
+		} else {
+			config["permission_scope"], err = json.Marshal(projected.PermissionScope)
+			if err != nil {
+				return false, err
+			}
+		}
+		config["ui"], err = json.Marshal(projected.UI)
+		if err != nil {
+			return false, err
+		}
+		config["endpoints"], err = json.Marshal(projected.Endpoints)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 func migratedKey(renames map[string]string, key string) string {

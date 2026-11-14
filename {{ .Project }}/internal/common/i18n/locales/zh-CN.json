@@ -83,11 +83,11 @@
   "AUTH_PERMISSION_GRANT_REQUIRED": "需要当前作用域的全部权限或权限分配权限",
   "DICTIONARY_VERSION_CONFLICT": "目录已被修改，请对比线上最新版本后再提交",
   "DICTIONARY_GROUP_NOT_EMPTY": "只能删除没有权限的分组",
-  "AUTH_MFA_INVALID": "验证码无效或已使用，请使用新的验证码",
-  "AUTH_STEP_UP_REQUIRED": "请先完成敏感操作的两步验证",
-  "AUTH_MFA_ENROLLMENT_REQUIRED": "请先绑定两步验证器",
-  "AUTH_MFA_ALREADY_ENABLED": "已绑定两步验证器",
-  "AUTH_MFA_RATE_LIMITED": "验证尝试次数过多，请稍后重试",
-  "AUTH_MFA_UNAVAILABLE": "两步验证暂时不可用，请稍后重试",
-  "AUTH_MFA_USER_NOT_FOUND": "用户不存在"
+  "AUTH_VERIFICATION_INVALID": "验证码无效或已使用，请使用新的验证码",
+  "AUTH_STEP_UP_REQUIRED": "请先完成敏感操作验证",
+  "AUTH_TOTP_ENROLLMENT_REQUIRED": "请先绑定 TOTP 验证器",
+  "AUTH_TOTP_ALREADY_BOUND": "已绑定 TOTP 验证器",
+  "AUTH_VERIFICATION_RATE_LIMITED": "验证尝试次数过多，请稍后重试",
+  "AUTH_VERIFICATION_UNAVAILABLE": "身份验证暂时不可用，请稍后重试",
+  "AUTH_TOTP_USER_NOT_FOUND": "用户不存在"
 }

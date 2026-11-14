@@ -118,7 +118,23 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "HTTP_INVALID_DICTIONARY_ENABLED": "enabled must be one boolean value",
                 "AUTH_INVALID_PASSWORD_CREDENTIAL": "invalid password change credential",
                 "AUTH_PASSWORD_RESET_NOT_REQUIRED": "Password reset is not required for this account",
-                "AUTH_INVALID_REGISTRATION_CREDENTIAL": "invalid registration credential"
+                "AUTH_INVALID_REGISTRATION_CREDENTIAL": "invalid registration credential",
+                "AUTH_UNLINK_FACTOR": "Link an authenticator before unlinking with a code.",
+                "AUTH_EMAIL_COOLDOWN": "Wait before requesting another verification code.",
+                "AUTH_EMAIL_OCCUPIED": "This email cannot be used for binding.",
+                "AUTH_UNLINK_INVALID": "This unlink request has expired. Start again.",
+                "AUTH_UNLINK_THROTTLED": "Too many password attempts. Try again later.",
+                "MAIL_TEMPLATE_INVALID": "Invalid email template",
+                "AUTH_EMAIL_UNAVAILABLE": "Email delivery is unavailable. Use password login or try again later.",
+                "MAIL_TEMPLATE_CONFLICT": "Template changed; reload before saving",
+                "AUTH_EMAIL_CODE_INVALID": "The verification code is invalid or expired.",
+                "AUTH_LOGIN_MFA_REQUIRED": "Complete login verification",
+                "MAIL_TEMPLATE_DUPLICATE": "Template ID already exists",
+                "MAIL_TEMPLATE_NOT_FOUND": "Email template not found",
+                "AUTH_EMAIL_ADDRESS_INVALID": "Enter a valid email address.",
+                "AUTH_EMAIL_BINDING_REQUIRED": "Bind an email before continuing.",
+                "MAIL_TEMPLATE_DELIVERY_UNAVAILABLE": "Email delivery is disabled or in debug mode; test email was not sent",
+                "AUTH_PASSWORD_VERIFICATION_REQUIRED": "Confirm your current password before recovering the authenticator."
             },
             "frontend": {
                 "ui": {
@@ -823,7 +839,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:system:dictionary": "Dictionary",
                     "admin:system:user-group": "User group",
                     "admin:dashboard:overview": "Overview",
-                    "admin:dashboard:workspace": "Workspace"
+                    "admin:dashboard:workspace": "Workspace",
+                    "admin:system:mail-template": "Email templates"
                 },
                 "scopes": {
                     "h5": "Mobile H5",
@@ -1022,7 +1039,11 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:update:system:user-group": "Edit user group",
                     "admin:all:system:all": "All permissions",
                     "admin:default:system:default": "Default permissions",
-                    "admin:grant:system:permission-admin": "Manage permissions"
+                    "admin:grant:system:permission-admin": "Manage permissions",
+                    "admin:read:system:mail-template": "View email templates",
+                    "admin:create:system:mail-template": "Create email templates",
+                    "admin:delete:system:mail-template": "Delete email templates",
+                    "admin:update:system:mail-template": "Edit email templates"
                 },
                 "buttons": {
                     "admin:btn:msg:inbox:query": "Search",
@@ -1103,7 +1124,15 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:btn:system:developer:compare-online": "Compare with online",
                     "admin:btn:system:user-group:remove-members": "Remove",
                     "admin:btn:system:dictionary:delete-selected": "Delete Selected",
-                    "admin:btn:system:user-group:delete-selected": "Delete Selected"
+                    "admin:btn:system:user-group:delete-selected": "Delete Selected",
+                    "admin:btn:system:mail-template:edit": "Edit",
+                    "admin:btn:system:mail-template:query": "Search",
+                    "admin:btn:system:mail-template:create": "Create",
+                    "admin:btn:system:mail-template:delete": "Delete",
+                    "admin:btn:system:mail-template:publish": "Publish",
+                    "admin:btn:system:mail-template:refresh": "Refresh",
+                    "admin:btn:system:mail-template:reset-query": "Reset",
+                    "admin:btn:system:mail-template:view-detail": "Details"
                 },
                 "profile": {
                     "updatePassword": "Update Password",
@@ -1205,7 +1234,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:system:user-group": "User group",
                     "admin:dashboard:overview": "Overview",
                     "admin:dashboard:workspace": "Workspace",
-                    "admin:high-risk:permission-admin": "Manage permissions"
+                    "admin:high-risk:permission-admin": "Manage permissions",
+                    "admin:system:mail-template": "Email templates"
                 },
                 "operations": {
                     "read": "View",
@@ -1816,7 +1846,23 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "HTTP_INVALID_DICTIONARY_ENABLED": "enabled 必须为单个布尔值",
                 "AUTH_INVALID_PASSWORD_CREDENTIAL": "修改密码的凭证无效或已过期，请重试",
                 "AUTH_PASSWORD_RESET_NOT_REQUIRED": "当前账号无需首次重置密码",
-                "AUTH_INVALID_REGISTRATION_CREDENTIAL": "注册凭证无效或已过期，请重试"
+                "AUTH_INVALID_REGISTRATION_CREDENTIAL": "注册凭证无效或已过期，请重试",
+                "AUTH_UNLINK_FACTOR": "请先绑定验证器，再使用动态码解绑邮箱",
+                "AUTH_EMAIL_COOLDOWN": "请等待倒计时结束后再发送验证码",
+                "AUTH_EMAIL_OCCUPIED": "该邮箱暂不可用于绑定",
+                "AUTH_UNLINK_INVALID": "解绑请求已失效，请重新发起",
+                "AUTH_UNLINK_THROTTLED": "密码验证次数过多，请稍后重试",
+                "MAIL_TEMPLATE_INVALID": "邮件模板内容无效",
+                "AUTH_EMAIL_UNAVAILABLE": "邮件服务暂不可用，请使用密码登录或稍后重试",
+                "MAIL_TEMPLATE_CONFLICT": "模板已被修改，请刷新后重试",
+                "AUTH_EMAIL_CODE_INVALID": "验证码错误或已过期",
+                "AUTH_LOGIN_MFA_REQUIRED": "请完成登录验证",
+                "MAIL_TEMPLATE_DUPLICATE": "模板 ID 已存在",
+                "MAIL_TEMPLATE_NOT_FOUND": "邮件模板不存在",
+                "AUTH_EMAIL_ADDRESS_INVALID": "请输入有效的邮箱地址",
+                "AUTH_EMAIL_BINDING_REQUIRED": "请绑定邮箱后继续",
+                "MAIL_TEMPLATE_DELIVERY_UNAVAILABLE": "邮件服务未启用或处于调试模式，无法发送测试邮件",
+                "AUTH_PASSWORD_VERIFICATION_REQUIRED": "请确认当前密码后恢复验证器"
             },
             "frontend": {
                 "ui": {
@@ -2521,7 +2567,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:system:dictionary": "字典",
                     "admin:system:user-group": "用户组",
                     "admin:dashboard:overview": "概览",
-                    "admin:dashboard:workspace": "工作台"
+                    "admin:dashboard:workspace": "工作台",
+                    "admin:system:mail-template": "邮件模板"
                 },
                 "scopes": {
                     "h5": "移动网页",
@@ -2720,7 +2767,11 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:update:system:user-group": "编辑用户组",
                     "admin:all:system:all": "全部权限",
                     "admin:default:system:default": "默认权限",
-                    "admin:grant:system:permission-admin": "权限分配"
+                    "admin:grant:system:permission-admin": "权限分配",
+                    "admin:read:system:mail-template": "查看邮件模板",
+                    "admin:create:system:mail-template": "新建邮件模板",
+                    "admin:delete:system:mail-template": "删除邮件模板",
+                    "admin:update:system:mail-template": "编辑邮件模板"
                 },
                 "buttons": {
                     "admin:btn:msg:inbox:query": "搜索",
@@ -2801,7 +2852,15 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:btn:system:developer:compare-online": "对比线上",
                     "admin:btn:system:user-group:remove-members": "移除",
                     "admin:btn:system:dictionary:delete-selected": "批量删除",
-                    "admin:btn:system:user-group:delete-selected": "批量删除"
+                    "admin:btn:system:user-group:delete-selected": "批量删除",
+                    "admin:btn:system:mail-template:edit": "编辑",
+                    "admin:btn:system:mail-template:query": "查询",
+                    "admin:btn:system:mail-template:create": "新建",
+                    "admin:btn:system:mail-template:delete": "删除",
+                    "admin:btn:system:mail-template:publish": "发布",
+                    "admin:btn:system:mail-template:refresh": "刷新",
+                    "admin:btn:system:mail-template:reset-query": "重置",
+                    "admin:btn:system:mail-template:view-detail": "详情"
                 },
                 "profile": {
                     "updatePassword": "更新密码",
@@ -2903,7 +2962,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:system:user-group": "用户组",
                     "admin:dashboard:overview": "概览",
                     "admin:dashboard:workspace": "工作台",
-                    "admin:high-risk:permission-admin": "权限分配"
+                    "admin:high-risk:permission-admin": "权限分配",
+                    "admin:system:mail-template": "邮件模板"
                 },
                 "operations": {
                     "read": "查看",
@@ -3851,23 +3911,63 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                         "method": "PATCH"
                     },
                     {
-                        "path": "/auth/mfa",
+                        "path": "/auth/totp",
                         "method": "GET"
                     },
                     {
-                        "path": "/auth/mfa/challenge",
+                        "path": "/auth/totp/challenge",
                         "method": "POST"
                     },
                     {
-                        "path": "/auth/mfa/setup",
+                        "path": "/auth/totp/setup",
                         "method": "POST"
                     },
                     {
-                        "path": "/auth/mfa/confirm",
+                        "path": "/auth/totp/confirm",
                         "method": "POST"
                     },
                     {
-                        "path": "/auth/mfa/test",
+                        "path": "/auth/totp/test",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/email/code/status",
+                        "method": "GET"
+                    },
+                    {
+                        "path": "/auth/email/code",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/email/bind",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/info",
+                        "method": "PATCH"
+                    },
+                    {
+                        "path": "/auth/email/unbind/status",
+                        "method": "GET"
+                    },
+                    {
+                        "path": "/auth/email/unbind/request",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/email/unbind",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/email/sensitive-code",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/totp/recovery/email-code",
+                        "method": "POST"
+                    },
+                    {
+                        "path": "/auth/totp/recovery/confirm",
                         "method": "POST"
                     }
                 ]
@@ -4562,12 +4662,120 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                         "method": "DELETE"
                     }
                 ]
+            },
+            "admin:system:mail-template:edit": {
+                "btn": [
+                    "admin:btn:system:mail-template:edit"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/mail-template/{id}",
+                        "method": "PATCH"
+                    },
+                    {
+                        "path": "/mail-template/{id}/test-send",
+                        "method": "POST"
+                    }
+                ]
+            },
+            "admin:system:mail-template:query": {
+                "btn": [
+                    "admin:btn:system:mail-template:query"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/mail-template",
+                        "method": "GET"
+                    }
+                ]
+            },
+            "admin:system:mail-template:create": {
+                "btn": [
+                    "admin:btn:system:mail-template:create"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/mail-template",
+                        "method": "POST"
+                    }
+                ]
+            },
+            "admin:system:mail-template:delete": {
+                "btn": [
+                    "admin:btn:system:mail-template:delete"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/mail-template/{id}",
+                        "method": "DELETE"
+                    }
+                ]
+            },
+            "admin:system:mail-template:publish": {
+                "btn": [
+                    "admin:btn:system:mail-template:publish"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/mail-template/{id}/publish",
+                        "method": "POST"
+                    }
+                ]
+            },
+            "admin:system:mail-template:refresh": {
+                "btn": [
+                    "admin:btn:system:mail-template:refresh"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/mail-template",
+                        "method": "GET"
+                    }
+                ]
+            },
+            "admin:system:mail-template:reset-query": {
+                "btn": [
+                    "admin:btn:system:mail-template:reset-query"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/mail-template",
+                        "method": "GET"
+                    }
+                ]
+            },
+            "admin:system:mail-template:view-detail": {
+                "btn": [
+                    "admin:btn:system:mail-template:view-detail"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/mail-template/{id}",
+                        "method": "GET"
+                    },
+                    {
+                        "path": "/mail-template/{id}/version",
+                        "method": "GET"
+                    },
+                    {
+                        "path": "/mail-template/{id}/version/{version}",
+                        "method": "GET"
+                    }
+                ]
             }
         },
         "resources": {
             "admin:audit": {
                 "kind": "directory",
-                "sort": 30,
+                "sort": 4,
                 "child_order": [
                     {
                         "key": "admin:audit:login",
@@ -4581,7 +4789,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:system": {
                 "kind": "directory",
-                "sort": 20,
+                "sort": 3,
                 "child_order": [
                     {
                         "key": "admin:system:user",
@@ -4609,6 +4817,10 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     },
                     {
                         "key": "admin:system:developer",
+                        "kind": "node"
+                    },
+                    {
+                        "key": "admin:system:mail-template",
                         "kind": "node"
                     }
                 ]
@@ -4654,7 +4866,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:dashboard": {
                 "kind": "directory",
-                "sort": 10,
+                "sort": 2,
                 "child_order": [
                     {
                         "key": "admin:dashboard:overview",
@@ -4684,7 +4896,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:msg:inbox": {
                 "kind": "resource",
-                "sort": 20,
+                "sort": 1,
                 "parent": "admin:default",
                 "entries": {
                     "admin:menu:msg:inbox": {
@@ -4704,7 +4916,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:system:msg": {
                 "kind": "resource",
-                "sort": 60,
+                "sort": 5,
                 "parent": "admin:system",
                 "entries": {
                     "admin:menu:system:msg": {
@@ -4741,7 +4953,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:audit:login": {
                 "kind": "resource",
-                "sort": 10,
+                "sort": 0,
                 "parent": "admin:audit",
                 "entries": {
                     "admin:menu:audit:login": {
@@ -4766,7 +4978,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:system:role": {
                 "kind": "resource",
-                "sort": 30,
+                "sort": 2,
                 "parent": "admin:system",
                 "entries": {
                     "admin:menu:system:role": {
@@ -4809,7 +5021,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:system:user": {
                 "kind": "resource",
-                "sort": 10,
+                "sort": 0,
                 "parent": "admin:system",
                 "entries": {
                     "admin:menu:system:user": {
@@ -4856,13 +5068,13 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:high-risk:all": {
                 "kind": "resource",
-                "sort": 10,
+                "sort": 1,
                 "parent": "admin:high-risk",
                 "permission_scope": "*"
             },
             "admin:system:action": {
                 "kind": "resource",
-                "sort": 40,
+                "sort": 3,
                 "parent": "admin:system",
                 "entries": {
                     "admin:menu:system:action": {
@@ -4908,7 +5120,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:account:profile": {
                 "kind": "resource",
-                "sort": 10,
+                "sort": 0,
                 "parent": "admin:default",
                 "entries": {
                     "admin:menu:account:profile": {
@@ -4928,7 +5140,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:audit:operation": {
                 "kind": "resource",
-                "sort": 20,
+                "sort": 1,
                 "parent": "admin:audit",
                 "entries": {
                     "admin:menu:audit:operation": {
@@ -4953,7 +5165,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:default:session": {
                 "kind": "resource",
-                "sort": 30,
+                "sort": 2,
                 "parent": "admin:default",
                 "operations": {
                     "read": {
@@ -4966,7 +5178,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:system:developer": {
                 "kind": "resource",
-                "sort": 70,
+                "sort": 6,
                 "parent": "admin:system",
                 "entries": {
                     "admin:menu:system:developer": {
@@ -4994,7 +5206,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:system:dictionary": {
                 "kind": "resource",
-                "sort": 50,
+                "sort": 4,
                 "parent": "admin:system",
                 "entries": {
                     "admin:menu:system:dictionary": {
@@ -5037,7 +5249,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:system:user-group": {
                 "kind": "resource",
-                "sort": 20,
+                "sort": 1,
                 "parent": "admin:system",
                 "entries": {
                     "admin:menu:system:user-group": {
@@ -5083,7 +5295,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:dashboard:overview": {
                 "kind": "resource",
-                "sort": 10,
+                "sort": 0,
                 "parent": "admin:dashboard",
                 "entries": {
                     "admin:menu:dashboard:overview": {
@@ -5102,7 +5314,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
             },
             "admin:dashboard:workspace": {
                 "kind": "resource",
-                "sort": 20,
+                "sort": 1,
                 "parent": "admin:dashboard",
                 "entries": {
                     "admin:menu:dashboard:workspace": {
@@ -5173,6 +5385,49 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                         "delete"
                     ]
                 }
+            },
+            "admin:system:mail-template": {
+                "kind": "resource",
+                "sort": 7,
+                "parent": "admin:system",
+                "entries": {
+                    "admin:menu:system:mail-template": {
+                        "path": "/system/mail-template",
+                        "parent_menu_key": "admin:menu:system"
+                    }
+                },
+                "operations": {
+                    "read": {
+                        "entry_keys": [
+                            "admin:menu:system:mail-template"
+                        ],
+                        "button_keys": [
+                            "admin:system:mail-template:query",
+                            "admin:system:mail-template:reset-query",
+                            "admin:system:mail-template:refresh",
+                            "admin:system:mail-template:view-detail"
+                        ]
+                    },
+                    "create": {
+                        "entry_keys": [],
+                        "button_keys": [
+                            "admin:system:mail-template:create"
+                        ]
+                    },
+                    "delete": {
+                        "entry_keys": [],
+                        "button_keys": [
+                            "admin:system:mail-template:delete"
+                        ]
+                    },
+                    "update": {
+                        "entry_keys": [],
+                        "button_keys": [
+                            "admin:system:mail-template:edit",
+                            "admin:system:mail-template:publish"
+                        ]
+                    }
+                }
             }
         }
     }
@@ -5182,6 +5437,507 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
 );
 
 SELECT setval(pg_get_serial_sequence('t_dictionary', 'id'), (SELECT MAX(id) FROM t_dictionary), TRUE);
+
+INSERT INTO t_dictionary (dictionary_key, name, value, description, enabled) VALUES (
+    'UI_PREFERENCES_VBEN_PC',
+    'Vben PC default preferences',
+    $preferences${
+    "app": {
+        "layout": "sidebar-nav",
+        "watermark": false,
+        "dynamic_title": true,
+        "color_gray_mode": false,
+        "color_weak_mode": false,
+        "content_compact": "wide",
+        "auth_page_layout": "panel-right",
+        "watermark_content": "",
+        "enable_check_updates": true,
+        "enable_copy_preferences": true,
+        "preferences_button_position": "auto",
+        "enable_sticky_preferences_navigation_bar": true
+    },
+    "theme": {
+        "mode": "dark",
+        "radius": "0.25",
+        "font_size": 16,
+        "builtin_type": "default",
+        "color_primary": "hsl(212 100% 45%)",
+        "semi_dark_header": false,
+        "semi_dark_sidebar": false,
+        "semi_dark_sidebar_sub": false
+    },
+    "custom": {
+        "report_title": "",
+        "default_table_size": 20,
+        "enable_form_fullscreen": true
+    },
+    "footer": {
+        "fixed": false,
+        "enable": false
+    },
+    "header": {
+        "mode": "fixed",
+        "enable": true,
+        "menu_align": "start"
+    },
+    "tabbar": {
+        "enable": true,
+        "persist": true,
+        "draggable": true,
+        "max_count": 0,
+        "show_icon": true,
+        "show_more": true,
+        "wheelable": true,
+        "style_type": "chrome",
+        "show_maximize": true,
+        "visit_history": true,
+        "middle_click_to_close": false
+    },
+    "widget": {
+        "order": [
+            "globalSearch",
+            "preferences",
+            "themeToggle",
+            "languageToggle",
+            "timezone",
+            "fullscreen",
+            "refresh",
+            "notification",
+            "lockScreenBtn",
+            "logoutBtn"
+        ],
+        "logout_button_position": "user-dropdown",
+        "refresh_button_position": "none",
+        "timezone_button_position": "header",
+        "fullscreen_button_position": "header",
+        "lock_screen_button_position": "header",
+        "notification_button_position": "header",
+        "theme_toggle_button_position": "header",
+        "global_search_button_position": "header",
+        "language_toggle_button_position": "header"
+    },
+    "sidebar": {
+        "width": 224,
+        "enable": true,
+        "hidden": false,
+        "collapsed": false,
+        "draggable": true,
+        "fixed_button": true,
+        "extra_collapse": false,
+        "expand_on_hover": true,
+        "collapsed_button": true,
+        "auto_activate_child": false,
+        "collapsed_show_title": false
+    },
+    "copyright": {
+        "icp": "",
+        "date": "",
+        "enable": true,
+        "icp_link": "",
+        "company_name": "{{ (fromJSON .Computed.brand).slug }}",
+        "setting_show": true,
+        "company_site_link": "https://{{ .Computed.brand_domain_final }}"
+    },
+    "breadcrumb": {
+        "enable": true,
+        "show_home": false,
+        "show_icon": true,
+        "style_type": "normal",
+        "hide_only_one": false
+    },
+    "navigation": {
+        "split": true,
+        "accordion": true,
+        "style_type": "rounded"
+    },
+    "transition": {
+        "name": "fade-slide",
+        "enable": true,
+        "loading": true,
+        "progress": true
+    },
+    "shortcut_keys": {
+        "enable": true,
+        "global_escape": false,
+        "global_logout": true,
+        "global_search": true,
+        "global_lock_screen": true
+    }
+}$preferences$::JSONB,
+    'Default UI preferences for Vben PC. Users store only overrides. An empty copyright date uses the current year. Language and timezone are stored separately in metadata.language and metadata.timezone.',
+    TRUE
+);
+
+INSERT INTO t_dictionary (dictionary_key, name, value, description, enabled) VALUES (
+    'TIMEZONE_OPTIONS',
+    'Common timezones',
+    $timezones${
+    "items": [
+        {
+            "name": {
+                "en-US": "Shanghai",
+                "zh-CN": "上海"
+            },
+            "sort": 0,
+            "value": "Asia/Shanghai",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Coordinated Universal Time",
+                "zh-CN": "协调世界时"
+            },
+            "sort": 1,
+            "value": "Etc/UTC",
+            "region": "Other",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Hong Kong",
+                "zh-CN": "香港"
+            },
+            "sort": 2,
+            "value": "Asia/Hong_Kong",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Taipei",
+                "zh-CN": "台北"
+            },
+            "sort": 3,
+            "value": "Asia/Taipei",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Singapore",
+                "zh-CN": "新加坡"
+            },
+            "sort": 4,
+            "value": "Asia/Singapore",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Tokyo",
+                "zh-CN": "东京"
+            },
+            "sort": 5,
+            "value": "Asia/Tokyo",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Seoul",
+                "zh-CN": "首尔"
+            },
+            "sort": 6,
+            "value": "Asia/Seoul",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Bangkok",
+                "zh-CN": "曼谷"
+            },
+            "sort": 7,
+            "value": "Asia/Bangkok",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Jakarta",
+                "zh-CN": "雅加达"
+            },
+            "sort": 8,
+            "value": "Asia/Jakarta",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Kolkata",
+                "zh-CN": "加尔各答"
+            },
+            "sort": 9,
+            "value": "Asia/Kolkata",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Kathmandu",
+                "zh-CN": "加德满都"
+            },
+            "sort": 10,
+            "value": "Asia/Kathmandu",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Dubai",
+                "zh-CN": "迪拜"
+            },
+            "sort": 11,
+            "value": "Asia/Dubai",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Riyadh",
+                "zh-CN": "利雅得"
+            },
+            "sort": 12,
+            "value": "Asia/Riyadh",
+            "region": "Asia",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "London",
+                "zh-CN": "伦敦"
+            },
+            "sort": 13,
+            "value": "Europe/London",
+            "region": "Europe",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Paris",
+                "zh-CN": "巴黎"
+            },
+            "sort": 14,
+            "value": "Europe/Paris",
+            "region": "Europe",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Berlin",
+                "zh-CN": "柏林"
+            },
+            "sort": 15,
+            "value": "Europe/Berlin",
+            "region": "Europe",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Zurich",
+                "zh-CN": "苏黎世"
+            },
+            "sort": 16,
+            "value": "Europe/Zurich",
+            "region": "Europe",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Moscow",
+                "zh-CN": "莫斯科"
+            },
+            "sort": 17,
+            "value": "Europe/Moscow",
+            "region": "Europe",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Istanbul",
+                "zh-CN": "伊斯坦布尔"
+            },
+            "sort": 18,
+            "value": "Europe/Istanbul",
+            "region": "Europe",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "New York",
+                "zh-CN": "纽约"
+            },
+            "sort": 19,
+            "value": "America/New_York",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Chicago",
+                "zh-CN": "芝加哥"
+            },
+            "sort": 20,
+            "value": "America/Chicago",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Denver",
+                "zh-CN": "丹佛"
+            },
+            "sort": 21,
+            "value": "America/Denver",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Los Angeles",
+                "zh-CN": "洛杉矶"
+            },
+            "sort": 22,
+            "value": "America/Los_Angeles",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Toronto",
+                "zh-CN": "多伦多"
+            },
+            "sort": 23,
+            "value": "America/Toronto",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Vancouver",
+                "zh-CN": "温哥华"
+            },
+            "sort": 24,
+            "value": "America/Vancouver",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Mexico City",
+                "zh-CN": "墨西哥城"
+            },
+            "sort": 25,
+            "value": "America/Mexico_City",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Sao Paulo",
+                "zh-CN": "圣保罗"
+            },
+            "sort": 26,
+            "value": "America/Sao_Paulo",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Honolulu",
+                "zh-CN": "檀香山"
+            },
+            "sort": 27,
+            "value": "Pacific/Honolulu",
+            "region": "Americas",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Sydney",
+                "zh-CN": "悉尼"
+            },
+            "sort": 28,
+            "value": "Australia/Sydney",
+            "region": "Oceania",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Melbourne",
+                "zh-CN": "墨尔本"
+            },
+            "sort": 29,
+            "value": "Australia/Melbourne",
+            "region": "Oceania",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Adelaide",
+                "zh-CN": "阿德莱德"
+            },
+            "sort": 30,
+            "value": "Australia/Adelaide",
+            "region": "Oceania",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Perth",
+                "zh-CN": "珀斯"
+            },
+            "sort": 31,
+            "value": "Australia/Perth",
+            "region": "Oceania",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Auckland",
+                "zh-CN": "奥克兰"
+            },
+            "sort": 32,
+            "value": "Pacific/Auckland",
+            "region": "Oceania",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Cairo",
+                "zh-CN": "开罗"
+            },
+            "sort": 33,
+            "value": "Africa/Cairo",
+            "region": "Africa",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Johannesburg",
+                "zh-CN": "约翰内斯堡"
+            },
+            "sort": 34,
+            "value": "Africa/Johannesburg",
+            "region": "Africa",
+            "enabled": true
+        },
+        {
+            "name": {
+                "en-US": "Nairobi",
+                "zh-CN": "内罗毕"
+            },
+            "sort": 35,
+            "value": "Africa/Nairobi",
+            "region": "Africa",
+            "enabled": true
+        }
+    ]
+}$timezones$::JSONB,
+    'IANA timezones with bilingual names, regions, ordering and availability. UTC offsets are calculated at display time.',
+    TRUE
+);
 
 -- +migrate Down
 -- Clear dictionaries and reset their sequence.

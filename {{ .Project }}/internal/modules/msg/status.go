@@ -8,6 +8,24 @@ import (
 	"github.com/lib/pq"
 )
 
+// UnreadStatus is a compact snapshot, independent of inbox pagination. The same
+// visibility predicate covers broadcasts, targeted delivery, deletion and expiry.
+// ObservedAt provides a server-clock anchor for local notification acknowledgements.
+type UnreadStatus struct {
+	UserID         int64  `json:"user_id"`
+	Count          int64  `json:"count"`
+	LatestUnreadAt *int64 `json:"latest_unread_at"`
+	ObservedAt     int64  `json:"observed_at"`
+}
+
+func (m *Module) UnreadCount(ctx context.Context, userID int64) (int64, error) {
+	value, err := m.Status(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	return value.Count, nil
+}
+
 // The ordinary polling path reads one indexed row. Recalculation happens only
 // on mutations, first use by a new user, or when a message becomes visible or expires.
 func (m *Module) Status(ctx context.Context, userID int64) (*UnreadStatus, error) {
@@ -49,7 +67,7 @@ func (m *Module) storedStatus(ctx context.Context, userID int64) (*UnreadStatus,
 // users arriving during a broadcast. Targeted operations share the gate, then
 // lock affected status rows in user-ID order. All replicas use these same locks.
 func (m *Module) statusTx(ctx context.Context, users []int64, change func(context.Context) error) error {
-	return m.store.Tx(ctx, func(ctx context.Context) error {
+	return m.store.MutationTx(ctx, func(ctx context.Context) error {
 		lock := `SELECT pg_advisory_xact_lock_shared(1735290211, 1)`
 		if users == nil {
 			lock = `SELECT pg_advisory_xact_lock(1735290211, 1)`

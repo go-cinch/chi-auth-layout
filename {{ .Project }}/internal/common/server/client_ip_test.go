@@ -16,6 +16,8 @@ import (
 )
 
 func TestResolveClientIP(t *testing.T) {
+ trusted, err := parseTrustedProxies("0.0.0.0/0,::/0")
+ if err != nil { t.Fatal(err) }
 	for _, test := range []struct {
 		name, remote, verified, forwarded, real, want string
 	}{
@@ -39,7 +41,7 @@ func TestResolveClientIP(t *testing.T) {
 		{name: "verified IP list rejected", remote: "127.0.0.1:8080", verified: "203.0.113.4, 203.0.113.5", want: "127.0.0.1"},
 		{name: "verified hostname rejected", remote: "127.0.0.1:8080", verified: "localhost", want: "127.0.0.1"},
 		{name: "verified port rejected", remote: "127.0.0.1:8080", verified: "203.0.113.5:8080", want: "127.0.0.1"},
-		{name: "source address does not gate header", remote: "local", verified: "203.0.113.5", want: "203.0.113.5"},
+		{name: "malformed peer cannot supply header", remote: "local", verified: "203.0.113.5", want: "local"},
 		{name: "malformed peer without header", remote: "local", want: "local"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -48,7 +50,7 @@ func TestResolveClientIP(t *testing.T) {
 			request.Header.Set("X-Verified-Client-IP", test.verified)
 			request.Header.Set("X-Forwarded-For", test.forwarded)
 			request.Header.Set("X-Real-IP", test.real)
-			if got := resolveClientIP(request); got != test.want {
+			if got := resolveClientIP(request, trusted...); got != test.want {
 				t.Fatalf("client IP = %q, want %q", got, test.want)
 			}
 		})
@@ -99,6 +101,7 @@ func TestClientIPRouterAudit(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var cfg config.Config
+ cfg.HTTP.ClientIP.TrustedProxies = "0.0.0.0/0,::/0"
 			recorder := &recordedAudit{target: auditctx.Target{Kind: "login", Module: "test"}}
 			router, err := NewRouter(&cfg, nil, nil, clientIPAuditModule{recorder})
 			if err != nil {
@@ -139,4 +142,26 @@ func TestClientIPLocalHTTP(t *testing.T) {
 			t.Fatalf("local HTTP %s: status %d, body %q, error %v", address, response.StatusCode, body, readErr)
 		}
 	}
+}
+
+func TestClientIPTrustBoundary(t *testing.T) {
+ trusted, err := parseTrustedProxies(" 192.0.2.0/24, ,2001:db8:1::/64 ")
+ if err != nil { t.Fatal(err) }
+ for _, tc := range []struct { remote, want string }{
+  {"192.0.2.10:1234", "203.0.113.8"},
+  {"198.51.100.2:1234", "198.51.100.2"},
+  {"[2001:db8:1::2]:1234", "203.0.113.8"},
+  {"[2001:db8:2::2]:1234", "2001:db8:2::2"},
+ } {
+  request := httptest.NewRequest("GET", "/", nil)
+  request.RemoteAddr = tc.remote
+  request.Header.Set("X-Verified-Client-IP", "203.0.113.8")
+  if got := RequestClientIP(withClientIP(request, trusted...)); got != tc.want { t.Fatalf("%s: %s != %s", tc.remote, got, tc.want) }
+  if got := RequestClientIP(withClientIP(request)); got != peerIP(tc.remote) { t.Fatal("default must ignore forwarding headers") }
+  request.Header.Add("X-Verified-Client-IP", "203.0.113.9")
+  if got := resolveClientIP(request, trusted...); got != peerIP(tc.remote) { t.Fatal("duplicate headers accepted") }
+ }
+ cfg := &config.Config{}
+ cfg.HTTP.ClientIP.TrustedProxies = "invalid"
+ if _, err := NewRouter(cfg, nil, nil); err == nil { t.Fatal("invalid trusted proxy accepted") }
 }

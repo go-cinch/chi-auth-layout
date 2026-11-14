@@ -125,7 +125,7 @@ func TestGroupMemberPermissions(t *testing.T) {
 	if _, err := store.DB.ExecContext(t.Context(), `UPDATE t_user SET role_id=NULL,action=(SELECT code FROM t_action WHERE word='admin:read:system:user-group'),login_count=1 WHERE id=2`); err != nil {
 		t.Fatal(err)
 	}
-	var identity authn.Identity
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}}
 	if err := store.DB.QueryRowContext(t.Context(), `SELECT id,username,code,credential_version FROM t_user WHERE id=2`).Scan(&identity.UserID, &identity.Username, &identity.Code, &identity.CredentialVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestGroupMemberPermissions(t *testing.T) {
 	roles := role.New(store, limits, actions)
 	users := user.New(store, limits, nil, nil, actions, roles)
 	groups := usergroup.New(store, limits, actions, users)
-	authModule := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.MFA{})
+	authModule := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.Verification{})
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute

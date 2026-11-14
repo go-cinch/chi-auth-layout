@@ -9,9 +9,9 @@ import (
 	"{{ .Computed.module_name_final }}/internal/modules/auth"
 )
 
-func TestMFARedisRateLimitWindowAndVersion(t *testing.T) {
+func TestTOTPRedisRateLimitWindowAndVersion(t *testing.T) {
 	client := sessionRedisClient(t)
-	state := auth.NewRedisMFAStore(client)
+	state := auth.NewRedisVerificationStore(client)
 	ctx := t.Context()
 	const oldKey, newKey = "101:1", "101:2"
 	const window = 800*time.Millisecond
@@ -21,7 +21,7 @@ func TestMFARedisRateLimitWindowAndVersion(t *testing.T) {
 		if err := state.ResetAttempts(context.Background(), newKey); err != nil { t.Error(err) }
 	})
 	if allowed, err := state.Attempt(ctx, oldKey, window, limit); err != nil || !allowed { t.Fatal("first attempt rejected", err) }
-	expires, err := client.Eval(ctx, `return redis.call('PEXPIRETIME', KEYS[1])`, []string{"mfa:attempt:"+oldKey}).Int64()
+	expires, err := client.Eval(ctx, `return redis.call('PEXPIRETIME', KEYS[1])`, []string{"verification:attempt:"+oldKey}).Int64()
 	if err != nil || expires <= time.Now().UnixMilli() || expires > time.Now().Add(window).UnixMilli() { t.Fatal("configured attempt expiry missing", err) }
 	type outcome struct { allowed bool; err error }
 	results := make(chan outcome, 8)
@@ -35,7 +35,7 @@ func TestMFARedisRateLimitWindowAndVersion(t *testing.T) {
 		if result.allowed { accepted++ }
 	}
 	if accepted != int(limit) { t.Fatal("concurrent attempts exceeded configured maximum", accepted) }
-	after, err := client.Eval(ctx, `return redis.call('PEXPIRETIME', KEYS[1])`, []string{"mfa:attempt:"+oldKey}).Int64()
+	after, err := client.Eval(ctx, `return redis.call('PEXPIRETIME', KEYS[1])`, []string{"verification:attempt:"+oldKey}).Int64()
 	if err != nil || after != expires { t.Fatal("later or blocked attempts extended the fixed window", err) }
 	if allowed, err := state.Attempt(ctx, newKey, 5*time.Minute, limit); err != nil || !allowed { t.Fatal("new version inherited prior limit", err) }
 	// Observe real Redis expiry of this short fixture window, without altering its TTL.
@@ -44,10 +44,10 @@ func TestMFARedisRateLimitWindowAndVersion(t *testing.T) {
 	select { case <-timer.C: case <-ctx.Done(): t.Fatal(ctx.Err()) }
 	if allowed, err := state.Attempt(ctx, oldKey, window, limit); err != nil || !allowed { t.Fatal("expired window did not reopen", err) }
 	if err := state.ResetAttempts(ctx, oldKey); err != nil { t.Fatal(err) }
-	oldCount, err := client.Eval(ctx, `return tonumber(redis.call('GET', KEYS[1]) or '0')`, []string{"mfa:attempt:"+oldKey}).Int64()
+	oldCount, err := client.Eval(ctx, `return tonumber(redis.call('GET', KEYS[1]) or '0')`, []string{"verification:attempt:"+oldKey}).Int64()
 	if err != nil || oldCount != 0 { t.Fatal("attempt reset did not clear the counter", err) }
 	if allowed, err := state.Attempt(ctx, oldKey, window, limit); err != nil || !allowed { t.Fatal("late old-version request failed", err) }
-	newCount, err := client.Eval(ctx, `return tonumber(redis.call('GET', KEYS[1]) or '0')`, []string{"mfa:attempt:"+newKey}).Int64()
+	newCount, err := client.Eval(ctx, `return tonumber(redis.call('GET', KEYS[1]) or '0')`, []string{"verification:attempt:"+newKey}).Int64()
 	if err != nil || newCount != 1 { t.Fatal("old-version cleanup or late request changed the new counter", err) }
 	if err := state.ResetAttempts(ctx, oldKey); err != nil { t.Fatal(err) }
 	if err := state.ResetAttempts(ctx, oldKey); err != nil { t.Fatal("missing counter reset was not idempotent", err) }

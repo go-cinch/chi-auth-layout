@@ -9,6 +9,7 @@ import (
 
 // Target is supplied by the business capability, not inferred by server infrastructure.
 type Target struct {
+	OmitPayload  bool
 	Kind         string
 	Module       string
 	Operation    string
@@ -17,8 +18,8 @@ type Target struct {
 }
 
 type Event struct {
-	MFAFingerprint string          `json:"mfa_fingerprint"`
-	MFAVerifiedAt  int64           `json:"mfa_verified_at"`
+	StepUpFingerprint string          `json:"step_up_fingerprint"`
+	StepUpVerifiedAt  int64           `json:"step_up_verified_at"`
 	Header         json.RawMessage `json:"header"`
 	Operation      string          `json:"operation"`
 	ResourceType   string          `json:"resource_type"`
@@ -60,6 +61,17 @@ func Identity(ctx context.Context, id int64, username string) {
 	}
 }
 
+// ResourceOperation records the verified subject of an operation such as an
+// email link. It does not identify the link holder as a signed-in actor.
+func ResourceOperation(ctx context.Context, operation, resourceID string) {
+	if s, ok := ctx.Value(key{}).(*State); ok {
+		s.mu.Lock()
+		s.event.Operation = operation
+		s.event.ResourceID = resourceID
+		s.mu.Unlock()
+	}
+}
+
 func Error(ctx context.Context, code string) {
 	if s, ok := ctx.Value(key{}).(*State); ok {
 		s.mu.Lock()
@@ -70,12 +82,12 @@ func Error(ctx context.Context, code string) {
 
 func (s *State) Snapshot() Event { s.mu.Lock(); defer s.mu.Unlock(); return s.event }
 
-// MFA records a server-generated verification reference, never client data.
-func MFA(ctx context.Context, fingerprint string, verifiedAt int64) {
+// StepUp records a server-generated verification reference, never client data.
+func StepUp(ctx context.Context, fingerprint string, verifiedAt int64) {
 	if s, ok := ctx.Value(key{}).(*State); ok {
 		s.mu.Lock()
-		s.event.MFAFingerprint = fingerprint
-		s.event.MFAVerifiedAt = verifiedAt
+		s.event.StepUpFingerprint = fingerprint
+		s.event.StepUpVerifiedAt = verifiedAt
 		s.mu.Unlock()
 	}
 }

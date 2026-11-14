@@ -80,6 +80,25 @@ func TestListFieldProjection(t *testing.T) {
 	}
 }
 
+func TestUserListSelectedEmail(t *testing.T) {
+	m, mock := newTestModule(t)
+	size := int32(2)
+	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(2))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT email FROM t_user")).WithArgs(size, int64(0)).WillReturnRows(
+		sqlmock.NewRows([]string{"email"}).AddRow("bound@example.test").AddRow(nil))
+	value, err := m.List(t.Context(), ListUsersInput{PageSize: &size, Fields: report.Fields{"email"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(value.Items)
+	if err != nil || string(encoded) != `[{"email":"bound@example.test"},{"email":null}]` {
+		t.Fatalf("email projection: %s %v", encoded, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUserListSelectedRoleSummaryBatchesWithoutPermissions(t *testing.T) {
 	m, mock := newTestModule(t)
 	m.store.DB.SetMaxOpenConns(1)

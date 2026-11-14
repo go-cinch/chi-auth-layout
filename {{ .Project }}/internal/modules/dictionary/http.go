@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
 
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
@@ -34,7 +33,6 @@ func (*Module) Idempotent() bool { return true }
 func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("", m.list)
 	r.GET("/summary", m.summary)
-	r.GET("/pub/i18n", m.localization)
 	r.GET("/:id", m.get)
 	r.POST("", m.create)
 	r.PATCH("/:id", m.update)
@@ -45,7 +43,6 @@ func (m *Module) HTTP() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", m.list)
 	r.Get("/summary", m.summary)
-	r.Get("/pub/i18n", m.localization)
 	r.Get("/{id}", m.get)
 	r.Post("/", m.create)
 	r.Patch("/{id}", m.update)
@@ -290,36 +287,6 @@ func (m *Module) summary(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
-	server.WriteOK(w, value)
-}
-
-{{ if eq .Computed.http_router_final "gin" -}}
-func (m *Module) localization(c *gin.Context) {
-	w, r := c.Writer, c.Request
-{{ else -}}
-func (m *Module) localization(w http.ResponseWriter, r *http.Request) {
-{{ end }}
-	query, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
-		return
-	}
-	for key := range query {
-		if key != "f" {
-			server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
-			return
-		}
-	}
-	fields, err := report.ParseFields(query, "default_locale", "locales", "scopes", "operations", "group_order", "messages", "frontend_messages")
-	if err != nil || (fields != nil && fields.Has("messages") && fields.Has("frontend_messages")) {
-		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
-		return
-	}
-	if fields == nil {
-		fields = report.Fields{"default_locale", "locales"}
-	}
-	w.Header().Set("Cache-Control", "no-cache")
-	var value localization.PublicCatalog = m.catalogSource.PublicCatalog(fields...)
 	server.WriteOK(w, value)
 }
 

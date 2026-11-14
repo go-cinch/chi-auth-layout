@@ -16,6 +16,24 @@ make test
 make run
 ```
 
+## Email setup
+
+`conf/email.yml` uses `smtp.resend.com`, username `resend`, and sender
+`no-reply@{{ .Computed.brand_domain_final }}`. The SMTP password is intentionally
+empty. Before starting with email enabled, set `SERVICE_EMAIL_PASSWORD` or fill
+in `email.password`, and configure the sender domain with your mail provider.
+The sender display name is `{{ (fromJSON .Computed.brand).title }}`.
+
+For local development without sending email, run:
+
+```bash
+SERVICE_EMAIL_SKIPDELIVERY=true make run
+```
+
+This completes queued deliveries without SMTP. Set `SERVICE_EMAIL_ENABLED=false`
+instead to disable email. Configure `auth.email.unlinkURL` and
+`auth.email.auditURL` with the actual frontend URLs for email action links.
+
 ## Authentication endpoint path
 
 `conf/auth.yml` controls only the authentication module's mount:

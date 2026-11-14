@@ -48,7 +48,6 @@ func ErrorMessage(r *http.Request, err error) string {
 
 func WriteError(w http.ResponseWriter, r *http.Request, status int, err error) {
 	if apperror.Code(err) == apperror.Code(authn.ErrPasswordResetRequired) {
-		w.Header().Set(authn.PasswordResetRequiredHeader, "true")
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	auditctx.Error(r.Context(), apperror.Code(err))

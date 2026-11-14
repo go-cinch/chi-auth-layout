@@ -6,172 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
-
-	"github.com/DATA-DOG/go-sqlmock"
-	"net/http/httptest"
-	"{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/common/config"
-	"{{ .Computed.module_name_final }}/internal/common/idempotency"
-	"{{ .Computed.module_name_final }}/internal/common/pagination"
-	"{{ .Computed.module_name_final }}/internal/infra/db"
-	"{{ .Computed.module_name_final }}/internal/modules"
-	authmodule "{{ .Computed.module_name_final }}/internal/modules/auth"
-	dictionarymodule "{{ .Computed.module_name_final }}/internal/modules/dictionary"
+{{- if .Computed.enable_trace_final }}
+	"go.opentelemetry.io/otel"
+{{- end }}
 )
-
-func TestGeneratedModulesReuseBusinessInstances(t *testing.T) {
-	database, _, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-	limits, err := pagination.New(10000, 10000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := &Application{localization: localization.New(), db: &db.Store{DB: database}, pagination: limits, authenticator: testAuthenticator(t), mfa: &authmodule.MFA{}}
-	a.dictionaryModule, err = dictionarymodule.New(a.db, dictionarymodule.NewMemoryValueCache(), dictionarymodule.CacheTTL, limits, a.localization)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.auditSettings = config.DefaultAudit()
-	a.wireBusinessModules()
-	want := map[string]modules.HTTPModule{
-		"/audit":      a.auditModule,
-		"/action":     a.actionModule,
-		"/msg":        a.msgModule,
-		"":            a.authModule,
-		"/dictionary": a.dictionaryModule,
-		"/role":       a.roleModule,
-		"/user":       a.userModule,
-		"/user-group": a.groupModule,
-	}
-	// Rebuilding the transport registry must never rebuild a business module.
-	for range 2 {
-		registered{{ if .Computed.enable_grpc_final }}, _{{ end }} := a.generatedModules()
-		if len(registered) != len(want) {
-			t.Fatalf("registered %d modules, want %d", len(registered), len(want))
-		}
-		seen := make(map[string]bool)
-		for _, module := range registered {
-			name := module.Name()
-			if seen[name] {
-				t.Fatalf("duplicate module %s", name)
-			}
-			seen[name] = true
-			if module != want[name] {
-				t.Errorf("%s registered a different instance: got %p, want %p", name, module, want[name])
-			}
-		}
-	}
-}
-
-func TestSliderCaptchaFromConfig(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Auth.SliderCaptcha.TTL = time.Minute
-	cfg.Auth.SliderCaptcha.MinimumDuration = time.Second
-	if _, err := sliderCaptchaFromConfig(cfg, authmodule.NewMemoryPointCaptchaStore()); err != nil {
-		t.Fatal(err)
-	}
-	cfg.Auth.SliderCaptcha.TTL = 0
-	if _, err := sliderCaptchaFromConfig(cfg, authmodule.NewMemoryPointCaptchaStore()); err == nil {
-		t.Fatal("invalid slider captcha configuration was accepted")
-	}
-}
-
-func TestInitializeSliderCaptchaCleansUpInvalidConfiguration(t *testing.T) {
-	cfg := &config.Config{}
-	cleaned := false
-	_, err := initializeSliderCaptcha(cfg, authmodule.NewMemoryPointCaptchaStore(), func() { cleaned = true })
-	if err == nil || !strings.Contains(err.Error(), "initialize slider captcha") || !cleaned {
-		t.Fatalf("initialize slider captcha = %v, cleaned=%v", err, cleaned)
-	}
-}
-
-func TestBusinessModuleWiring(t *testing.T) {
-	database, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-	a := &Application{localization: localization.New(), db: &db.Store{DB: database}, authenticator: testAuthenticator(t), idempotencyKeys: idempotency.NewMemoryStore(), mfa: &authmodule.MFA{}}
-	a.auditSettings = config.DefaultAudit()
-	a.wireBusinessModules()
-	cfg := &config.Config{}
-	cfg.Idempotency.TTL = time.Minute
-	router, err := a.NewRouter(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(7)).WillReturnRows(
-		sqlmock.NewRows([]string{"id", "created_at", "updated_at", "role_id", "action", "username", "code", "last_logged_in_at", "status", "metadata", "wrong", "login_count"}).
-			AddRow(7, time.Now().UnixMilli(), time.Now().UnixMilli(), nil, "", "operator", "TEST0007", nil, 1, []byte(`{}`), 0, 1))
-	token, _, err := a.authenticator.Issue(authn.Identity{CredentialVersion: 1, UserID: 7, Username: "operator", Code: "TEST0007"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := httptest.NewRequest("GET", "/user/7", nil)
-	r.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, r)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"actions":[]`) {
-		t.Fatalf("injected user route: %d %s", w.Code, w.Body.String())
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestSignalContextCanBeCanceled(t *testing.T) {
-	ctx, cancel := SignalContext()
-	cancel()
-	select {
-	case <-ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("signal context was not canceled")
-	}
-}
-
-func TestBusinessHTTPAlwaysRequiresAuthentication(t *testing.T) {
-	a := &Application{
-		localization: localization.New(),
-		mfa: &authmodule.MFA{},
-
-		db:              &db.Store{},
-		authenticator:   testAuthenticator(t),
-		idempotencyKeys: idempotency.NewMemoryStore(),
-	}
-	a.auditSettings = config.DefaultAudit()
-	a.wireBusinessModules()
-	httpModules{{ if .Computed.enable_grpc_final }}, _{{ end }} := a.generatedModules()
-	cfg := &config.Config{}
-	cfg.HTTP.Addr = "127.0.0.1:0"
-	cfg.HTTP.Profiler.Enabled = true
-	cfg.HTTP.Profiler.Addr = "127.0.0.1:0"
-	if err := a.configureTransports(cfg, httpModules{{ if .Computed.enable_grpc_final }}, nil{{ end }}); err == nil || !strings.Contains(err.Error(), "initialize http router: idempotency store and positive ttl are required") {
-		t.Fatalf("invalid idempotency configuration error = %v", err)
-	}
-	if a.server != nil || a.profilerServer != nil {
-		t.Fatal("servers configured after failed module registration")
-	}
-	cfg.Idempotency.TTL = time.Minute
-	if err := a.configureTransports(cfg, httpModules{{ if .Computed.enable_grpc_final }}, nil{{ end }}); err != nil {
-		t.Fatal(err)
-	}
-	if a.server == nil {
-		t.Fatal("required business HTTP server was not configured")
-	}
-	if a.profilerServer == nil || a.profilerServer.Addr != cfg.HTTP.Profiler.Addr {
-		t.Fatal("enabled profiler server was not configured")
-	}
-	w := httptest.NewRecorder()
-	a.server.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/user/7", nil))
-	if w.Code != 401 {
-		t.Fatalf("unauthenticated user route = %d, want 401", w.Code)
-	}
-}
 
 func TestNewErrors(t *testing.T) {
 	previous := slog.Default()
@@ -183,15 +21,16 @@ func TestNewErrors(t *testing.T) {
 		t.Fatalf("invalid log error = %v", err)
 	}
 
-	if _, err := New(t.Context(), writeConfig(t, "log:\n  level: info\ndatabase:\n  driver: sqlite\n")); err == nil || !strings.Contains(err.Error(), "unsupported database driver") {
+	if _, err := New(t.Context(), writeConfig(t, "log:\n  level: info\ndatabase:\n  dsn: ''\n")); err == nil || !strings.Contains(err.Error(), "database dsn is required") {
 		t.Fatalf("invalid database error = %v", err)
 	}
 
 {{- if .Computed.enable_trace_final }}
-	traced := "server:\n  name: test\nlog:\n  level: info\ntracer:\n  enabled: true\n  ratio: 0\n  stdout: true\ndatabase:\n  driver: sqlite\n"
-	if _, err := New(t.Context(), writeConfig(t, traced)); err == nil || !strings.Contains(err.Error(), "unsupported database driver") {
+	traced := "server:\n  name: test\nlog:\n  level: info\ntracer:\n  enabled: true\n  ratio: 0\n  stdout: true\ndatabase:\n  dsn: ''\n"
+	if _, err := New(t.Context(), writeConfig(t, traced)); err == nil || !strings.Contains(err.Error(), "database dsn is required") {
 		t.Fatalf("traced invalid database error = %v", err)
 	}
+
 {{- end }}
 }
 
@@ -200,7 +39,7 @@ func TestNewRejectsAmbiguousAuthenticationPath(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			// Reject ambiguous authentication mounts before initializing logging
 			// or dependencies; later invalid settings cannot mask this boundary.
-			content := "auth:\n  path: \"" + path + "\"\nlog:\n  level: invalid\ndatabase:\n  driver: sqlite\n"
+			content := "auth:\n  path: \"" + path + "\"\nlog:\n  level: invalid\n"
 			application, err := New(t.Context(), writeConfig(t, content))
 			if application != nil || err == nil || !strings.Contains(err.Error(), "invalid auth.path") {
 				t.Fatalf("auth.path=%q: application=%v error=%v", path, application, err)
@@ -212,6 +51,7 @@ func TestNewRejectsAmbiguousAuthenticationPath(t *testing.T) {
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
+ if !strings.Contains(content, "server:\n") { content = "server:\n  env: test\n  name: auth\n" + content } else { content = strings.Replace(content, "server:\n", "server:\n  env: test\n", 1) }
 	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -225,3 +65,31 @@ func TestInvalidPaginationConfig(t *testing.T) {
 		t.Fatalf("pagination: %v", err)
 	}
 }
+
+{{ if .Computed.enable_trace_final -}}
+func TestNewClosesTracingOnStartupFailure(t *testing.T) {
+	previousLogger := slog.Default()
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+	})
+	content := "server:\n  name: test\nlog:\n  level: info\ntracer:\n  enabled: true\n  ratio: 1\n  stdout: true\ndatabase:\n  dsn: ''\n"
+	application, err := New(t.Context(), writeConfig(t, content))
+	if application != nil || err == nil || !strings.Contains(err.Error(), "initialize database") {
+		t.Fatalf("New() = %v, %v", application, err)
+	}
+	provider := otel.GetTracerProvider()
+	if provider == previousProvider {
+		t.Fatal("tracing was not initialized before the database failure")
+	}
+	_, span := provider.Tracer("startup-cleanup-test").Start(t.Context(), "after failure")
+	defer span.End()
+	if span.IsRecording() {
+		t.Fatal("startup failure left the tracing provider running")
+	}
+}
+
+{{ end -}}

@@ -16,3 +16,13 @@ func TestMetadata(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestLinkResourceDoesNotSetActor(t *testing.T) {
+	ResourceOperation(context.Background(), "confirm_email_unlink", "102")
+	ctx, state := WithState(t.Context())
+	ResourceOperation(ctx, "view_email_unlink_result", "102")
+	event := state.Snapshot()
+	if event.Operation != "view_email_unlink_result" || event.ResourceID != "102" || event.UserID != 0 || event.Username != "" {
+		t.Fatal(event)
+	}
+}

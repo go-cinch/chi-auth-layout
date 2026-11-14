@@ -32,6 +32,23 @@ internal/modules/game/
 - `http.go` contains the HTTP boundary: {{ .Computed.http_router_final }} route registration, handlers, request decoding, response mapping, and transport-only validation. Keep HTTP interface assertions and `Name()` here, even for a small capability.
 - Do not create empty placeholder files or directories for possible future layers. Add files only when the capability needs them.
 
+### Shared File Conventions
+
+Keep comparable behavior in consistently named files across sibling modules. These are conventions for existing behavior, not a required file checklist:
+
+| File | Responsibility |
+| --- | --- |
+| `<module>.go` | Module dependencies, core business types, CRUD, ordinary lookups, and query filters. |
+| `http.go` | HTTP routing, decoding, response mapping, and transport-only validation. |
+| `list_fields.go` | List field allowlists, SQL projections, selected-field serialization, and association enrichment. Existing lightweight association summaries and `LookupSummaries` in action and role remain here. |
+| `detail_fields.go` | Selected-field detail reads and their dependency loading; reuse list projections where their semantics match. |
+| `summary.go` | Management statistics and aggregates, distinct from lightweight association summaries. |
+
+- Preserve these names when reorganizing one module. Do not replace `list_fields.go` and `detail_fields.go` with a module-specific `fields.go`, or introduce a different list/lookup layout solely for local tidiness. Evaluate a new shared convention across affected sibling modules first; behavior-specific growth remains appropriate under the rules below.
+- Keep related business operations together in an existing behavior-named file, such as group queries and reconciliation in `groups.go`. Small cohesive files need not be merged just to reduce file count.
+- Keep matching cross-module names when they describe the same collaboration, such as `default_permissions.go` in action/auth and `resource_migration.go` in action/dictionary.
+- Move the corresponding tests with relocated behavior, keeping implementation and test filenames aligned with the root testing guidelines.
+
 ### Growth and File Size
 
 - Review non-generated files approaching 1,000 lines; split by business behavior when it improves cohesion and navigation. This is not a module or package size limit.
@@ -80,7 +97,7 @@ Keep these three path layers distinct:
 
 ### Authentication and Authorization
 
-- Put unauthenticated business endpoints under module-local `/pub`; other endpoints require authentication by default. Permission-check exemptions alone do not qualify for `/pub`. Deployed gateway paths such as `POST /auth/pub/login` and `POST /order/pub/create` include mount prefixes, not module-local registrations.
+- In this Auth service, register all unauthenticated business endpoints on the Auth module under `/pub/...`, including the public localization projection at `/pub/i18n`. Keep resource CRUD such as `/dictionary` protected; do not add resource-local public paths such as `/dictionary/pub/...`. Other services likewise collect public business endpoints under their service-level `/pub` prefix; other endpoints require authentication by default. Permission-check exemptions alone do not qualify for `/pub`. Deployed gateway paths such as `POST /auth/pub/login` and `POST /order/pub/create` include mount prefixes, not module-local registrations.
 - Only the gateway permission endpoint may allow anonymous checks when gateway-overwritten target headers identify a public `/pub` path or HEAD/OPTIONS method; ordinary protected routes remain authenticated. After authenticated authorization, return the `X-Code` response header, not a username.
 
 ### Idempotency
@@ -94,10 +111,10 @@ Keep these three path layers distinct:
 - Map `ErrNotFound` (including mapped `sql.ErrNoRows`) to HTTP 404 with `server.WriteError(w, r, http.StatusNotFound, err)`; use `c.Writer` for Gin. Unmatched routes also return HTTP 404.
 - Apply error mapping at the HTTP boundary. Return HTTP 400 for malformed input or invalid business fields, and HTTP 500 for unexpected database/server failures. Do not turn SQL/connection failures into missing-record errors or globally rewrite error status codes.
 - Generated OpenAPI response statuses and body schemas must match the actual HTTP behavior.
-- MFA verification is part of the original business endpoint. When verification is required but missing, return HTTP 403 with `X-MFA-Required: true` and the standard error JSON; do not add MFA flags, tickets, or verification results to business JSON schemas. The client collects a six-digit TOTP and retries the same method/path with `X-MFA-Code`; recovery codes never authorize sensitive operations. Reject before idempotency consumption or business mutations; a valid retry preserves the original business response.
-- Password login continues on `POST /pub/login`. After password verification, return the short-lived, one-use continuation in `X-MFA-Ticket` and its Unix-millisecond deadline in `X-MFA-Expires-At`; the retry sends that ticket and `X-MFA-Code` to the same endpoint. Never issue a usable session before required login MFA succeeds. Keep tickets/codes out of URLs, persistence, logs and audit payloads.
-- Authenticator recovery uses that password-verified ticket with `X-MFA-Recovery-Code` and `{}` on `POST /pub/login`; reject a missing ticket or both code headers. Atomically invalidate the old factor, all recovery codes and prior sessions, then issue only an enrollment-restricted session. Recovery neither completes a login nor creates a sensitive-operation grant; the existing setup/confirmation flow binds the replacement factor. Cross-origin gateways must allow the recovery request header.
-- Report mandatory enrollment with `X-MFA-Enrollment-Required: true` (together with `X-MFA-Required: true`), including restricted login/refresh responses. Enrollment management may have its own setup/confirmation resources; verification for a business operation must not require a separate verification endpoint. Cross-origin gateways must allow MFA request headers and expose these response headers.
+- Sensitive verification is part of the original business endpoint. When verification is required but missing, return HTTP 403 with `X-Verification-Required: true` and the standard error JSON; do not add MFA flags, tickets, or verification results to business JSON schemas. Retry the original endpoint with `X-TOTP-Code` for an authenticator code. For a bound-email code, use a one-use authenticated sensitive challenge and send `X-Step-Up-Challenge` and `X-Step-Up-Credential`; recovery codes never authorize sensitive operations. Reject before idempotency consumption or business mutations; a valid retry preserves the original business response.
+- Password login continues on `POST /pub/login`. After password verification, return the short-lived, one-use continuation in `X-MFA-Ticket` and its Unix-millisecond deadline in `X-MFA-Expires-At`; the retry sends that ticket and `X-TOTP-Code` to the same endpoint. Never issue a usable session before required login MFA succeeds. Keep tickets/codes out of URLs, persistence, logs and audit payloads.
+- Authenticator recovery uses that password-verified ticket with `X-Recovery-Code` and `{}` on `POST /pub/login`; reject a missing ticket or both code headers. Atomically invalidate the old factor, all recovery codes and prior sessions, then issue only an enrollment-restricted session. Recovery neither completes a login nor creates a sensitive-operation grant; the existing setup/confirmation flow binds the replacement factor. Cross-origin gateways must allow the recovery request header.
+- Report mandatory password reset and TOTP enrollment through authenticated `GET /status?purpose=onboarding&f=requirements`; do not emit dedicated reset/enrollment response headers. Session consumers query this status before entering business routes. Sensitive-operation rejections retain `AUTH_STEP_UP_REQUIRED` and `X-Verification-Required: true` even when clients skip preflight. Login MFA uses `AUTH_LOGIN_MFA_REQUIRED` and its ticket/expiry headers. Frontends route by error code and keep invalid codes inline. Verification for a business operation remains on the original endpoint; no separate verification endpoint grants access.
 
 ### Partial Updates
 

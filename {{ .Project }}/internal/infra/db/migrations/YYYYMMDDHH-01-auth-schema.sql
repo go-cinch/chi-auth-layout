@@ -103,8 +103,6 @@ COMMENT ON COLUMN t_action.config IS 'Explicit resource/operation bindings selec
 
 CREATE INDEX idx_action_scope_group ON t_action (scope, action_group);
 
-CREATE INDEX idx_action_config ON t_action USING GIN (config jsonb_path_ops);
-
 -- Built-in kinds are reserved catalog definitions, with at most one of each per scope.
 CREATE UNIQUE INDEX uk_action_scope_builtin ON t_action (scope, (config ->> 'builtin'))
     WHERE config ? 'builtin';
@@ -160,6 +158,10 @@ CREATE TABLE t_user (
     role_id BIGINT NULL,
     action TEXT NOT NULL DEFAULT '',
     username TEXT NOT NULL,
+    email TEXT,
+    email_verified_at BIGINT,
+    totp_ever_bound BOOLEAN DEFAULT FALSE,
+    totp_recovery_pending BOOLEAN NOT NULL DEFAULT FALSE,
     code CHAR(8) NOT NULL,
     password TEXT NOT NULL,
     last_logged_in_at BIGINT NULL,
@@ -169,6 +171,8 @@ CREATE TABLE t_user (
     credential_version BIGINT NOT NULL DEFAULT 1,
     login_count BIGINT NOT NULL DEFAULT 0,
     CONSTRAINT uk_user_username UNIQUE (username),
+    CONSTRAINT uk_user_email UNIQUE (email),
+    CONSTRAINT ck_user_email CHECK (email IS NULL OR (email = LOWER(TRIM(email)) AND email <> '')),
     CONSTRAINT uk_user_code UNIQUE (code),
     CONSTRAINT fk_user_role FOREIGN KEY (role_id) REFERENCES t_role (id) ON DELETE SET NULL,
     CONSTRAINT ck_user_username CHECK (CHAR_LENGTH(TRIM(username)) > 0),
@@ -197,6 +201,14 @@ COMMENT ON COLUMN t_user.action IS 'comma-separated user-specific action codes';
 
 COMMENT ON COLUMN t_user.username IS 'unique login name';
 
+COMMENT ON COLUMN t_user.email IS 'Verified canonical email login alias; NULL until binding is confirmed';
+
+COMMENT ON COLUMN t_user.email_verified_at IS 'Unix milliseconds when email possession was verified';
+
+COMMENT ON COLUMN t_user.totp_ever_bound IS 'Whether an authenticator was ever bound; NULL means unknown historical enrollment and forbids password-only unlinking';
+
+COMMENT ON COLUMN t_user.totp_recovery_pending IS 'Whether authenticator recovery is awaiting replacement enrollment';
+
 COMMENT ON COLUMN t_user.code IS 'stable eight-character user code';
 
 COMMENT ON COLUMN t_user.password IS 'adaptive password hash';
@@ -222,6 +234,8 @@ CREATE TABLE t_user_totp (
     user_id BIGINT NOT NULL,
     secret_ciphertext TEXT NOT NULL,
     last_used_step BIGINT NOT NULL,
+    period_seconds BIGINT NOT NULL,
+    CONSTRAINT ck_user_totp_period CHECK (period_seconds BETWEEN 1 AND 9223372036),
     CONSTRAINT uk_user_totp_user UNIQUE (user_id),
     CONSTRAINT fk_user_totp_user FOREIGN KEY (user_id) REFERENCES t_user (id) ON DELETE CASCADE,
     CONSTRAINT ck_user_totp_secret CHECK (CHAR_LENGTH(secret_ciphertext) > 0),
@@ -237,6 +251,8 @@ COMMENT ON COLUMN t_user_totp.updated_at IS 'Last accepted authenticator verific
 COMMENT ON COLUMN t_user_totp.secret_ciphertext IS 'AES-256-GCM encrypted TOTP secret, authenticated against its user ID; never return in user APIs';
 
 COMMENT ON COLUMN t_user_totp.last_used_step IS 'Last accepted counter at the configured TOTP period; initialized by enrollment and updated under row lock to reject replay';
+
+COMMENT ON COLUMN t_user_totp.period_seconds IS 'TOTP time step in whole seconds fixed at enrollment; independent of deployment defaults';
 
 CREATE TABLE t_user_recovery_code (
     id BIGSERIAL PRIMARY KEY,
@@ -277,9 +293,6 @@ COMMENT ON COLUMN t_user_user_group_relation.updated_at IS 'Last membership upda
 COMMENT ON COLUMN t_user_user_group_relation.user_id IS 'related user id';
 
 COMMENT ON COLUMN t_user_user_group_relation.user_group_id IS 'related user group id';
-
-CREATE INDEX idx_user_user_group_relation_user_group_id
-    ON t_user_user_group_relation (user_group_id);
 
 CREATE INDEX idx_user_group_member
     ON t_user_user_group_relation (user_group_id, user_id);
@@ -429,8 +442,8 @@ CREATE TABLE t_audit_event (
     request_params JSONB NOT NULL DEFAULT 'null'::jsonb,
     response_params JSONB NOT NULL DEFAULT 'null'::jsonb,
     header JSONB NOT NULL DEFAULT 'null'::jsonb,
-    mfa_fingerprint TEXT NOT NULL DEFAULT '',
-    mfa_verified_at BIGINT NULL,
+    step_up_fingerprint TEXT NOT NULL DEFAULT '',
+    step_up_verified_at BIGINT NULL,
     CONSTRAINT ck_audit_event_kind CHECK (kind IN ('login', 'operation')),
     CONSTRAINT ck_audit_event_user CHECK (user_id IS NULL OR user_id > 0),
     CONSTRAINT ck_audit_event_status CHECK (status BETWEEN 100 AND 599),
@@ -484,15 +497,228 @@ COMMENT ON COLUMN t_audit_event.response_params IS 'Sanitized response body; sec
 
 COMMENT ON COLUMN t_audit_event.header IS 'Request headers for login and operation audit; sensitive values fully redacted; historical rows have no snapshot';
 
-COMMENT ON COLUMN t_audit_event.mfa_fingerprint IS 'Opaque identifier of the sensitive-operation verification reused by this session; never derived from a secret or OTP';
+COMMENT ON COLUMN t_audit_event.step_up_fingerprint IS 'Opaque identifier of the sensitive-operation verification reused by this session; never derived from a secret or OTP';
 
-COMMENT ON COLUMN t_audit_event.mfa_verified_at IS 'Unix milliseconds of the sensitive-operation verification, not login verification';
+COMMENT ON COLUMN t_audit_event.step_up_verified_at IS 'Unix milliseconds of the sensitive-operation verification, not login verification';
 
 CREATE INDEX idx_audit_event_kind_time ON t_audit_event (kind, occurred_at DESC, id DESC);
 
 CREATE INDEX idx_audit_event_username_time ON t_audit_event (username, occurred_at DESC);
 
+CREATE TABLE t_auth_email_code (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    verification_id TEXT NOT NULL,
+    browser_uuid UUID,
+    client_ip TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    identifier TEXT NOT NULL,
+    user_id BIGINT,
+    recipient TEXT NOT NULL,
+    credential_version BIGINT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expired_at BIGINT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    delivered BOOLEAN NOT NULL DEFAULT FALSE,
+    consumed BOOLEAN NOT NULL DEFAULT FALSE,
+    delivery_attempts SMALLINT,
+    delivery_after BIGINT NOT NULL DEFAULT 0,
+    unlink_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+    notice_detail TEXT NOT NULL DEFAULT '',
+    delivery_account TEXT NOT NULL DEFAULT '',
+    delivery_language TEXT NOT NULL DEFAULT '',
+    delivery_mac TEXT NOT NULL DEFAULT '',
+    CONSTRAINT uk_auth_email_code_verification_id UNIQUE (verification_id),
+    CONSTRAINT fk_auth_email_code_user FOREIGN KEY (user_id) REFERENCES t_user (id) ON DELETE CASCADE,
+    CONSTRAINT ck_auth_email_code_purpose CHECK (purpose IN ('login', 'bind', 'sensitive', 'unlink', 'unlink_notice', 'totp_bound', 'totp_rebound', 'sensitive_notice', 'totp_reset', 'email_linked')),
+    CONSTRAINT ck_auth_email_code_attempts CHECK (attempts >= 0),
+    CONSTRAINT ck_auth_email_code_delivery_attempts CHECK (delivery_attempts >= 0)
+);
+
+CREATE INDEX idx_auth_email_code_browser ON t_auth_email_code (browser_uuid, purpose, created_at DESC);
+
+CREATE INDEX idx_auth_email_code_expiry ON t_auth_email_code (expired_at);
+
+CREATE INDEX idx_auth_email_code_user ON t_auth_email_code (user_id);
+
+CREATE TABLE t_auth_email_cooldown (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    cooldown_key TEXT NOT NULL,
+    retry_at BIGINT NOT NULL,
+    CONSTRAINT uk_auth_email_cooldown_key UNIQUE (cooldown_key)
+);
+
+CREATE INDEX idx_auth_email_cooldown_retry ON t_auth_email_cooldown (retry_at, id);
+
+COMMENT ON TABLE t_auth_email_cooldown IS 'Shared atomic send budgets for browser UUID, source IP and destination/account';
+
+COMMENT ON COLUMN t_auth_email_code.verification_id IS 'Opaque verification ticket shared with clients and delivery jobs; independent of the row primary key';
+
+COMMENT ON COLUMN t_auth_email_cooldown.cooldown_key IS 'Browser, source IP or recipient send-budget key';
+
+COMMENT ON COLUMN t_auth_email_code.delivery_attempts IS 'NULL for tickets without queued delivery; otherwise the number of reserved SMTP attempts';
+
+COMMENT ON COLUMN t_auth_email_code.delivery_after IS 'Next eligible delivery or active worker lease deadline, Unix milliseconds';
+
+COMMENT ON COLUMN t_auth_email_code.notice_detail IS 'Notification rendering details; sensitive-operation summaries contain versioned JSON';
+
+COMMENT ON COLUMN t_auth_email_code.delivery_mac IS 'HMAC of immutable delivery inputs; workers reject unsigned or modified payloads';
+
+CREATE INDEX idx_auth_email_unlink_owner ON t_auth_email_code (user_id, created_at DESC)
+    WHERE purpose = 'unlink' AND NOT consumed;
+
+-- +migrate StatementBegin
+CREATE FUNCTION auth_email_alias_check() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(713642869);
+    IF EXISTS (
+        SELECT 1 FROM t_user u WHERE u.id <> NEW.id
+            AND (u.email = LOWER(TRIM(NEW.username)) OR (NEW.email IS NOT NULL AND LOWER(TRIM(u.username)) = NEW.email))
+    ) THEN
+        RAISE unique_violation USING CONSTRAINT = 'uk_user_login_alias', MESSAGE = 'login alias is already in use';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +migrate StatementEnd
+
+CREATE TRIGGER auth_email_alias_check BEFORE INSERT OR UPDATE OF username, email ON t_user
+    FOR EACH ROW EXECUTE FUNCTION auth_email_alias_check();
+
+CREATE TABLE t_sensitive_operation (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    user_id BIGINT NOT NULL,
+    scan_id BIGINT,
+    operation_kind TEXT NOT NULL DEFAULT 'other',
+    permission_related BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT ck_sensitive_operation_kind CHECK (operation_kind IN ('create', 'delete', 'update', 'other'))
+);
+
+CREATE INDEX idx_sensitive_operation_actor ON t_sensitive_operation (user_id, created_at, id);
+
+CREATE INDEX idx_sensitive_operation_pending ON t_sensitive_operation (id) WHERE scan_id IS NULL;
+
+CREATE INDEX idx_sensitive_operation_scan ON t_sensitive_operation (scan_id) WHERE scan_id IS NOT NULL;
+
+COMMENT ON COLUMN t_sensitive_operation.scan_id IS 'Scan which evaluated this committed mutation; NULL until claimed';
+
+CREATE TABLE t_sensitive_scan (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    slot BIGINT NOT NULL,
+    CONSTRAINT uk_sensitive_scan_slot UNIQUE (slot)
+);
+
+CREATE INDEX idx_sensitive_scan_created ON t_sensitive_scan (created_at, id);
+
+COMMENT ON COLUMN t_sensitive_operation.operation_kind IS 'Committed business operation category; action endpoints such as publication and credential binding count as update.';
+
+COMMENT ON COLUMN t_sensitive_operation.permission_related IS 'Overlapping permission-related classification, including grant fields and permission catalog mutations.';
+
+-- The official River migrations create river_job before the Auth migrations run.
+-- +migrate StatementBegin
+CREATE FUNCTION auth_enqueue_email(ticket_id TEXT, email_purpose TEXT) RETURNS VOID
+LANGUAGE SQL AS $$
+    INSERT INTO river_job (kind, queue, args, max_attempts)
+    VALUES (
+        'auth_email_deliver',
+        CASE WHEN email_purpose IN ('unlink_notice', 'totp_bound', 'totp_rebound', 'sensitive_notice', 'email_linked')
+            THEN 'auth_email_notice' ELSE 'auth_email_interactive' END,
+        jsonb_build_object('ticket_id', ticket_id),
+        25
+    );
+$$;
+-- +migrate StatementEnd
+
+-- +migrate StatementBegin
+CREATE FUNCTION auth_email_after_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM auth_enqueue_email(NEW.verification_id, NEW.purpose);
+    RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION USING ERRCODE = 'AE001', MESSAGE = 'could not enqueue email delivery';
+END;
+$$;
+-- +migrate StatementEnd
+
+CREATE TRIGGER auth_email_after_insert
+    AFTER INSERT ON t_auth_email_code
+    FOR EACH ROW WHEN (NEW.delivery_attempts IS NOT NULL AND NOT NEW.delivered AND NOT NEW.consumed)
+    EXECUTE FUNCTION auth_email_after_insert();
+
+CREATE TABLE t_mail_template (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    template_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    published_version BIGINT NOT NULL DEFAULT 0,
+    has_draft BOOLEAN NOT NULL DEFAULT TRUE,
+    content JSONB NOT NULL,
+    CONSTRAINT uk_mail_template_template_id UNIQUE (template_id),
+    CONSTRAINT ck_mail_template_category CHECK (category IN ('verification', 'confirmation', 'security', 'notification')),
+    CONSTRAINT ck_mail_template_revision CHECK (revision > 0 AND published_version >= 0),
+    CONSTRAINT ck_mail_template_content CHECK (jsonb_typeof(content) = 'object' AND content ? 'zh-CN' AND content ? 'en-US')
+);
+
+COMMENT ON COLUMN t_mail_template.template_id IS 'Editable unique business identifier; numeric primary key and publication history remain stable.';
+
+COMMENT ON COLUMN t_mail_template.content IS 'Editable per-language draft subject, HTML, text and preview-only examples; delivery reads the published version.';
+
+COMMENT ON COLUMN t_mail_template.revision IS 'Optimistic concurrency token incremented by every draft or publication change.';
+
+CREATE TABLE t_mail_template_version (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    template_pk BIGINT NOT NULL,
+    version BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    content JSONB NOT NULL,
+    published_by BIGINT NOT NULL DEFAULT 0,
+    CONSTRAINT fk_mail_template_version_template FOREIGN KEY (template_pk) REFERENCES t_mail_template (id) ON DELETE CASCADE,
+    CONSTRAINT uk_mail_template_version UNIQUE (template_pk, version),
+    CONSTRAINT ck_mail_template_version CHECK (version > 0)
+);
+
+COMMENT ON COLUMN t_mail_template_version.content IS 'Immutable publication snapshot; restoring it creates a new draft.';
+
+COMMENT ON COLUMN t_mail_template_version.published_by IS 'Publisher user ID; zero identifies seed data.';
+
 -- +migrate Down
+DROP TABLE t_mail_template_version;
+
+DROP TABLE t_mail_template;
+
+DROP TRIGGER auth_email_after_insert ON t_auth_email_code;
+
+DROP FUNCTION auth_email_after_insert();
+
+DROP FUNCTION auth_enqueue_email(TEXT, TEXT);
+
+DELETE FROM river_job WHERE kind IN ('auth_email_deliver', 'auth_sensitive_activity_scan', 'mail_template_test_deliver', 'auth_history_cleanup');
+
+DROP TABLE t_sensitive_scan;
+
+DROP TABLE t_sensitive_operation;
+
+DROP TABLE t_auth_email_cooldown;
+
+DROP TABLE t_auth_email_code;
+
+DROP TRIGGER auth_email_alias_check ON t_user;
+
+DROP FUNCTION auth_email_alias_check();
+
 DROP TABLE t_audit_event;
 
 DROP TABLE t_user_msg_status;

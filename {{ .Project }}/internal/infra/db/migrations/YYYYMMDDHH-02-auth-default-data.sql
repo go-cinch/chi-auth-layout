@@ -48,6 +48,10 @@ SELECT setval(pg_get_serial_sequence('t_user', 'id'), (SELECT MAX(id) FROM t_use
 -- +migrate Down
 -- Clear the non-catalog auth tables and reset their sequences.
 TRUNCATE TABLE
+    t_auth_email_code,
+    t_auth_email_cooldown,
+    t_sensitive_operation,
+    t_sensitive_scan,
     t_audit_event,
     t_user_msg_status,
     t_msg_recipient,

@@ -55,7 +55,7 @@ func TestHTTP(t *testing.T) {
 	handler := m.HTTP()
 {{ end }}
 	manager, _ := authn.New("test", strings.Repeat("k", 64), time.Hour)
-	token, _, err := manager.Issue(authn.Identity{UserID: 2, Username: "guest", Code: "12345678", CredentialVersion: 1})
+	token, _, err := manager.Issue(authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 2, Username: "guest", Code: "12345678", CredentialVersion: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,6 +20,8 @@ import (
 {{- end }}
 	"{{ .Computed.module_name_final }}/internal/common/server"
 	"{{ .Computed.module_name_final }}/internal/modules"
+"{{ .Computed.module_name_final }}/internal/modules/localization"
+"{{ .Computed.module_name_final }}/internal/modules/dictionary"
 )
 
 var _ modules.HTTPAuthenticationPolicy = (*Module)(nil)
@@ -58,6 +60,57 @@ type SliderChallengeInput struct {
 	Username string `json:"username"`
 }
 
+// SystemProperties contains deployment settings that anonymous clients may display.
+type SystemProperties struct {
+ UIPreferences map[string]dictionary.UIPreferences `json:"ui_preferences,omitempty"`
+	DefaultLocale string `json:"default_locale"`
+	Locales []localization.Language `json:"locales"`
+	EmailEnabled bool `json:"email_enabled"`
+	TOTPEnabled   bool `json:"totp_enabled"`
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) systemProperties(c *gin.Context) {
+	w, r := c.Writer, c.Request
+{{ else -}}
+func (m *Module) systemProperties(w http.ResponseWriter, r *http.Request) {
+{{ end -}}
+	w.Header().Set("Cache-Control", "no-store")
+    query, err := url.ParseQuery(r.URL.RawQuery)
+    if err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+    client, err := preferenceClient(query)
+    if err != nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+    var ui map[string]dictionary.UIPreferences
+    if client != "" {
+        defaults, err := m.uiDefaults(r.Context(), client)
+        if err != nil { server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
+        ui = map[string]dictionary.UIPreferences{client: defaults}
+    }
+	catalog := m.catalogSource.PublicCatalog("default_locale", "locales")
+	locales := make([]localization.Language, 0, len(catalog.Locales))
+	for _, locale := range catalog.Locales {
+		if locale.Enabled { locales = append(locales, locale) }
+	}
+	server.WriteOK(w, SystemProperties{
+ UIPreferences: ui,
+		DefaultLocale: catalog.DefaultLocale, Locales: locales,
+		EmailEnabled: m.emailCodes != nil && m.emailCodes.sender.Ready(),
+		TOTPEnabled:   m.totpEnabled(),
+	})
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) timezoneOptions(c *gin.Context) {
+    w, r := c.Writer, c.Request
+{{ else -}}
+func (m *Module) timezoneOptions(w http.ResponseWriter, r *http.Request) {
+{{ end -}}
+    w.Header().Set("Cache-Control", "no-store")
+    value, err := m.TimezoneOptions(r.Context())
+    if err != nil { server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal); return }
+    server.WriteOK(w, value)
+}
+
 func PermissionTargetFromRequest(r *http.Request) PermissionTarget {
 	requestPath := strings.TrimSpace(r.Header.Get(permissionHeaderPath))
 	if requestPath == "" {
@@ -75,7 +128,7 @@ func (m *Module) AllowAnonymousHTTP(r *http.Request) bool {
 		return false
 	}
 	target := PermissionTargetFromRequest(r)
-	if target.Method == "" || !strings.HasPrefix(target.Path, "/") || strings.HasPrefix(target.Path, "//") {
+	if target.Resource != "" || target.Method == "" || !strings.HasPrefix(target.Path, "/") || strings.HasPrefix(target.Path, "//") {
 		return false
 	}
 	parsed, err := url.ParseRequestURI(target.Path)
@@ -89,6 +142,11 @@ func (m *Module) AllowAnonymousHTTP(r *http.Request) bool {
 
 {{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) HTTP(r *gin.RouterGroup) {
+	r.GET("/pub/i18n", m.localization)
+	r.GET("/pub/opt", m.systemProperties)
+ r.GET("/pub/timezones", m.timezoneOptions)
+	r.GET("/pub/status", m.publicStatus)
+	r.GET("/status", m.status)
 	r.GET("/pub/register/username", m.usernameAvailability)
 	r.POST("/pub/challenge", m.publicChallenge)
 	r.POST("/pub/register", m.register)
@@ -97,7 +155,17 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("/pub/login/verification", m.loginVerification)
 	r.POST("/pub/captcha", m.refreshLoginCaptcha)
 	r.POST("/pub/captcha/verify", m.verifyLoginCaptcha)
-	r.POST("/pub/login", m.login)
+	r.POST("/pub/login/email-code", m.sendLoginEmailCode)
+    r.POST("/pub/totp/reset/email-code", m.sendResetCode)
+    r.POST("/pub/totp/reset/confirm", m.confirmEmailReset)
+    r.POST("/email/code", m.sendBindEmailCode)
+    r.POST("/email/sensitive-code", m.sendSensitiveCode)
+    r.POST("/email/bind", m.bindEmail)
+    r.GET("/email/unbind/status", m.unlinkStatus)
+    r.POST("/email/unbind/request", m.requestUnlink)
+    r.POST("/email/unbind", m.verifyUnlink)
+    r.POST("/pub/email/unbind", m.confirmUnlink)
+    r.POST("/pub/login", m.login)
 	r.POST("/pub/refresh", m.refresh)
 	r.POST("/pub/logout", m.logout)
 	r.GET("/permission", m.checkPermission)
@@ -107,17 +175,27 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.POST("/captcha/verify", m.verifyPasswordChangeCaptcha)
 	r.PATCH("/change/pwd", m.changePassword)
 	r.PATCH("/reset/pwd", m.resetPassword)
-	r.GET("/mfa", m.mfaStatus)
-	r.POST("/mfa/challenge", m.mfaChallenge)
-	r.POST("/mfa/setup", m.mfaSetup)
-	r.POST("/mfa/confirm", m.mfaConfirm)
-	r.POST("/mfa/test", m.mfaTest)
-	r.POST("/mfa/reset/:id", m.mfaReset)
-	r.GET("/info", m.info)
+	r.GET("/totp", m.totpStatus)
+	r.POST("/totp/challenge", m.totpChallenge)
+	r.POST("/totp/setup", m.totpSetup)
+	r.POST("/totp/confirm", m.totpConfirm)
+	r.POST("/totp/test", m.totpTest)
+	r.POST("/totp/recovery/email-code", m.sendAccountResetCode)
+	r.POST("/totp/recovery/confirm", m.confirmAccountReset)
+	r.POST("/totp/reset/:id", m.totpReset)
+	r.GET("/pub/login/email-code/status", m.loginEmailCodeStatus)
+    r.GET("/email/code/status", m.bindEmailCodeStatus)
+    r.GET("/info", m.info)
+	r.PATCH("/info", m.updateInfo)
 }
 {{ else -}}
 func (m *Module) HTTP() http.Handler {
 	r := chi.NewRouter()
+	r.Get("/pub/i18n", m.localization)
+	r.Get("/pub/opt", m.systemProperties)
+ r.Get("/pub/timezones", m.timezoneOptions)
+	r.Get("/pub/status", m.publicStatus)
+	r.Get("/status", m.status)
 	r.Get("/pub/register/username", m.usernameAvailability)
 	r.Post("/pub/challenge", m.publicChallenge)
 	r.Post("/pub/register", m.register)
@@ -126,7 +204,17 @@ func (m *Module) HTTP() http.Handler {
 	r.Get("/pub/login/verification", m.loginVerification)
 	r.Post("/pub/captcha", m.refreshLoginCaptcha)
 	r.Post("/pub/captcha/verify", m.verifyLoginCaptcha)
-	r.Post("/pub/login", m.login)
+	r.Post("/pub/login/email-code", m.sendLoginEmailCode)
+    r.Post("/pub/totp/reset/email-code", m.sendResetCode)
+    r.Post("/pub/totp/reset/confirm", m.confirmEmailReset)
+    r.Post("/email/code", m.sendBindEmailCode)
+    r.Post("/email/sensitive-code", m.sendSensitiveCode)
+    r.Post("/email/bind", m.bindEmail)
+    r.Get("/email/unbind/status", m.unlinkStatus)
+    r.Post("/email/unbind/request", m.requestUnlink)
+    r.Post("/email/unbind", m.verifyUnlink)
+    r.Post("/pub/email/unbind", m.confirmUnlink)
+    r.Post("/pub/login", m.login)
 	r.Post("/pub/refresh", m.refresh)
 	r.Post("/pub/logout", m.logout)
 	r.Get("/permission", m.checkPermission)
@@ -136,13 +224,18 @@ func (m *Module) HTTP() http.Handler {
 	r.Post("/captcha/verify", m.verifyPasswordChangeCaptcha)
 	r.Patch("/change/pwd", m.changePassword)
 	r.Patch("/reset/pwd", m.resetPassword)
-	r.Get("/mfa", m.mfaStatus)
-	r.Post("/mfa/challenge", m.mfaChallenge)
-	r.Post("/mfa/setup", m.mfaSetup)
-	r.Post("/mfa/confirm", m.mfaConfirm)
-	r.Post("/mfa/test", m.mfaTest)
-	r.Post("/mfa/reset/{id}", m.mfaReset)
-	r.Get("/info", m.info)
+	r.Get("/totp", m.totpStatus)
+	r.Post("/totp/challenge", m.totpChallenge)
+	r.Post("/totp/setup", m.totpSetup)
+	r.Post("/totp/confirm", m.totpConfirm)
+	r.Post("/totp/test", m.totpTest)
+	r.Post("/totp/recovery/email-code", m.sendAccountResetCode)
+	r.Post("/totp/recovery/confirm", m.confirmAccountReset)
+	r.Post("/totp/reset/{id}", m.totpReset)
+	r.Get("/pub/login/email-code/status", m.loginEmailCodeStatus)
+    r.Get("/email/code/status", m.bindEmailCodeStatus)
+    r.Get("/info", m.info)
+	r.Patch("/info", m.updateInfo)
 	return r
 }
 {{ end }}
@@ -158,7 +251,8 @@ func (m *Module) checkPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	identity, allowed, err := m.CheckPermission(r.Context(), PermissionTargetFromRequest(r))
-	if errors.Is(err, authn.ErrPasswordResetRequired) {
+	if errors.Is(err, ErrEmailBindingRequired) || errors.Is(err, ErrTOTPEnrollmentRequired) { server.WriteHTTPSecurityError(w, r, err); return }
+    if errors.Is(err, authn.ErrPasswordResetRequired) {
 		server.WriteError(w, r, http.StatusForbidden, err)
 		return
 	}
@@ -176,8 +270,9 @@ func (m *Module) checkPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
     target := PermissionTargetFromRequest(r)
+    if err := m.checkEmailTarget(r.Context(), target.Method, target.Path); err != nil { server.WriteHTTPSecurityError(w, r, err); return }
     if target.Resource == "" {
-        if err := m.checkMFARequest(r, target.Method, target.Path); err != nil {
+        if err := m.checkSensitiveRequest(r, target.Method, target.Path); err != nil {
             server.WriteHTTPSecurityError(w, r, err)
             return
         }
@@ -261,7 +356,8 @@ func (m *Module) sliderChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sliderChallenge, err := m.sliderCaptcha.IssueSliderChallenge(r.Context(), input.Purpose, input.Username)
-	if errors.Is(err, ErrSliderCaptchaRequired) {
+	if errors.Is(err, ErrEmailInvalid) || errors.Is(err, ErrEmailUnavailable) { writeEmailError(w, r, err, nil); return }
+    if errors.Is(err, ErrSliderCaptchaRequired) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
 		return
 	}
@@ -286,7 +382,8 @@ func (m *Module) verifySlider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := m.sliderCaptcha.VerifySlider(r.Context(), input)
-	if errors.Is(err, ErrSliderCaptchaRequired) {
+	if errors.Is(err, ErrEmailInvalid) || errors.Is(err, ErrEmailUnavailable) { writeEmailError(w, r, err, nil); return }
+    if errors.Is(err, ErrSliderCaptchaRequired) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
 		return
 	}
@@ -353,7 +450,35 @@ func (m *Module) passwordChangeChallenge(w http.ResponseWriter, r *http.Request)
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
-	if input.Purpose != challengePurposePasswordChange && input.Purpose != "password_reset" {
+    identity, _ := authn.FromContext(r.Context())
+    if input.Purpose == "totp_setup" {
+        if !m.totpEnabled() { writeVerificationError(w, r, ErrVerificationUnavailable); return }
+        challenge, err := m.credentials.TOTPSetupChallenge(r.Context(), identity.UserID)
+        if err != nil { writeVerificationError(w, r, err); return }
+        server.WriteOK(w, challenge)
+        return
+    }
+    required, enrollmentErr := m.totpEnrollmentRequired(r.Context(), identity)
+    if enrollmentErr != nil { writeVerificationError(w, r, enrollmentErr); return }
+    if required && input.Purpose != "sensitive" { server.WriteHTTPSecurityError(w, r, ErrTOTPEnrollmentRequired); return }
+	if input.Purpose == "sensitive" {
+        identity, ok := authn.FromContext(r.Context())
+        if !ok || identity.SessionID == "" { writeEmailError(w, r, ErrUnauthorized, nil); return }
+        challenge, err := m.credentials.challenge(r.Context(), sensitiveScope(identity), identity.UserID)
+        if err != nil { writeEmailError(w, r, err, nil); return }
+        server.WriteOK(w, challenge)
+        return
+    }
+    if input.Purpose == "email_bind" || input.Purpose == "email_unbind" {
+        identity, _ := authn.FromContext(r.Context())
+        var challenge *CredentialChallenge
+        var err error
+        if input.Purpose == "email_unbind" { challenge, err = m.credentials.challenge(r.Context(), unlinkCredentialType, identity.UserID) } else { challenge, err = m.credentials.EmailBindChallenge(r.Context(), identity.UserID) }
+        if err != nil { writeEmailError(w, r, err, nil); return }
+        server.WriteOK(w, challenge)
+        return
+    }
+    if input.Purpose != challengePurposePasswordChange && input.Purpose != "password_reset" {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.PasswordPurpose)
 		return
 	}
@@ -474,6 +599,11 @@ func (m *Module) loginVerification(w http.ResponseWriter, r *http.Request) {
 	server.WriteOK(w, verification)
 }
 
+type LoginPointCaptchaInput struct {
+ Username string `json:"username,omitempty"`
+ CaptchaID string `json:"captcha_id,omitempty"`
+}
+
 type RefreshPointCaptchaInput struct {
 	CaptchaID string `json:"captcha_id"`
 }
@@ -589,11 +719,18 @@ func (m *Module) refreshLoginCaptcha(c *gin.Context) {
 func (m *Module) refreshLoginCaptcha(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
-	var input RefreshPointCaptchaInput
+	var input LoginPointCaptchaInput
 	if err := server.DecodeJSON(w, r, &input, server.BodyAuthChallenge); err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
+    if input.Username != "" {
+        if input.CaptchaID != "" { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody); return }
+        verification, err := m.LoginVerification(r.Context(), input.Username)
+        if err != nil { writeEmailError(w, r, err, nil); return }
+        server.WriteOK(w, verification)
+        return
+    }
 	pointCaptchaChallenge, err := m.captcha.RefreshChallenge(r.Context(), input.CaptchaID)
 	if errors.Is(err, ErrPointCaptchaNotFound) {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.CaptchaExpired)
@@ -629,7 +766,7 @@ func (m *Module) refresh(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
-    writeLoginHeaders(w, refreshResult)
+    writeLoginHeaders(w)
 	server.WriteOK(w, refreshResult)
 }
 
@@ -641,24 +778,31 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
     ticket := strings.TrimSpace(r.Header.Get(authn.MFATicketHeader))
-    recoveryHeaders := r.Header.Values(authn.MFARecoveryCodeHeader)
-    if len(recoveryHeaders) > 0 && (len(recoveryHeaders) != 1 || ticket == "" || len(r.Header.Values(authn.MFATicketHeader)) != 1 || len(r.Header.Values(authn.MFACodeHeader)) > 0) {
-        writeMFAError(w, r, ErrMFAInvalid)
+    recoveryHeaders := r.Header.Values(authn.RecoveryCodeHeader)
+    if len(recoveryHeaders) > 0 && (len(recoveryHeaders) != 1 || ticket == "" || len(r.Header.Values(authn.MFATicketHeader)) != 1 || len(r.Header.Values(authn.TOTPCodeHeader)) > 0) {
+        writeVerificationError(w, r, ErrVerificationInvalid)
         return
     }
     if ticket != "" {
-        var continuation *struct{}
+        var continuation *EncryptedLoginInput
         if err := server.DecodeJSON(w, r, &continuation, server.BodyAuth); err != nil { server.WriteError(w, r, http.StatusBadRequest, err); return }
         if continuation == nil { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody); return }
         var result *LoginResult
         var err error
         if len(recoveryHeaders) > 0 {
-            result, err = m.RecoverMFALogin(r.Context(), ticket, recoveryHeaders[0])
+            var password string
+            if continuation.ChallengeID != "" || continuation.Credential != "" {
+                credential, openErr := m.credentials.Open(r.Context(), *continuation)
+                if openErr != nil || credential.Method == "email_code" { writeEmailError(w, r, ErrInvalidCredential, nil); return }
+                password = credential.Password
+            }
+            result, err = m.RecoverTOTPLogin(r.Context(), ticket, recoveryHeaders[0], password)
         } else {
-            result, err = m.CompleteMFALogin(r.Context(), ticket, r.Header.Get(authn.MFACodeHeader))
+            if continuation.ChallengeID != "" || continuation.Credential != "" { writeEmailError(w, r, ErrInvalidCredential, nil); return }
+            result, err = m.CompleteTOTPLogin(r.Context(), ticket, r.Header.Get(authn.TOTPCodeHeader))
         }
-        if err != nil { writeMFAError(w, r, err); return }
-        writeLoginHeaders(w, result)
+        if err != nil { writeVerificationError(w, r, err); return }
+        writeLoginHeaders(w)
         server.WriteOK(w, result)
         return
     }
@@ -683,7 +827,8 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		auditctx.Error(r.Context(), apperror.Code(err))
 	}
-	if errors.Is(err, ErrSliderCaptchaRequired) {
+	if errors.Is(err, ErrEmailInvalid) || errors.Is(err, ErrEmailUnavailable) { writeEmailError(w, r, err, nil); return }
+    if errors.Is(err, ErrSliderCaptchaRequired) {
 		server.WriteError(w, r, http.StatusBadRequest, ErrSliderCaptchaRequired)
 		return
 	}
@@ -717,25 +862,85 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
     if loginResult.MFARequired {
-        if code := strings.TrimSpace(r.Header.Get(authn.MFACodeHeader)); code != "" {
-            verified, verifyErr := m.CompleteMFALogin(r.Context(), loginResult.MFATicket, code)
+        if code := strings.TrimSpace(r.Header.Get(authn.TOTPCodeHeader)); code != "" {
+            verified, verifyErr := m.CompleteTOTPLogin(r.Context(), loginResult.MFATicket, code)
             if verifyErr == nil {
-                writeLoginHeaders(w, verified)
+                writeLoginHeaders(w)
                 server.WriteOK(w, verified)
                 return
             }
             w.Header().Set(authn.MFATicketHeader, loginResult.MFATicket)
             w.Header().Set(authn.MFAExpiresAtHeader, strconv.FormatInt(loginResult.ExpiredAt, 10))
-            writeMFAError(w, r, verifyErr)
+            writeVerificationError(w, r, verifyErr)
             return
         }
         w.Header().Set(authn.MFATicketHeader, loginResult.MFATicket)
         w.Header().Set(authn.MFAExpiresAtHeader, strconv.FormatInt(loginResult.ExpiredAt, 10))
-        writeMFAError(w, r, ErrMFARequired)
+        writeVerificationError(w, r, ErrLoginMFARequired)
         return
     }
-    writeLoginHeaders(w, loginResult)
+    writeLoginHeaders(w)
 	server.WriteOK(w, loginResult)
+}
+
+type SelfPreferences struct {
+	OnboardingPreferences
+	Language *string `json:"language,omitempty"`
+ Timezone *string `json:"timezone,omitempty"`
+ UIPreferences map[string]dictionary.UIPreferences `json:"ui_preferences,omitempty"`
+}
+
+func (p SelfPreferences) valid() bool {
+    if p.UIPreferences != nil {
+        _, ok := p.UIPreferences[dictionary.UIPreferenceClient]
+        return ok && len(p.UIPreferences)==1 && p.Language==nil && p.Timezone==nil && !p.EmailBindingSkipped && !p.TOTPEnrollmentSkipped && !p.PasswordResetSkipped
+    }
+    if p.Language != nil || p.Timezone != nil {
+        if p.EmailBindingSkipped || p.TOTPEnrollmentSkipped || p.PasswordResetSkipped { return false }
+        return (p.Language != nil && *p.Language != "" && p.Timezone == nil) || (p.Timezone != nil && *p.Timezone != "" && p.Language == nil)
+    }
+    return p.OnboardingPreferences.valid()
+}
+
+type UpdateInfoInput struct {
+	Metadata SelfPreferences `json:"metadata"`
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) updateInfo(c *gin.Context) {
+	w, r := c.Writer, c.Request
+{{ else -}}
+func (m *Module) updateInfo(w http.ResponseWriter, r *http.Request) {
+{{ end }}
+	var input UpdateInfoInput
+	if err := server.DecodeJSON(w, r, &input, server.BodyBusiness); err != nil || !input.Metadata.valid() {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
+		return
+	}
+    if input.Metadata.UIPreferences != nil {
+        result, err := m.UpdateUIPreferences(r.Context(), input.Metadata.UIPreferences)
+        if errors.Is(err, ErrInvalid) { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody); return }
+        if err != nil { writeEmailError(w, r, err, nil); return }
+        server.WriteOK(w, result)
+        return
+    }
+	var err error
+	if input.Metadata.Language != nil {
+		err = m.UpdateLanguage(r.Context(), *input.Metadata.Language)
+	} else if input.Metadata.Timezone != nil {
+ err = m.UpdateTimezone(r.Context(), *input.Metadata.Timezone)
+	} else {
+		err = m.SkipOnboarding(r.Context(), input.Metadata.OnboardingPreferences)
+	}
+	if errors.Is(err, ErrInvalid) {
+		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
+		return
+	}
+	if err != nil {
+		writeEmailError(w, r, err, nil)
+		return
+	}
+	server.WriteOK(w)
 }
 
 {{ if eq .Computed.http_router_final "gin" -}}
@@ -744,6 +949,7 @@ func (m *Module) info(c *gin.Context) {
 {{ else -}}
 func (m *Module) info(w http.ResponseWriter, r *http.Request) {
 {{ end }}
+	w.Header().Set("Cache-Control", "no-store")
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
@@ -754,7 +960,10 @@ func (m *Module) info(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	info, err := m.InfoSelected(r.Context(), authn.PermissionScope(r.Context()), fields)
+	client, err := preferenceClient(query)
+    if err != nil || (client != "" && (fields == nil || !fields.Has("ui_preferences"))) { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
+    info, err := m.InfoSelected(r.Context(), authn.PermissionScope(r.Context()), fields, client)
+    if errors.Is(err, ErrInvalid) { server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery); return }
 	if errors.Is(err, ErrInfoScopeInvalid) {
 		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
@@ -812,8 +1021,8 @@ func (m *Module) resetPassword(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, ErrUnauthorized):
 		server.WriteError(w, r, http.StatusUnauthorized, err)
-	case errors.Is(err, ErrMFAEnrollmentRequired):
-        server.SetMFAErrorHeaders(w, err)
+	case errors.Is(err, ErrTOTPEnrollmentRequired):
+        server.SetVerificationErrorHeaders(w, err)
 		server.WriteError(w, r, http.StatusForbidden, err)
 	case errors.Is(err, ErrPasswordResetNotRequired):
 		server.WriteError(w, r, http.StatusConflict, err)
@@ -823,7 +1032,13 @@ func (m *Module) resetPassword(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "reset current password failed: "+err.Error(), "operation", "reset_current_password", "outcome", "failure", "error", err)
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 	default:
-		writeLoginHeaders(w, result)
+		writeLoginHeaders(w)
 	server.WriteOK(w, result)
 	}
+}
+
+// Session restrictions are read through GET /status?purpose=onboarding&f=requirements.
+// Session responses contain tokens only and are never cacheable.
+func writeLoginHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
 }

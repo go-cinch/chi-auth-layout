@@ -30,6 +30,17 @@ func statusRows(count int64, latest, expiry any) *sqlmock.Rows {
 	return sqlmock.NewRows([]string{"unread_count", "latest_unread_at", "next_refresh_at", "observed_at"}).AddRow(count, latest, expiry, time.Now().UnixMilli())
 }
 
+func TestUnreadCount(t *testing.T) {
+	m, mock := testModule(t)
+	mock.ExpectQuery("SELECT unread_count").WillReturnRows(statusRows(3, time.Now(), nil))
+	if n, err := m.UnreadCount(t.Context(), 2); err != nil || n != 3 {
+		t.Fatal(n, err)
+	}
+	if _, err := m.UnreadCount(t.Context(), 0); err == nil {
+		t.Fatal("invalid count")
+	}
+}
+
 func TestStatusReadsOnlyPersistedRow(t *testing.T) {
 	m, mock := testModule(t)
 	at := time.Now().Add(-time.Minute).Truncate(time.Millisecond)

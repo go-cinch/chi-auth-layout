@@ -3,12 +3,55 @@ package action
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/lib/pq"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
+	"{{ .Computed.module_name_final }}/internal/common/i18n"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
+
+type ListActionGroupsResult struct {
+	Items []string `json:"items"`
+}
+
+func (m *Module) ListGroups(ctx context.Context, keyword string) (*ListActionGroupsResult, error) {
+	keyword = strings.TrimSpace(keyword)
+	if utf8.RuneCountInString(keyword) > 50 {
+		return nil, ErrInvalid
+	}
+	value := &ListActionGroupsResult{Items: make([]string, 0)}
+	query := `SELECT MIN(action_group) FROM t_action WHERE BTRIM(action_group) <> ''`
+	args := make([]any, 0, 1)
+	if keyword != "" {
+		args = append(args, like(keyword))
+		clause := `LOWER(action_group) LIKE LOWER($1) ESCAPE '!'`
+		if matched := matchingLabelWords(m.catalogSource.Current().Labels(i18n.Locale(ctx, ""), "groups"), keyword); len(matched) > 0 {
+			args = append(args, pq.Array(matched))
+			clause += " OR action_group = ANY($2)"
+		}
+		query += " AND (" + clause + ")"
+	}
+	query += ` GROUP BY LOWER(action_group) ORDER BY LOWER(action_group) LIMIT 20`
+	rows, err := m.store.SQL(ctx).QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list action groups: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var group string
+		if err := rows.Scan(&group); err != nil {
+			return nil, fmt.Errorf("scan action group: %w", err)
+		}
+		value.Items = append(value.Items, group)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list action groups: %w", err)
+	}
+	return value, nil
+}
 
 // Read the committed catalog under the shared permission mutation lock, rather
 // than a process snapshot that may still contain a renamed group.

@@ -16,15 +16,15 @@ except ImportError:
 
 
 CREDENTIAL_FIELDS = (
-    "auth.jwt.key",
-    "auth.jwt.issuer",
-    "auth.mfa.encryptionKeyFile",
-    "auth.mfa.totpPeriod",
+    "auth.session.jwt.key",
+    "auth.session.jwt.issuer",
+    "auth.verification.encryptionKeyFile",
+    "auth.totp.period",
     "auth.challengeEncryption.privateKeyFile",
     "auth.challengeEncryption.keyId",
 )
 KEY_FILE_FIELDS = (
-    "auth.mfa.encryptionKeyFile",
+    "auth.verification.encryptionKeyFile",
     "auth.challengeEncryption.privateKeyFile",
 )
 
@@ -99,6 +99,15 @@ def capture(auth_dir, backup_dir):
         _, config = read_config(auth_dir / "conf/auth.yml")
     except FileNotFoundError:
         config = {}
+    # Translate old configuration paths only during local regeneration.
+    # Runtime configuration accepts the canonical schema exclusively.
+    auth = config.get("auth", {})
+    if "jwt" in auth:
+        auth.setdefault("session", {}).setdefault("jwt", auth["jwt"])
+    legacy = auth.get("mfa", {})
+    for section, leaf, old in (("verification", "encryptionKeyFile", "encryptionKeyFile"), ("totp", "period", "totpPeriod")):
+        if old in legacy:
+            auth.setdefault(section, {}).setdefault(leaf, legacy[old])
     values = {}
     for field in CREDENTIAL_FIELDS:
         value = scalar(config, field)
@@ -151,6 +160,10 @@ def merge_config(text, config, values):
     missing = False
     for field in CREDENTIAL_FIELDS:
         if field not in values or scalar(config, field) == values[field]:
+            continue
+        legacy = {"auth.session.jwt.key": "auth.jwt.key", "auth.session.jwt.issuer": "auth.jwt.issuer", "auth.verification.encryptionKeyFile": "auth.mfa.encryptionKeyFile", "auth.totp.period": "auth.mfa.totpPeriod"}.get(field)
+        if scalar(config, field) is None and legacy and scalar(config, legacy) == values[field]:
+            # Failure rollback already restored the old YAML byte-for-byte.
             continue
         node = root
         for key in field.split("."):

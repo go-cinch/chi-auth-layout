@@ -40,9 +40,8 @@ func TestPolicyAndMask(t *testing.T) {
 	for input, expected := range map[string]string{
 		"redis://127.0.0.1:6379/0":               "redis://127.0.0.1:6379/0",
 		"redis://root:password@127.0.0.1:6379/0": "redis://root:pas***ord@127.0.0.1:6379/0",
-		"root:password@tcp(127.0.0.1:3306)/app":  "root:pas***ord@tcp(127.0.0.1:3306)/app",
-		"root@tcp(127.0.0.1:3306)/app":           "root@tcp(127.0.0.1:3306)/app",
 		"redis://root@127.0.0.1:6379/0":          "redis://root@127.0.0.1:6379/0",
+		"user:secret@host":                       "***",
 		"not-a-dsn":                              "not-a-dsn",
 	} {
 		if actual := DSN(input); actual != expected {
@@ -114,11 +113,6 @@ func TestDSNCredentialsInQueriesAndOptions(t *testing.T) {
 			want:  " host = localhost\tpassword = 'abc***ijk' dbname='my db' ",
 		},
 		{
-			name:  "keyword password containing mysql syntax",
-			input: "host=localhost password=abc@tcp(defghijk) dbname=app",
-			want:  "host=localhost password='abc***jk)' dbname=app",
-		},
-		{
 			name:  "keyword password containing url syntax",
 			input: "host=localhost password=abc://defghijk dbname=app",
 			want:  "host=localhost password='abc***ijk' dbname=app",
@@ -180,4 +174,11 @@ func TestDSNCredentialsInQueriesAndOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerificationHeadersAreAlwaysRedacted(t *testing.T) {
+ policy := New()
+ for _, key := range []string{"X-TOTP-Code", "X-Recovery-Code", "X-MFA-Ticket", "X-Step-Up-Challenge", "X-Step-Up-Credential"} {
+  if !policy.IsSensitive(key) { t.Errorf("verification credential %s is not redacted", key) }
+ }
 }

@@ -19,6 +19,13 @@ Untrusted spreadsheet cell prefixes are neutralized.
 account (attempted account on failed login), HTTP outcome, method/path, resolved client IP,
 user agent, trace ID, safe error code and duration.
 
+Email unlink auditing distinguishes a request to send mail, authenticated
+unlinking, confirmation by email link, and reopening a confirmed link. A
+successful link resolves the affected user into `resource_id` after commit.
+The public confirmation does not authenticate a browser user, so its actor
+fields stay empty. Invalid links have no verified target. These operations omit
+request and response payloads; the verification headers is always redacted.
+
 Both login and operation events include a dedicated `header` JSON field containing
 request headers as seen by the service before handlers execute, including `Host`
 (which Go stores separately). Single values are strings; repeated values are arrays.

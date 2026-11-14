@@ -296,20 +296,32 @@ func (m *Module) AuditTarget(method, path string) auditctx.Target {
 			if method == http.MethodPost {
 				return auditctx.Target{Kind: "login", Module: "auth", Operation: "login", ResourceType: "session"}
 			}
-		case "/auth/pub/register":
+		case "/auth/email/unbind/request", "/auth/email/unbind", "/auth/pub/email/unbind":
+			if method != http.MethodPost {
+				return target
+			}
+			operation := "unlink_email"
+			switch relative {
+			case "/email/unbind/request":
+				operation = "request_email_unlink"
+			case "/pub/email/unbind":
+				operation = "confirm_email_unlink"
+			}
+			return auditctx.Target{Kind: "operation", Module: "auth", Operation: operation, ResourceType: "user", OmitPayload: true}
+        case "/auth/pub/register":
 			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "register", ResourceType: "user"}
 		case "/auth/change/pwd":
 			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "change_password", ResourceType: "user"}
 		case "/auth/reset/pwd":
 			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_password", ResourceType: "user"}
-		case "/auth/mfa/confirm":
-            target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "bind_mfa", ResourceType: "user"}
+		case "/auth/totp/confirm":
+            target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "bind_totp", ResourceType: "user"}
         case "/auth/logout":
 			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "logout", ResourceType: "session"}
 		}
 	}
-    if authEndpoint && strings.HasPrefix(path, "/auth/mfa/reset/") {
-        target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_mfa", ResourceType: "user"}
+    if authEndpoint && strings.HasPrefix(path, "/auth/totp/reset/") {
+        target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_totp", ResourceType: "user"}
     }
 	if target.Kind == "" {
 		return target

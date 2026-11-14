@@ -2,9 +2,7 @@ package audit
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -36,8 +34,8 @@ func New(store *db.Store, limits pagination.Limits, settings config.AuditConfig)
 }
 
 type Event struct {
-	MFAFingerprint string `json:"mfa_fingerprint"`
-	MFAVerifiedAt  int64  `json:"mfa_verified_at"`
+	StepUpFingerprint string `json:"step_up_fingerprint"`
+	StepUpVerifiedAt  int64  `json:"step_up_verified_at"`
 	selectedFields report.Fields
 	Header         json.RawMessage `json:"header"`
 	Operation      string          `json:"operation"`
@@ -121,9 +119,9 @@ func (m *Module) RecordHTTP(ctx context.Context, event auditctx.Event) error {
 		}
 	}
 	_, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_audit_event
- (occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header,mfa_fingerprint,mfa_verified_at)
+ (occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header,step_up_fingerprint,step_up_verified_at)
  VALUES ($1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NULLIF($21::bigint,0))`,
-		event.OccurredAt, event.Kind, event.UserID, clean(event.Username, 256), clean(event.Module, 64), clean(event.Method, 16), clean(event.Path, 1024), clean(event.IP, 128), clean(event.UserAgent, 512), clean(event.TraceID, 128), clean(event.ErrorCode, 128), event.Status, max(int64(0), event.DurationMS), clean(event.Operation, 32), clean(event.ResourceType, 64), clean(event.ResourceID, 1024), jsonValue(event.RequestParams), jsonValue(event.ResponseParams), jsonValue(event.Header), clean(event.MFAFingerprint, 128), event.MFAVerifiedAt)
+		event.OccurredAt, event.Kind, event.UserID, clean(event.Username, 256), clean(event.Module, 64), clean(event.Method, 16), clean(event.Path, 1024), clean(event.IP, 128), clean(event.UserAgent, 512), clean(event.TraceID, 128), clean(event.ErrorCode, 128), event.Status, max(int64(0), event.DurationMS), clean(event.Operation, 32), clean(event.ResourceType, 64), clean(event.ResourceID, 1024), jsonValue(event.RequestParams), jsonValue(event.ResponseParams), jsonValue(event.Header), clean(event.StepUpFingerprint, 128), event.StepUpVerifiedAt)
 	return err
 }
 
@@ -221,19 +219,6 @@ func order(f Filter) string {
 	}
 }
 
-const columns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header,mfa_fingerprint,COALESCE(mfa_verified_at,0)"
-
-// List and export carry metadata only; bounded payloads are loaded by detail.
-const listColumns = "id,occurred_at,kind,COALESCE(user_id,0),username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,'null'::jsonb,'null'::jsonb,'null'::jsonb,mfa_fingerprint,COALESCE(mfa_verified_at,0)"
-
-func scan(row interface{ Scan(...any) error }) (Event, error) {
-	var e Event
-	var at int64
-	err := row.Scan(&e.ID, &at, &e.Kind, &e.UserID, &e.Username, &e.Module, &e.Method, &e.Path, &e.IP, &e.UserAgent, &e.TraceID, &e.ErrorCode, &e.Status, &e.DurationMS, &e.Operation, &e.ResourceType, &e.ResourceID, &e.RequestParams, &e.ResponseParams, &e.Header, &e.MFAFingerprint, &e.MFAVerifiedAt)
-	e.OccurredAt = at
-	return e, err
-}
-
 func (m *Module) List(ctx context.Context, f Filter) (*Page, error) {
 	if err := f.Fields.Validate(listFields...); err != nil {
 		return nil, err
@@ -252,38 +237,16 @@ func (m *Module) List(ctx context.Context, f Filter) (*Page, error) {
 		return nil, err
 	}
 	args = append(args, s, int64(p-1)*int64(s))
-	if f.Fields != nil {
-		items, err := report.ReadRecords(ctx, m.store.SQL(ctx), f.Fields, listProjection, " FROM t_audit_event"+clause+order(f)+fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
-		result.Items = items
-		return result, err
-	}
-	rows, err := m.store.SQL(ctx).QueryContext(ctx, "SELECT "+listColumns+" FROM t_audit_event"+clause+order(f)+fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
-	if err != nil {
+	items, err := report.ReadRecords(ctx, m.store.SQL(ctx), f.Fields, listProjection, " FROM t_audit_event"+clause+order(f)+fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
+	if err != nil && items == nil && f.Fields == nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		e, err := scan(rows)
-		if err != nil {
-			return nil, err
-		}
-		result.Items = append(result.Items, e)
-	}
-	return result, rows.Err()
+	result.Items = items
+	return result, err
 }
 
 func (m *Module) Get(ctx context.Context, kind string, id int64) (*Event, error) {
-	if id <= 0 || (kind != "login" && kind != "operation") {
-		return nil, ErrFilter
-	}
-	e, err := scan(m.store.SQL(ctx).QueryRowContext(ctx, "SELECT "+columns+" FROM t_audit_event WHERE kind=$1 AND id=$2", kind, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
+	return m.GetSelected(ctx, kind, id, nil)
 }
 
 func (m *Module) Options(ctx context.Context, f Filter) ([]string, error) {
@@ -315,15 +278,18 @@ func (m *Module) Export(ctx context.Context, f Filter) ([]Event, error) {
 	}
 	clause, args := where(f)
 	args = append(args, m.settings.ExportMaxRows+1)
-	rows, err := m.store.SQL(ctx).QueryContext(ctx, "SELECT "+listColumns+" FROM t_audit_event"+clause+order(f)+fmt.Sprintf(" LIMIT $%d", len(args)), args...)
+	var sample Event
+	projection := listProjection(&sample, nil)
+	rows, err := m.store.SQL(ctx).QueryContext(ctx, projection.SQL("t_audit_event")+clause+order(f)+fmt.Sprintf(" LIMIT $%d", len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	items := []Event{}
 	for rows.Next() {
-		e, err := scan(rows)
-		if err != nil {
+		var e Event
+		projection := listProjection(&e, nil)
+		if err := rows.Scan(projection.Targets...); err != nil {
 			return nil, err
 		}
 		items = append(items, e)

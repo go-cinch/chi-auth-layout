@@ -3,8 +3,11 @@ package audit
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"github.com/DATA-DOG/go-sqlmock"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -30,12 +33,19 @@ func setup(t *testing.T) (*Module, sqlmock.Sqlmock) {
 	return New(&db.Store{DB: database}, limits, config.DefaultAudit()), mock
 }
 
+// Fixtures spell out SQL column order independently of the production projection.
+const metadataColumns = "id,occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,step_up_fingerprint,step_up_verified_at"
+
 func eventRows() *sqlmock.Rows {
-	return sqlmock.NewRows(strings.Split(strings.NewReplacer("COALESCE(user_id,0)", "user_id", "COALESCE(mfa_verified_at,0)", "mfa_verified_at").Replace(columns), ","))
+	return sqlmock.NewRows(strings.Split(metadataColumns, ","))
 }
 
 func row() *sqlmock.Rows {
-	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"), []byte("null"), "", 0)
+	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "fingerprint", int64(90000))
+}
+
+func detailRow() *sqlmock.Rows {
+	return sqlmock.NewRows(strings.Split(metadataColumns+",header,request_params,response_params", ",")).AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "fingerprint", int64(90000), []byte(`{"x-test":"header"}`), []byte(`{"input":1}`), []byte(`{"output":2}`))
 }
 
 func TestRecordAndRead(t *testing.T) {
@@ -51,7 +61,7 @@ func TestRecordAndRead(t *testing.T) {
 	if clean(" \nabc\t ", 2) != "ab" {
 		t.Fatal("clean")
 	}
-	mock.ExpectQuery("SELECT .* WHERE kind=\\$1 AND id=\\$2").WithArgs("login", int64(1)).WillReturnRows(row())
+	mock.ExpectQuery("SELECT .* WHERE kind=\\$1 AND id=\\$2").WithArgs("login", int64(1)).WillReturnRows(detailRow())
 	e, err := m.Get(ctx, "login", 1)
 	if err != nil || e.Username != "alice" || e.OccurredAt != 100000 {
 		t.Fatal(e, err)
@@ -107,6 +117,76 @@ func TestRecordAndRead(t *testing.T) {
 	mock.ExpectQuery("SELECT .* LIMIT").WillReturnError(sqlmock.ErrCancelled)
 	if _, err = m.Export(ctx, f); err == nil {
 		t.Fatal("export failure")
+	}
+}
+
+func TestReadProjectionCompatibility(t *testing.T) {
+	metadataSQL := "id, occurred_at, kind, COALESCE(user_id,0), username, module, method, path, ip, user_agent, trace_id, error_code, status, duration_ms, operation, resource_type, resource_id, step_up_fingerprint, COALESCE(step_up_verified_at,0)"
+	for _, operation := range []string{"list", "export", "get", "detail_default", "detail_all"} {
+		t.Run(operation, func(t *testing.T) {
+			m, mock := setup(t)
+			detail := operation != "list" && operation != "export"
+			query := "SELECT " + metadataSQL
+			rows := row()
+			if detail {
+				query += ", header, request_params, response_params"
+				rows = detailRow()
+			}
+			if operation == "list" {
+				mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			}
+			// An exact SELECT list catches payload loading in metadata-only reads.
+			mock.ExpectQuery(regexp.QuoteMeta(query + " FROM t_audit_event")).WillReturnRows(rows).RowsWillBeClosed()
+			var value *Event
+			var err error
+			switch operation {
+			case "list":
+				var page *Page
+				page, err = m.List(t.Context(), Filter{Kind: "login"})
+				if err == nil && len(page.Items) == 1 {
+					value = &page.Items[0]
+				}
+			case "export":
+				var items []Event
+				// Export has always used its fixed metadata shape, independent of f.
+				items, err = m.Export(t.Context(), Filter{Kind: "login", Fields: []string{"username"}})
+				if err == nil && len(items) == 1 {
+					value = &items[0]
+				}
+			case "get":
+				value, err = m.Get(t.Context(), "login", 1)
+			case "detail_default":
+				value, err = m.GetSelected(t.Context(), "login", 1, nil)
+			case "detail_all":
+				value, err = m.GetSelected(t.Context(), "login", 1, detailFields)
+			}
+			if err != nil || value == nil {
+				t.Fatalf("read: %+v, %v", value, err)
+			}
+			if !detail && (string(value.Header) != "null" || string(value.RequestParams) != "null" || string(value.ResponseParams) != "null") {
+				t.Fatal("metadata reads must preserve RawMessage null values")
+			}
+			want := map[string]any{}
+			if err := json.Unmarshal([]byte(`{"id":1,"occurred_at":100000,"kind":"login","user_id":1,"username":"alice","module":"auth","method":"POST","path":"/pub/login","ip":"127.0.0.1","user_agent":"agent","trace_id":"trace","error_code":"","status":200,"duration_ms":12,"operation":"login","resource_type":"session","resource_id":"","step_up_fingerprint":"fingerprint","step_up_verified_at":90000,"header":null,"request_params":null,"response_params":null}`), &want); err != nil {
+				t.Fatal(err)
+			}
+			if detail {
+				want["header"] = map[string]any{"x-test": "header"}
+				want["request_params"] = map[string]any{"input": float64(1)}
+				want["response_params"] = map[string]any{"output": float64(2)}
+			}
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]any{}
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("response changed: %s", data)
+			}
+		})
 	}
 }
 
@@ -216,7 +296,7 @@ func TestConfiguredAuditWindowAndExportLimit(t *testing.T) {
 	for _, count := range []int{2, 3} {
 		rows := eventRows()
 		for i := 0; i < count; i++ {
-			rows.AddRow(i+1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", []byte("null"), []byte("null"), []byte("null"), "", 0)
+			rows.AddRow(i+1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "", 0)
 		}
 		mock.ExpectQuery("SELECT .* LIMIT \\$4").WithArgs("login", from, to, 3).WillReturnRows(rows)
 		items, err := m.Export(t.Context(), f)

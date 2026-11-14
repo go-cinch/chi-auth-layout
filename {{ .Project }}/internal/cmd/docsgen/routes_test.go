@@ -106,3 +106,9 @@ func (m *Module) get(w http.ResponseWriter,r *http.Request){ server.WriteOK(w) }
 		t.Fatalf("routes: %#v", got)
 	}
 }
+
+func TestPathParameters(t *testing.T) {
+	if actual := pathParameters("/team/{team}/user/{id}"); strings.Join(actual, ",") != "team,id" {
+		t.Fatalf("parameters = %v", actual)
+	}
+}

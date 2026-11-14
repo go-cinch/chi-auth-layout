@@ -26,6 +26,11 @@ questions:
       message: Brand name (title, lowercase and kebab-case are derived automatically)?
       default: go cinch
 
+  - name: brand_domain
+    prompt:
+      message: Brand domain (hostname only, without scheme, port or path)?
+      default: go-cinch.top
+
   - name: service_name
     prompt:
       message: Service name (leave empty to use Project name)?
@@ -45,6 +50,14 @@ questions:
     prompt:
       message: HTTP server port?
       default: "8080"
+
+  - name: email_unlink_url
+    prompt:
+      message: Trusted web URL for email unlink confirmations (optional)?
+
+  - name: email_audit_url
+    prompt:
+      message: Trusted web URL for email audit links (optional)?
 
   - name: http_timeout
     prompt:
@@ -77,6 +90,7 @@ questions:
       default: "true"
 
 computed:
+  brand_domain_final: '{{ $domain := toLower (trim (or .Scaffold.brand_domain "go-cinch.top")) }}{{ if or (gt (len $domain) 253) (not (regexMatch "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])$" $domain)) }}{{ template "brand_domain must be a valid domain without scheme, port or path" . }}{{ end }}{{ $domain }}'
   # JSON preserves string names such as "true"; Scaffold coerces scalar computed values.
   brand: '{{ $raw := trim (or .Scaffold.brand_name "go cinch") }}{{ if not (regexMatch "^[A-Za-z][A-Za-z0-9]*([ _-]+[A-Za-z0-9]+)*$" $raw) }}{{ template "brand_name must start with a letter and contain only English letters, digits, spaces, underscores or hyphens" . }}{{ end }}{{ $lower := toLower (regexReplaceAll "[ _-]+" $raw " ") }}{{ dict "title" (toTitleCase $lower) "admin_title" (printf "%s Admin" (toTitleCase $lower)) "lower" $lower "slug" (replace " " "-" $lower) | toJSON }}'
   # Scaffold 0.13.1 swallows sprig fail errors. An undefined Go template

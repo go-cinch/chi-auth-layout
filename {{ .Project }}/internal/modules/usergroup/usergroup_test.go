@@ -142,11 +142,6 @@ func TestUserGroupListAndRelations(t *testing.T) {
 		t.Fatalf("range: %#v %v", result, err)
 	}
 
-	mock.ExpectExec("DELETE FROM t_user_user_group_relation").WithArgs(int64(2)).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO t_user_user_group_relation").WithArgs(int64(3), int64(2)).WillReturnResult(sqlmock.NewResult(0, 1))
-	if err := replaceUsers(ctx, m.store.DB, 2, []int64{3}); err != nil {
-		t.Fatal(err)
-	}
 	if got := like("a_b"); got != "%a!_b%" {
 		t.Fatal(got)
 	}

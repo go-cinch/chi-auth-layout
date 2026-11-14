@@ -62,21 +62,7 @@ func TestDictionaryHTTP(t *testing.T) {
 		}
 		return recorder.Body.String()
 	}
-	if body := request(http.MethodGet, "/pub/i18n", "", http.StatusOK); !strings.Contains(body, `"default_locale"`) || !strings.Contains(body, `"locales"`) || strings.Contains(body, `"messages"`) {
-		t.Fatalf("public localization response: %s", body)
-	}
-	request(http.MethodGet, "/pub/i18n?unknown=1", "", http.StatusBadRequest)
-	for _, query := range []string{"f=", "f=unknown", "f=locales,locales", "f=locales&f=messages", "f=messages,frontend_messages", "f=Locales", "f=locales,"} {
-		request(http.MethodGet, "/pub/i18n?"+query, "", http.StatusBadRequest)
-	}
-	localizationBody := request(http.MethodGet, "/pub/i18n?f=scopes", "", http.StatusOK)
-	if !strings.Contains(localizationBody, `"scopes"`) || strings.Contains(localizationBody, `"messages"`) || strings.Contains(localizationBody, `"locales"`) {
-		t.Fatal(localizationBody)
-	}
-	localizationBody = request(http.MethodGet, "/pub/i18n?f=frontend_messages", "", http.StatusOK)
-	if !strings.Contains(localizationBody, `"messages"`) || strings.Contains(localizationBody, `"backend"`) {
-		t.Fatal(localizationBody)
-	}
+	request(http.MethodGet, "/pub/i18n", "", http.StatusNotFound)
 
 	request(http.MethodGet, "/bad", "", http.StatusBadRequest)
 	mock.ExpectQuery("SELECT .* FROM t_dictionary WHERE id").WithArgs(int64(1)).WillReturnError(sqlmock.ErrCancelled)

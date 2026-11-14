@@ -8,6 +8,7 @@ import (
 	"github.com/lib/pq"
 	"reflect"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/modules/action"
 )
 
 type PermissionAdministration interface {
@@ -29,6 +30,7 @@ func (m *Module) permissionContext(ctx context.Context) bool {
 func (m *Module) guardCatalogMutation(ctx context.Context, ids []int64, nextKey string, groupsOnly ...bool) error {
 	if len(ids) == 0 {
 		if nextKey == LocalizationKey {
+			action.MarkPermissionMutation(ctx)
 			return authn.RequireCatalogAdministration(ctx, m.administration)
 		}
 		return nil
@@ -44,6 +46,7 @@ func (m *Module) guardCatalogMutation(ctx context.Context, ids []int64, nextKey 
 		return err
 	}
 	if catalog || nextKey == LocalizationKey {
+		action.MarkPermissionMutation(ctx)
 		if len(groupsOnly) > 0 && groupsOnly[0] {
 			err := authn.RequirePermissionOperation(ctx, m.administration, "action", "update")
 			if err == nil {

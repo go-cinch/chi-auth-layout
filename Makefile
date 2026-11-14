@@ -2,12 +2,15 @@
 
 SCAFFOLD ?= scaffold
 BRAND_NAME ?= go cinch
+BRAND_DOMAIN ?= go-cinch.top
 PROJECT ?= auth-service
 OUTPUT_DIR ?= ..
 HTTP_ROUTER ?= chi
 ENABLE_GRPC ?= true
 DELETE_OLD_SQL ?= false
 DELETE_OLD_CREDENTIALS ?= false
+LOCAL_EMAIL_AUDIT_URL ?= http://127.0.0.1:5666/audit/operation
+LOCAL_EMAIL_UNLINK_URL ?= http://127.0.0.1:5666/auth/unbind-email
 
 ifneq ($(ENABLE_GRPC),true)
 ifneq ($(ENABLE_GRPC),false)
@@ -31,7 +34,7 @@ test-local:
 	sh ./scripts/test-local.sh
 
 full:
-	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(OUTPUT_DIR)" --run-hooks=always --no-prompt --preset=full "Project=$(PROJECT)" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))'
+	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(OUTPUT_DIR)" --run-hooks=always --no-prompt --preset=full "Project=$(PROJECT)" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))' 'brand_domain=$(subst ','"'"',$(BRAND_DOMAIN))'
 
 # SQL history and authentication credentials are preserved independently by default.
 # Recreate the demo directory to remove obsolete source files. In preserve mode,
@@ -57,10 +60,18 @@ local:
 		done; \
 		for migration in "$$migrations_dir"/*-05-user-mfa.sql "$$migrations_dir"/*-06-mfa-catalog.sql "$$migrations_dir"/*-07-mfa-inline-verification.sql "$$migrations_dir"/*-08-mfa-test.sql; do \
 			if [ -f "$$migration" ]; then \
-				printf 'historical MFA migrations cannot be preserved with the four-file baseline; use DELETE_OLD_SQL=true for a fresh local schema, or upgrade retained data separately\n' >&2; \
+				printf 'historical MFA migrations cannot be preserved with the current baseline; use DELETE_OLD_SQL=true for a fresh local schema, or upgrade retained data separately\n' >&2; \
 				exit 2; \
 			fi; \
 		done; \
+		compatible=false; \
+		for baseline in "$$migrations_dir"/*-05-mail-template-default-data.sql "$$migrations_dir"/*-32-email-linked-notice.sql; do \
+			[ ! -f "$$baseline" ] || compatible=true; \
+		done; \
+		if [ "$$compatible" = false ]; then \
+			printf 'retained SQL is missing the current auth baseline; upgrade retained data separately, or use DELETE_OLD_SQL=true with a fresh database\n' >&2; \
+			exit 1; \
+		fi; \
 	fi; \
 	backup_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/chi-auth-layout-state.XXXXXX"); \
 	mkdir "$$backup_dir/sql"; \
@@ -94,6 +105,11 @@ local:
 						previous_name=$${previous##*/}; \
 						if [ "$${previous_name#*-}" = "$$suffix" ]; then known=true; break; fi; \
 					done; \
+					if [ "$$suffix" = '05-mail-template-default-data.sql' ]; then \
+						for legacy in "$$backup_dir/sql"/*-32-email-linked-notice.sql; do \
+							[ ! -f "$$legacy" ] || known=true; \
+						done; \
+					fi; \
 					[ "$$known" = false ] || continue; \
 					first=$$(printf '%s\n%s\n' "$$latest" "$$name" | LC_ALL=C sort | head -n 1); \
 					if [ -n "$$latest" ] && [ "$$first" != "$$latest" ]; then \
@@ -144,7 +160,7 @@ local:
 	trap 'exit 130' INT; \
 	trap 'exit 143' TERM; \
 	rm -rf -- "$$auth_dir"; \
-	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full "Project=auth" "http_port=8081" "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))'
+	$(SCAFFOLD) new "$(CURDIR)" --output-dir="$(CURDIR)/../demos" --run-hooks=always --no-prompt --preset=full "Project=auth" "http_port=8081" 'email_unlink_url=$(subst ','"'"',$(LOCAL_EMAIL_UNLINK_URL))' 'email_audit_url=$(subst ','"'"',$(LOCAL_EMAIL_AUDIT_URL))' "http_router=$(HTTP_ROUTER)" "enable_grpc=$(ENABLE_GRPC)" 'brand_name=$(subst ','"'"',$(BRAND_NAME))' 'brand_domain=$(subst ','"'"',$(BRAND_DOMAIN))'
 
 # Exercise real rendering with custom brands without touching local demos.
 test-branding:

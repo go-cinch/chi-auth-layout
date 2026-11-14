@@ -18,6 +18,8 @@ import (
 {{- end }}
 )
 
+const postgresDriver = "postgres"
+
 type Store struct {
 	DB *sql.DB
 }
@@ -30,15 +32,11 @@ type SQLExecutor interface {
 
 func New(ctx context.Context, cfg *config.Config) (*Store, func(), error) {
 	logger := slog.Default()
-	driver := strings.ToLower(strings.TrimSpace(cfg.Database.Driver))
-	if driver != "postgres" {
-		return nil, nil, fmt.Errorf("unsupported database driver %q", driver)
-	}
 	dsn := strings.TrimSpace(cfg.Database.DSN)
 	if dsn == "" {
 		return nil, nil, errors.New("database dsn is required")
 	}
-	// Parse before opening either driver. A parser error may contain fragments of
+	// Validate before opening a connection. A parser error may contain fragments of
 	// malformed credentials; do not wrap it where startup logging can unwrap it.
 	if _, err := pq.NewConnector(dsn); err != nil {
 		return nil, nil, errors.New("invalid database dsn")
@@ -48,12 +46,12 @@ func New(ctx context.Context, cfg *config.Config) (*Store, func(), error) {
 	var db *sql.DB
 	var err error
 	if cfg.Tracer.Enabled {
-		db, err = otelsql.Open(driver, dsn)
+		db, err = otelsql.Open(postgresDriver, dsn)
 	} else {
-		db, err = sql.Open(driver, dsn)
+		db, err = sql.Open(postgresDriver, dsn)
 	}
 {{- else }}
-	db, err := sql.Open(driver, dsn)
+	db, err := sql.Open(postgresDriver, dsn)
 {{- end }}
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
@@ -71,8 +69,8 @@ func New(ctx context.Context, cfg *config.Config) (*Store, func(), error) {
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	pingErr := db.PingContext(pingCtx)
-	if pingErr != nil && cfg.Database.AutoCreate && isMissingDatabase(pingErr, driver) {
-		if err := createDatabase(pingCtx, driver, dsn); err != nil {
+	if pingErr != nil && cfg.Database.AutoCreate && isMissingDatabase(pingErr) {
+		if err := createDatabase(pingCtx, dsn); err != nil {
 			_ = db.Close()
 			return nil, nil, err
 		}
@@ -80,11 +78,11 @@ func New(ctx context.Context, cfg *config.Config) (*Store, func(), error) {
 	}
 	if pingErr != nil {
 		_ = db.Close()
-		return nil, nil, databaseConnectionError(pingErr, driver, dsn)
+		return nil, nil, databaseConnectionError(pingErr, dsn)
 	}
 
 	if cfg.Database.Migrate {
-		if err := MigrateUp(ctx, db, driver); err != nil {
+		if err := MigrateUp(ctx, db); err != nil {
 			_ = db.Close()
 			return nil, nil, err
 		}
@@ -92,22 +90,17 @@ func New(ctx context.Context, cfg *config.Config) (*Store, func(), error) {
 
 	cleanup := func() {
 		if err := db.Close(); err != nil {
-			logger.Error("close database failed: "+err.Error(), slog.String("operation", "database_close"), slog.String("outcome", "failure"), slog.String("driver", driver), slog.Any("error", err))
+			logger.Error("close database failed: "+err.Error(), slog.String("operation", "database_close"), slog.String("outcome", "failure"), slog.String("driver", postgresDriver), slog.Any("error", err))
 		}
 	}
 	loggedDSN := redact.DSN(dsn)
-	logger.InfoContext(ctx, "database initialized: "+loggedDSN, slog.String("operation", "database_init"), slog.String("outcome", "success"), slog.String("driver", driver), slog.String("dsn", loggedDSN))
+	logger.InfoContext(ctx, "database initialized: "+loggedDSN, slog.String("operation", "database_init"), slog.String("outcome", "success"), slog.String("driver", postgresDriver), slog.String("dsn", loggedDSN))
 	return &Store{DB: db}, cleanup, nil
 }
 
-func databaseConnectionError(err error, driver, dsn string) error {
-	var authenticationFailed bool
-	switch driver {
-	case "postgres":
-		var target *pq.Error
-		authenticationFailed = errors.As(err, &target) && target.Code == "28P01"
-	}
-	if authenticationFailed {
+func databaseConnectionError(err error, dsn string) error {
+	var target *pq.Error
+	if errors.As(err, &target) && target.Code == "28P01" {
 		return fmt.Errorf("%v; dsn: %s", err, redact.DSN(dsn))
 	}
 	return fmt.Errorf("ping database: %w", err)

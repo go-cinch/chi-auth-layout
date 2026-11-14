@@ -32,7 +32,7 @@ func newSessionTestManager(t *testing.T) *Sessions {
 func issueSessionForTest(t *testing.T, rememberMe bool) (*Sessions, *SessionToken, authn.Identity) {
 	t.Helper()
 	sessions := newSessionTestManager(t)
-	identity := authn.Identity{UserID: 7, Username: "operator", Code: "CODE0007", CredentialVersion: 1}
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 7, Username: "operator", Code: "CODE0007", CredentialVersion: 1}
 	issued, err := sessions.Issue(t.Context(), identity, rememberMe)
 	if err != nil {
 		t.Fatal(err)
@@ -619,7 +619,7 @@ func TestSessionsStorageFailuresRemainRetryable(t *testing.T) {
 	}
 	sessions := newSessionTestManager(t)
 	sessions.store = &sessionFailureStore{SessionStore: sessions.store, createErr: failure}
-	if _, err := sessions.Issue(t.Context(), authn.Identity{UserID: 7, Username: "u", Code: "c", CredentialVersion: 1}, false); !errors.Is(err, failure) {
+	if _, err := sessions.Issue(t.Context(), authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 7, Username: "u", Code: "c", CredentialVersion: 1}, false); !errors.Is(err, failure) {
 		t.Fatalf("create failure = %v", err)
 	}
 }

@@ -151,7 +151,7 @@ func TestMessageHTTPPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
+	authorizer := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.Verification{})
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	cfg.Idempotency.TTL = time.Minute
@@ -159,7 +159,7 @@ func TestMessageHTTPPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := manager.Issue(authn.Identity{UserID: 2, Username: "guest", Code: "12345678", CredentialVersion: 1})
+	token, _, err := manager.Issue(authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 2, Username: "guest", Code: "12345678", CredentialVersion: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +526,7 @@ func TestMessageAndRegistrationShareDatabaseClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	actions := action.New(store, limits, localizer)
-	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, localizer, actions, &auth.MFA{})
+	authentication := auth.New(store, nil, nil, nil, nil, nil, nil, localizer, actions, &auth.Verification{})
 	if err := authentication.Register(ctx, auth.RegisterInput{Username: "clock-registered", Password: "secret123"}); err != nil {
 		t.Fatal(err)
 	}

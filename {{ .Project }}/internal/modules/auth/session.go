@@ -50,24 +50,25 @@ type SessionToken struct {
 }
 
 type refreshSession struct {
-	SessionID         string `json:"session_id"`
-	UserID            int64  `json:"user_id"`
-	Username          string `json:"username"`
-	Code              string `json:"code"`
-	CredentialVersion int64  `json:"credential_version"`
-	RememberMe        bool   `json:"remember_me"`
-	Generation        int64  `json:"generation"`
-	CreatedAt         int64  `json:"created_at"`
-	ExpiredAt         int64  `json:"expired_at"`
-	RotatedAt         int64  `json:"rotated_at"`
-	Signature         string `json:"signature"`
+	Methods           authn.Methods `json:"authn"`
+	SessionID         string        `json:"session_id"`
+	UserID            int64         `json:"user_id"`
+	Username          string        `json:"username"`
+	Code              string        `json:"code"`
+	CredentialVersion int64         `json:"credential_version"`
+	RememberMe        bool          `json:"remember_me"`
+	Generation        int64         `json:"generation"`
+	CreatedAt         int64         `json:"created_at"`
+	ExpiredAt         int64         `json:"expired_at"`
+	RotatedAt         int64         `json:"rotated_at"`
+	Signature         string        `json:"signature"`
 
 	raw               string
 	refreshGeneration int64
 }
 
 func (s refreshSession) identity() authn.Identity {
-	return authn.Identity{UserID: s.UserID, Username: s.Username, Code: s.Code, SessionID: s.SessionID, CredentialVersion: s.CredentialVersion}
+	return authn.Identity{Methods: s.Methods, UserID: s.UserID, Username: s.Username, Code: s.Code, SessionID: s.SessionID, CredentialVersion: s.CredentialVersion}
 }
 
 type Sessions struct {
@@ -101,7 +102,7 @@ func NewSessions(store SessionStore, cfg SessionConfig) (*Sessions, error) {
 }
 
 func (s *Sessions) Issue(ctx context.Context, identity authn.Identity, rememberMe bool) (*SessionToken, error) {
-	if identity.CredentialVersion <= 0 || identity.UserID <= 0 || strings.TrimSpace(identity.Username) == "" || strings.TrimSpace(identity.Code) == "" {
+	if !identity.Methods.Valid() || identity.CredentialVersion <= 0 || identity.UserID <= 0 || strings.TrimSpace(identity.Username) == "" || strings.TrimSpace(identity.Code) == "" {
 		return nil, ErrSessionNotFound
 	}
 	sessionID, err := randomSessionValue()
@@ -114,6 +115,7 @@ func (s *Sessions) Issue(ctx context.Context, identity authn.Identity, rememberM
 	}
 	now := time.Now()
 	record := refreshSession{
+		Methods:   identity.Methods,
 		SessionID: sessionID, UserID: identity.UserID, Username: strings.TrimSpace(identity.Username), Code: strings.TrimSpace(identity.Code),
 		CredentialVersion: identity.CredentialVersion, RememberMe: rememberMe, Generation: 1,
 		CreatedAt: now.UnixMilli(), ExpiredAt: now.Add(lifetime).UnixMilli(),
@@ -295,7 +297,7 @@ func (s *Sessions) encodeRecord(record refreshSession) (string, error) {
 
 func (s *Sessions) decodeRecord(value string) (refreshSession, error) {
 	var record refreshSession
-	if json.Unmarshal([]byte(value), &record) != nil || !validSessionID(record.SessionID) || record.UserID <= 0 || record.CredentialVersion <= 0 ||
+	if json.Unmarshal([]byte(value), &record) != nil || !record.Methods.Valid() || !validSessionID(record.SessionID) || record.UserID <= 0 || record.CredentialVersion <= 0 ||
 		strings.TrimSpace(record.Username) == "" || strings.TrimSpace(record.Code) == "" || record.Generation <= 0 || record.CreatedAt <= 0 ||
 		record.ExpiredAt <= record.CreatedAt || record.ExpiredAt <= time.Now().UnixMilli() || record.RotatedAt < 0 ||
 		(record.Generation == 1 && record.RotatedAt != 0) || (record.Generation > 1 && (record.RotatedAt < record.CreatedAt || record.RotatedAt >= record.ExpiredAt)) {

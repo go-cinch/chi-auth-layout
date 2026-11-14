@@ -85,7 +85,7 @@ func TestHeatCellsMidnightTransitions(t *testing.T) {
 	}{
 		{"America/Santiago", "2026-09-06", 23},
 		{"America/Havana", "2026-03-08", 23},
-		{"America/Havana", "2026-11-01", 25},
+		{"America/Havana", "2024-11-03", 25},
 	} {
 		t.Run(c.zone+"/"+c.date, func(t *testing.T) {
 			location, err := time.LoadLocation(c.zone)

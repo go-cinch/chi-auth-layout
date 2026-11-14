@@ -10,7 +10,7 @@ import (
 	rolemodule "{{ .Computed.module_name_final }}/internal/modules/role"
 )
 
-var listFields = []string{"id", "created_at", "updated_at", "username", "code", "role_id", "last_logged_in_at", "login_count", "status", "metadata", "wrong", "action_codes", "actions", "role", "role_summary"}
+var listFields = []string{"id", "created_at", "updated_at", "username", "email", "code", "role_id", "last_logged_in_at", "login_count", "status", "metadata", "wrong", "action_codes", "actions", "role", "role_summary"}
 
 func listProjection(value *User, fields report.Fields, now string) report.Projection {
 	value.selectedFields = fields
@@ -19,6 +19,7 @@ func listProjection(value *User, fields report.Fields, now string) report.Projec
 	p.Add("created_at", "created_at", &value.CreatedAt)
 	p.Add("updated_at", "updated_at", &value.UpdatedAt)
 	p.Add("username", "username", &value.Username)
+	p.Add("email", "email", &value.Email)
 	p.Add("code", "code", &value.Code)
 	p.Add("role_id", "role_id", &value.RoleID)
 	p.Add("last_logged_in_at", "last_logged_in_at", &value.LastLoggedInAt)

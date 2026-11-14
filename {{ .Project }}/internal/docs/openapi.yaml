@@ -5,11 +5,11 @@ info:
   title: "{{ .Computed.service_name_kebab }} API"
   version: 1.0.0
 servers:
-  - url: "https://example.com/api/{{ .Computed.service_name_kebab }}"
+  - url: "https://{{ .Computed.brand_domain_final }}/api/{{ .Computed.service_name_kebab }}"
     description: "prod"
-  - url: "https://dev.example.com/api/{{ .Computed.service_name_kebab }}"
+  - url: "https://dev.{{ .Computed.brand_domain_final }}/api/{{ .Computed.service_name_kebab }}"
     description: "dev"
-  - url: "http://127.0.0.1:{{ .Scaffold.http_port }}"
+  - url: "http://127.0.0.1:{{ or .Scaffold.http_port "8080" }}"
     description: "local"
 {{ if .Computed.enable_health_check_final -}}
 paths:
@@ -37,8 +37,10 @@ components:
   schemas:
     ErrorResponse:
       type: object
-      required: [msg]
+      required: [msg, error_code]
       properties:
+        error_code:
+          type: string
         msg:
           type: string
 {{ else -}}

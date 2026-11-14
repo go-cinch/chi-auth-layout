@@ -37,9 +37,13 @@ func TestModule(t *testing.T) {
 	}
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/docs/openapi.yaml", nil))
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "openapi: 3.0.3") ||
-		!strings.Contains(recorder.Body.String(), `https://example.com/api/{{ .Computed.service_name_kebab }}`) {
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "openapi: 3.0.3") {
 		t.Fatalf("spec response = %d", recorder.Code)
+	}
+	for _, configured := range cfg.HTTP.Docs.Servers {
+		if !strings.Contains(recorder.Body.String(), configured.URL) {
+			t.Fatalf("spec does not contain configured server %q", configured.URL)
+		}
 	}
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodHead, "/docs/openapi.yaml", nil))

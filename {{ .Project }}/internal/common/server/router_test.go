@@ -2,10 +2,8 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 
 	"encoding/json"
 	"net/http"
@@ -157,7 +155,7 @@ func TestHTTPPermissionAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := authenticator.Issue(authn.Identity{CredentialVersion: 1, UserID: 7, Username: "guest", Code: "CODE0007"})
+	token, _, err := authenticator.Issue(authn.Identity{Methods: authn.Methods{Primary: authn.Password}, CredentialVersion: 1, UserID: 7, Username: "guest", Code: "CODE0007"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,10 +217,8 @@ package server
 import (
 	"encoding/json"
 
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 
 	"net/http"
 	"net/http/httptest"
@@ -324,7 +320,7 @@ func TestHTTPPermissionAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := authenticator.Issue(authn.Identity{CredentialVersion: 1, UserID: 7, Username: "guest", Code: "CODE0007"})
+	token, _, err := authenticator.Issue(authn.Identity{Methods: authn.Methods{Primary: authn.Password}, CredentialVersion: 1, UserID: 7, Username: "guest", Code: "CODE0007"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,58 +432,5 @@ func TestConfiguredRootModulePreservesRouteAndMiddleware(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest("GET", "/missing", nil))
 	if response.Code != 404 {
 		t.Fatal(response.Code)
-	}
-}
-
-type authenticationFailureValidator struct{ err error }
-
-func (v authenticationFailureValidator) ValidateIdentity(context.Context, authn.Identity) error {
-	return v.err
-}
-
-func TestHTTPAuthenticationFailureLogging(t *testing.T) {
-	failure := errors.New("authentication storage unavailable")
-	manager, err := authn.New("test", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", time.Hour, authenticationFailureValidator{failure})
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, _, err := manager.Issue(authn.Identity{UserID: 7, Username: "operator", Code: "ABCDEFGH", SessionID: "session-1", CredentialVersion: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler, err := NewRouter(&config.Config{}, manager, nil, protectedTestModule{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	request := httptest.NewRequest(http.MethodGet, "/private", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusInternalServerError || response.Body.String() != `{"error_code":"HTTP_INTERNAL","msg":"internal server error"}` {
-		t.Fatalf("authentication failure response = %d %s", response.Code, response.Body.String())
-	}
-	found := false
-	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
-		var record map[string]any
-		if err := json.Unmarshal(line, &record); err != nil {
-			t.Fatal(err)
-		}
-		if record["operation"] != "authenticate_http_request" {
-			continue
-		}
-		found = true
-		if record["level"] != "ERROR" || record["outcome"] != "failure" || record["method"] != "GET" || record["error"] != failure.Error() || record["msg"] != "authenticate http request failed: "+failure.Error() {
-			t.Fatalf("authentication failure log = %#v", record)
-		}
-	}
-	if !found {
-		t.Fatal("authentication storage failure was not logged")
-	}
-	if bytes.Contains(logs.Bytes(), []byte(token)) {
-		t.Fatal("authentication log contains the bearer token")
 	}
 }

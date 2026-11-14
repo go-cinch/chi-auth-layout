@@ -628,6 +628,8 @@ func TestConfiguredAuthHTTPPath(t *testing.T) {
 					t.Fatalf("%s %s: got %d want %d: %s", method, path, response.Code, want, response.Body.String())
 				}
 			}
+			request("GET", prefix+"/pub/i18n", "", "", 200)
+			request("GET", "/dictionary/pub/i18n", "", "", 404)
 			request("POST", prefix+"/pub/challenge", `{"purpose":"login"}`, "", 200)
 			request("GET", prefix+"/info", "", "", 401)
 			request("GET", "/role", "", "", 401)
@@ -637,7 +639,7 @@ func TestConfiguredAuthHTTPPath(t *testing.T) {
 			} else {
 				request("GET", "/info", "", "", 404)
 			}
-			identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+			identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
 			session, err := m.sessions.Issue(t.Context(), identity, false)
 			if err != nil {
 				t.Fatal(err)
@@ -670,7 +672,7 @@ func TestConfiguredAuthPathPreservesResetRestriction(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+			identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
 			session, err := m.sessions.Issue(t.Context(), identity, false)
 			if err != nil {
 				t.Fatal(err)
@@ -722,8 +724,8 @@ func TestAuthHTTPPathMappingsCoverRegisteredRoutes(t *testing.T) {
 		}
 		registered := map[string]bool{}
 		for _, route := range m.permissionRoutes {
-			if method := authHTTPMethod(strings.TrimPrefix(route.Path, prefix)); method != route.Method {
-				t.Fatalf("auth policy method %s does not match registered route %s %s", method, route.Method, route.Path)
+			if !ownsAuthHTTPMethod(strings.TrimPrefix(route.Path, prefix), route.Method) {
+				t.Fatalf("auth policy does not match registered route %s %s", route.Method, route.Path)
 			}
 			if !mapped[route.Path] {
 				t.Fatalf("registered auth route %s has no configured-path mapping", route.Path)
@@ -739,49 +741,49 @@ func TestAuthHTTPPathMappingsCoverRegisteredRoutes(t *testing.T) {
 }
 
 func TestLoginMFAUsesOriginalEndpointAndHeaders(t *testing.T) {
-	m, mock, _, _, _ := newMFATest(t)
-	handler := mfaTestHTTP(m)
+	m, mock, _, _, _ := newVerificationTest(t)
+	handler := totpTestHTTP(m)
 	input := encryptedLoginInputWithProof(t, m.credentials, "readonly", authTestPassword, validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly"))
 	body, _ := json.Marshal(input)
 	mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WillReturnRows(loginRows(t, userStatusActive))
-	expectMFAEnabled(mock, true)
+	expectTOTPBound(mock, true)
 	out := httptest.NewRecorder()
 	handler.ServeHTTP(out, httptest.NewRequest("POST", "/pub/login", strings.NewReader(string(body))))
 	ticket := out.Header().Get(authn.MFATicketHeader)
-	if out.Code != 403 || out.Header().Get(authn.MFARequiredHeader) != "true" || len(ticket) < 32 || out.Header().Get(authn.MFAExpiresAtHeader) == "" {
-		t.Fatal("missing MFA handshake headers", out.Code)
+	if out.Code != 403 || out.Header().Get(authn.VerificationRequiredHeader) != "true" || len(ticket) < 32 || out.Header().Get(authn.MFAExpiresAtHeader) == "" {
+		t.Fatal("missing Verification handshake headers", out.Code)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(out.Body.Bytes(), &payload); err != nil || len(payload) != 2 || payload["error_code"] != "AUTH_STEP_UP_REQUIRED" {
-		t.Fatal("MFA changed the error JSON contract", err)
+	if err := json.Unmarshal(out.Body.Bytes(), &payload); err != nil || len(payload) != 2 || payload["error_code"] != "AUTH_LOGIN_MFA_REQUIRED" {
+		t.Fatal("Verification changed the error JSON contract", err)
 	}
 	retry := func(code string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/pub/login", strings.NewReader(`{}`))
 		r.Header.Set(authn.MFATicketHeader, ticket)
-		r.Header.Set(authn.MFACodeHeader, code)
+		r.Header.Set(authn.TOTPCodeHeader, code)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	if w := retry(""); w.Code != 403 || w.Header().Get(authn.MFARequiredHeader) != "true" {
+	if w := retry(""); w.Code != 403 || w.Header().Get(authn.VerificationRequiredHeader) != "true" {
 		t.Fatal("missing code bypass", w.Code)
 	}
 	secret, _ := newTOTPSecret()
 	code, _ := totpCode(secret, time.Now().Unix()/30)
-	expectMFALock(mock, 1)
-	expectMFAFactor(t, m, mock, secret, -1)
+	expectVerificationLock(mock, 1)
+	expectTOTPFactor(t, m, mock, secret, -1)
 	mock.ExpectExec("UPDATE t_user_totp SET last_used_step").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(2))
 	out = retry(code)
-	if out.Code != 200 || out.Header().Get(authn.MFARequiredHeader) != "" {
+	if out.Code != 200 || out.Header().Get(authn.VerificationRequiredHeader) != "" {
 		t.Fatal("same-endpoint verification failed", out.Code)
 	}
 	payload = nil
 	if err := json.Unmarshal(out.Body.Bytes(), &payload); err != nil || len(payload) != 3 || payload["access_token"] == "" {
 		t.Fatal("login JSON changed", err)
 	}
-	for _, field := range []string{"mfa_required", "mfa_ticket", "mfa_enrollment_required", "password_reset_required"} {
+	for _, field := range []string{"mfa_required", "mfa_ticket", "totp_enrollment_required", "password_reset_required"} {
 		if _, ok := payload[field]; ok {
 			t.Fatal("authentication metadata leaked into JSON", field)
 		}
@@ -789,4 +791,77 @@ func TestLoginMFAUsesOriginalEndpointAndHeaders(t *testing.T) {
 	if w := retry(code); w.Code != 400 {
 		t.Fatal("ticket replay accepted", w.Code)
 	}
+}
+
+func TestLoginRestrictionHeaders(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeLoginHeaders(response)
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("session response must not be cached")
+	}
+	if response.Header().Get("X-Password-Reset-Required") != "" || response.Header().Get(authn.VerificationRequiredHeader) != "" || response.Header().Get("X-MFA-Enrollment-Required") != "" {
+		t.Fatal("session restrictions must be queried through onboarding status")
+	}
+}
+
+func TestLoginAndRefreshPasswordResetHeaders(t *testing.T) {
+	for _, loginCount := range []int64{0, 2} {
+		m, manager, mock := newAuthTestModule(t)
+		handler, err := server.NewRouter(&config.Config{}, manager, nil, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := encryptedLoginInputWithProof(t, m.credentials, "readonly", authTestPassword, validSliderProof(t, m.sliderCaptcha, sliderCaptchaPurposeLogin, "readonly"))
+		mock.ExpectQuery("SELECT id, username, code, password, status, wrong").WillReturnRows(loginRows(t, userStatusActive))
+		mock.ExpectQuery("UPDATE t_user SET last_logged_in_at").WillReturnRows(sqlmock.NewRows([]string{"login_count"}).AddRow(loginCount))
+		body, _ := json.Marshal(input)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/pub/login", strings.NewReader(string(body))))
+		want := ""
+
+		if response.Code != http.StatusOK || response.Header().Get("X-Password-Reset-Required") != want {
+			t.Fatal("login restriction header mismatch", response.Code)
+		}
+		var result LoginResult
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		assertNoPasswordResetPayload(t, response.Body.Bytes())
+		mock.ExpectQuery("SELECT username, code, status, credential_version, login_count").WillReturnRows(sqlmock.NewRows([]string{"username", "code", "status", "credential_version", "login_count"}).AddRow("readonly", "EXP78RGH", userStatusActive, int64(1), loginCount))
+		body, _ = json.Marshal(RefreshTokenInput{RefreshToken: result.RefreshToken})
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/pub/refresh", strings.NewReader(string(body))))
+		if response.Code != http.StatusOK || response.Header().Get("X-Password-Reset-Required") != want {
+			t.Fatal("refresh restriction header mismatch", response.Code)
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		assertNoPasswordResetPayload(t, response.Body.Bytes())
+	}
+}
+
+func assertNoPasswordResetPayload(t *testing.T, body []byte) {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["password_reset_required"]; exists {
+		t.Fatal("password reset requirement must be queried through onboarding status")
+	}
+}
+
+func TestEnrollmentMetadataDoesNotChangeLoginJSON(t *testing.T) {
+	result := &LoginResult{TOTPEnrollmentRequired: true, PasswordResetRequired: true}
+	out := httptest.NewRecorder()
+	writeLoginHeaders(out)
+	if out.Header().Get(authn.VerificationRequiredHeader) != "" || out.Header().Get("X-MFA-Enrollment-Required") != "" || out.Header().Get("X-Password-Reset-Required") != "" {
+		t.Fatal("enrollment headers missing")
+	}
+	raw, err := json.Marshal(result)
+	if err != nil || strings.Contains(string(raw), "mfa_") {
+		t.Fatal("Verification enrollment changed login JSON", err)
+	}
+	assertNoPasswordResetPayload(t, raw)
 }

@@ -18,7 +18,7 @@ import (
 func totpCode(secret string, step int64) (string, error) {
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
 	if err != nil || len(key) < 20 || step < 0 {
-		return "", ErrMFAInvalid
+		return "", ErrVerificationInvalid
 	}
 	var counter [8]byte
 	binary.BigEndian.PutUint64(counter[:], uint64(step))
@@ -30,16 +30,24 @@ func totpCode(secret string, step int64) (string, error) {
 	return fmt.Sprintf("%06d", value%1000000), nil
 }
 
+// totpPeriod validates persisted seconds before converting to avoid duration overflow.
+func totpPeriod(seconds int64) (time.Duration, error) {
+	if seconds <= 0 || seconds > int64((1<<63-1)/time.Second) {
+		return 0, ErrVerificationInvalid
+	}
+	return time.Duration(seconds) * time.Second, nil
+}
+
 func verifyTOTP(secret, code string, now time.Time, lastStep int64, period time.Duration) (int64, error) {
 	if period <= 0 || period%time.Second != 0 {
-		return 0, ErrMFAInvalid
+		return 0, ErrVerificationInvalid
 	}
 	if len(code) != 6 {
-		return 0, ErrMFAInvalid
+		return 0, ErrVerificationInvalid
 	}
 	for _, digit := range code {
 		if digit < '0' || digit > '9' {
-			return 0, ErrMFAInvalid
+			return 0, ErrVerificationInvalid
 		}
 	}
 	current := now.Unix() / int64(period/time.Second)
@@ -55,7 +63,7 @@ func verifyTOTP(secret, code string, now time.Time, lastStep int64, period time.
 			return step, nil
 		}
 	}
-	return 0, ErrMFAInvalid
+	return 0, ErrVerificationInvalid
 }
 
 func newTOTPSecret() (string, error) {

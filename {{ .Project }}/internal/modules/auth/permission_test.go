@@ -324,3 +324,7 @@ func TestHTTPPermissionSelectionSkipsUIAndOtherProtocols(t *testing.T) {
 		t.Fatalf("%+v", permission)
 	}
 }
+
+func (s selectedPermissionCatalog) PublicCatalog(...string) localization.PublicCatalog {
+	panic("public catalog requested during authenticated permission lookup")
+}

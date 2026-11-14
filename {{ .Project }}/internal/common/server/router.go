@@ -1,33 +1,36 @@
-{{ if eq .Computed.http_router_final "gin" -}}
 package server
 
 import (
 	"errors"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
-	"{{ .Computed.module_name_final }}/internal/common/i18n"
-
-	"log/slog"
-	"{{ .Computed.module_name_final }}/internal/common/auditctx"
-
 	"net/http"
 	"strings"
-
-	"github.com/gin-gonic/gin"
-
+	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/common/idempotency"
-
 	"{{ .Computed.module_name_final }}/internal/common/config"
+	"{{ .Computed.module_name_final }}/internal/common/i18n"
+	"{{ .Computed.module_name_final }}/internal/common/idempotency"
 	"{{ .Computed.module_name_final }}/internal/common/redact"
 	"{{ .Computed.module_name_final }}/internal/modules"
+{{- if eq .Computed.http_router_final "gin" }}
+	"github.com/gin-gonic/gin"
+{{- else }}
+	"github.com/go-chi/chi/v5"
+{{- end }}
 )
-
+{{ if eq .Computed.http_router_final "gin" -}}
 func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys idempotency.Store, mounted ...modules.Module) (http.Handler, error) {
 
-    bodyLimits, err := config.ResolveHTTPBodyLimits(cfg.HTTP.BodyLimits)
-    if err != nil { return nil, err }
-    auditSettings, err := config.ResolveAudit(cfg.Audit)
-    if err != nil { return nil, err }
+	trusted, err := parseTrustedProxies(cfg.HTTP.ClientIP.TrustedProxies)
+	if err != nil { return nil, err }
+
+	bodyLimits, err := config.ResolveHTTPBodyLimits(cfg.HTTP.BodyLimits)
+	if err != nil {
+		return nil, err
+	}
+	auditSettings, err := config.ResolveAudit(cfg.Audit)
+	if err != nil {
+		return nil, err
+	}
 
 	permissionAuthorizer, permissionEndpoint, err := newHTTPPermissionAuthorizer(cfg, mounted)
 	if err != nil {
@@ -46,7 +49,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(RequestBodyLimits(bodyLimits), ClientIP(), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy, auditSettings), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
+	r.Use(RequestBodyLimits(bodyLimits), ClientIP(trusted...), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy, auditSettings), Recoverer(), RequestTimeout(cfg.HTTP.Timeout))
 	r.NoRoute(func(c *gin.Context) {
 		WriteError(c.Writer, c.Request, http.StatusNotFound, apperror.NotFound)
 	})
@@ -108,126 +111,20 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 	}
 	return r, nil
 }
-
-func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.HTTPPermissionAuthorizer, permissionEndpoint, modulePath string, module modules.Module) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if anonymous, ok := module.(modules.AnonymousHTTPModule); ok && anonymous.AllowAnonymousHTTP(c.Request) {
-			c.Next()
-			return
-		}
-		if isPublicEndpoint(c.Request.URL.Path, modulePath) {
-			c.Next()
-			return
-		}
-		request, err := authenticator.AuthenticateRequest(c.Request)
-		if err != nil {
-			c.Abort()
-			writeAuthenticationError(c.Writer, c.Request, err)
-			return
-		}
-		request, err = authn.ScopeRequest(request)
-		if err != nil {
-			c.Abort()
-			WriteError(c.Writer, c.Request, http.StatusBadRequest, err)
-			return
-		}
-		c.Request = request
-		identity, _ := authn.FromContext(request.Context())
-		auditctx.Identity(request.Context(), identity.UserID, identity.Username)
-		if authorizer != nil && c.Request.URL.Path != permissionEndpoint {
-			allowed, err := authorizer.AuthorizeHTTP(c.Request.Context(), c.Request.Method, c.Request.URL.Path)
-			if err != nil {
-				slog.ErrorContext(c.Request.Context(), "authorize http request failed: "+err.Error(),
-					"operation", "authorize_http_request", "outcome", "failure", "method", c.Request.Method, "error", err)
-				c.Abort()
-				WriteError(c.Writer, c.Request, http.StatusInternalServerError, apperror.Internal)
-				return
-			}
-			if !allowed {
-				c.Abort()
-				WriteError(c.Writer, c.Request, http.StatusForbidden, apperror.Forbidden)
-				return
-			}
-		}
-        if err := authenticator.CheckHTTPSecurity(request); err != nil {
-            c.Abort()
-            WriteHTTPSecurityError(c.Writer, request, err)
-            return
-        }
-		c.Next()
-	}
-}
-
-func newHTTPPermissionAuthorizer(cfg *config.Config, mounted []modules.Module) (modules.HTTPPermissionAuthorizer, string, error) {
-	if !cfg.Auth.Authorization.Enabled {
-		return nil, "", nil
-	}
-	var found modules.HTTPPermissionAuthorizer
-	for _, module := range mounted {
-		candidate, ok := module.(modules.HTTPPermissionAuthorizer)
-		if !ok {
-			continue
-		}
-		if found != nil {
-			return nil, "", errors.New("http permission authorizer is duplicated")
-		}
-		found = candidate
-	}
-	if found == nil {
-		return nil, "", errors.New("http permission authorizer is required")
-	}
-	endpoint := strings.TrimSpace(found.PermissionEndpoint())
-	if endpoint == "" || !strings.HasPrefix(endpoint, "/") {
-		return nil, "", errors.New("http permission endpoint must start with /")
-	}
-	return found, strings.TrimSuffix(found.Name(), "/") + endpoint, nil
-}
-
-func isPublicModule(module modules.Module) bool {
-	public, ok := module.(modules.PublicHTTPModule)
-	return ok && public.Public()
-}
-
-func isIdempotentModule(module modules.Module) bool {
-	idempotent, ok := module.(modules.IdempotentHTTPModule)
-	return ok && idempotent.Idempotent()
-}
-
-func isPublicEndpoint(path, modulePath string) bool {
-	publicPath := strings.TrimSuffix(modulePath, "/") + "/pub"
-	return path == publicPath || strings.HasPrefix(path, publicPath+"/")
-}
-
 {{ else -}}
-package server
-
-import (
-	"errors"
-	"{{ .Computed.module_name_final }}/internal/common/apperror"
-	"{{ .Computed.module_name_final }}/internal/common/i18n"
-
-	"log/slog"
-	"{{ .Computed.module_name_final }}/internal/common/auditctx"
-
-	"net/http"
-	"strings"
-
-	"{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/common/idempotency"
-
-	"{{ .Computed.module_name_final }}/internal/common/config"
-	"{{ .Computed.module_name_final }}/internal/common/redact"
-	"{{ .Computed.module_name_final }}/internal/modules"
-
-	"github.com/go-chi/chi/v5"
-)
-
 func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys idempotency.Store, mounted ...modules.Module) (http.Handler, error) {
 
-    bodyLimits, err := config.ResolveHTTPBodyLimits(cfg.HTTP.BodyLimits)
-    if err != nil { return nil, err }
-    auditSettings, err := config.ResolveAudit(cfg.Audit)
-    if err != nil { return nil, err }
+	trusted, err := parseTrustedProxies(cfg.HTTP.ClientIP.TrustedProxies)
+	if err != nil { return nil, err }
+
+	bodyLimits, err := config.ResolveHTTPBodyLimits(cfg.HTTP.BodyLimits)
+	if err != nil {
+		return nil, err
+	}
+	auditSettings, err := config.ResolveAudit(cfg.Audit)
+	if err != nil {
+		return nil, err
+	}
 
 	permissionAuthorizer, permissionEndpoint, err := newHTTPPermissionAuthorizer(cfg, mounted)
 	if err != nil {
@@ -239,7 +136,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 {{- if .Computed.enable_trace_final }}
 	r.Use(TraceID(cfg.Server.Name, policy))
 {{- end }}
-	r.Use(RequestBodyLimits(bodyLimits), ClientIP(), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy, auditSettings), Recoverer())
+	r.Use(RequestBodyLimits(bodyLimits), ClientIP(trusted...), Locale(httpTranslator(mounted)), AccessLog(policy), Audit(auditRecorder(mounted), policy, auditSettings), Recoverer())
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, http.StatusNotFound, apperror.NotFound)
@@ -329,75 +226,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 	}
 	return r, nil
 }
-
-func authenticationMiddleware(authenticator *authn.Manager, authorizer modules.HTTPPermissionAuthorizer, permissionEndpoint, modulePath string, module modules.Module, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if anonymous, ok := module.(modules.AnonymousHTTPModule); ok && anonymous.AllowAnonymousHTTP(r) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if isPublicEndpoint(r.URL.Path, modulePath) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		request, err := authenticator.AuthenticateRequest(r)
-		if err != nil {
-			writeAuthenticationError(w, r, err)
-			return
-		}
-		request, err = authn.ScopeRequest(request)
-		if err != nil {
-			WriteError(w, r, http.StatusBadRequest, err)
-			return
-		}
-		identity, _ := authn.FromContext(request.Context())
-		auditctx.Identity(request.Context(), identity.UserID, identity.Username)
-		if authorizer != nil && request.URL.Path != permissionEndpoint {
-			allowed, err := authorizer.AuthorizeHTTP(request.Context(), request.Method, request.URL.Path)
-			if err != nil {
-				slog.ErrorContext(request.Context(), "authorize http request failed: "+err.Error(),
-					"operation", "authorize_http_request", "outcome", "failure", "method", request.Method, "error", err)
-				WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
-				return
-			}
-			if !allowed {
-				WriteError(w, r, http.StatusForbidden, apperror.Forbidden)
-				return
-			}
-		}
-        if err := authenticator.CheckHTTPSecurity(request); err != nil {
-            WriteHTTPSecurityError(w, request, err)
-            return
-        }
-		next.ServeHTTP(w, request)
-	})
-}
-
-func newHTTPPermissionAuthorizer(cfg *config.Config, mounted []modules.Module) (modules.HTTPPermissionAuthorizer, string, error) {
-	if !cfg.Auth.Authorization.Enabled {
-		return nil, "", nil
-	}
-	var found modules.HTTPPermissionAuthorizer
-	for _, module := range mounted {
-		candidate, ok := module.(modules.HTTPPermissionAuthorizer)
-		if !ok {
-			continue
-		}
-		if found != nil {
-			return nil, "", errors.New("http permission authorizer is duplicated")
-		}
-		found = candidate
-	}
-	if found == nil {
-		return nil, "", errors.New("http permission authorizer is required")
-	}
-	endpoint := strings.TrimSpace(found.PermissionEndpoint())
-	if endpoint == "" || !strings.HasPrefix(endpoint, "/") {
-		return nil, "", errors.New("http permission endpoint must start with /")
-	}
-	return found, strings.TrimSuffix(found.Name(), "/") + endpoint, nil
-}
-
+{{ end -}}
 func isPublicModule(module modules.Module) bool {
 	public, ok := module.(modules.PublicHTTPModule)
 	return ok && public.Public()
@@ -408,13 +237,6 @@ func isIdempotentModule(module modules.Module) bool {
 	return ok && idempotent.Idempotent()
 }
 
-func isPublicEndpoint(path, modulePath string) bool {
-	publicPath := strings.TrimSuffix(modulePath, "/") + "/pub"
-	return path == publicPath || strings.HasPrefix(path, publicPath+"/")
-}
-
-{{ end -}}
-
 func httpTranslator(mounted []modules.Module) i18n.Translator {
 	for _, module := range mounted {
 		if source, ok := module.(modules.HTTPLocalizer); ok {
@@ -422,17 +244,4 @@ func httpTranslator(mounted []modules.Module) i18n.Translator {
 		}
 	}
 	return nil
-}
-
-func writeAuthenticationError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, authn.ErrPasswordResetRequired):
-		WriteError(w, r, http.StatusForbidden, err)
-	case errors.Is(err, authn.ErrUnauthorized):
-		WriteError(w, r, http.StatusUnauthorized, apperror.Unauthorized)
-	default:
-		slog.ErrorContext(r.Context(), "authenticate http request failed: "+err.Error(),
-			"operation", "authenticate_http_request", "outcome", "failure", "method", r.Method, "error", err)
-		WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
-	}
 }

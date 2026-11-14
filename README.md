@@ -18,6 +18,8 @@ OpenAPI generation resolves the same YAML and environment value.
 
 The `full` preset enables gRPC, Redis, tracing support and health checks. These
 remain optional, and the HTTP router can be chi or Gin.
+TOTP defaults to enabled when Redis support is included. Generating without Redis
+also sets `auth.totp.enabled` to `false` in `conf/auth.yml`.
 
 ## Generate with Make
 
@@ -88,8 +90,8 @@ make local DELETE_OLD_SQL=true
 ```
 
 `DELETE_OLD_CREDENTIALS=false` is a separate default: both SQL modes preserve
-`auth.jwt.key`, `auth.jwt.issuer`, `auth.mfa.encryptionKeyFile`,
-`auth.mfa.totpPeriod`, `auth.challengeEncryption.privateKeyFile` and
+`auth.session.jwt.key`, `auth.session.jwt.issuer`, `auth.verification.encryptionKeyFile`,
+`auth.totp.period`, `auth.challengeEncryption.privateKeyFile` and
 `auth.challengeEncryption.keyId`. Existing values, including explicitly empty
 paths, override the generated defaults; other fields receive the current template
 defaults. Referenced key files inside `demos/auth` are backed up and restored with
@@ -103,9 +105,10 @@ Explicitly discard the old credential settings and use newly generated defaults:
 make local DELETE_OLD_CREDENTIALS=true
 ```
 
-This rotates the JWT key and can make existing MFA factors unusable; it does not
-reset the database. Retained factors require their original key and TOTP period,
-or an explicit migration/reset. If generation or the final rebuild fails, the
+This rotates the JWT key and can make existing TOTP authenticators unusable; it does not
+reset the database. Retained factors require their original encryption key,
+or an explicit migration/reset. The schema stores each binding's TOTP period;
+`auth.totp.period` now only controls new enrollments (default `30s`). If generation or the final rebuild fails, the
 previous SQL, authentication configuration, local key files and binary are restored
 even with `DELETE_OLD_CREDENTIALS=true`; obsolete source files remain removed.
 If credential restoration itself fails, the backup directory is retained and
@@ -136,7 +139,7 @@ Interactive generation can also adjust the HTTP port, timeout, Redis, tracing
 and health checks. PostgreSQL and the business modules are always included,
 including when no preset is specified.
 
-## Brand Name
+## Brand Name and Domain
 
 Set one `BRAND_NAME` value in both the auth and Vben frontend generators:
 
@@ -151,14 +154,54 @@ must start with an English letter and contain only English letters, digits,
 spaces, hyphens, or underscores. Extra surrounding spaces are trimmed and
 repeated separators are collapsed. The default is `go cinch`.
 
+Set `BRAND_DOMAIN` independently of the display name:
+
+```bash
+make full PROJECT=zenwell-admin BRAND_NAME=zenwell BRAND_DOMAIN=zenwell.example
+# Direct Scaffold equivalent: append brand_name=zenwell brand_domain=zenwell.example
+```
+
+Replace `zenwell.example` with your actual domain. The default is `go-cinch.top`.
+Omitted or blank values use that default.
+Use a bare domain (including subdomains if needed), without a scheme, port,
+path or trailing dot. Surrounding spaces are trimmed and letters are lowercased;
+invalid domains fail before project files are written. Use ASCII/Punycode for
+internationalized domains. Both `make full` and `make local` accept this value.
+
+| Generated value | Source |
+| --- | --- |
+| Production docs server | `https://<BRAND_DOMAIN>/api/<service-name>` |
+| Development docs server | `https://dev.<BRAND_DOMAIN>/api/<service-name>` |
+| Email sender | `no-reply@<BRAND_DOMAIN>` |
+| Vben copyright company link in seed SQL | `https://<BRAND_DOMAIN>` |
+
+The local docs server keeps its loopback address and selected HTTP port.
+`make api` regenerates OpenAPI servers from `conf/http.yml`.
+Email defaults are `host: "smtp.resend.com"`, `username: "resend"`, and
+`password: ""`; set the API key after generation through `conf/email.yml` or
+`SERVICE_EMAIL_PASSWORD`. The sender domain must be configured with your mail
+provider. With email enabled, startup requires a non-empty password. For local
+work without SMTP, set `SERVICE_EMAIL_SKIPDELIVERY=true` to complete queued
+deliveries without sending, or set `SERVICE_EMAIL_ENABLED=false` to disable email.
+`email.domain` is the optional NTLM authentication domain, not the
+sender domain, so it stays empty.
+
+Other brand-dependent values already use `BRAND_NAME`: the sender display name,
+TOTP account label, login copy, copyright company name, and mail-template
+HTML/text branding. The mail templates still embed the default logo image;
+replace that image separately for a custom visual identity. The trusted email
+unlink/audit URLs remain explicit `email_unlink_url`/`email_audit_url` inputs
+because their frontend origin, route and hash mode depend on the deployment.
+`make local` keeps its explicit local frontend URL defaults.
+
 The generated dictionary seed SQL uses the same brand as the frontend's bundled
 Chinese and English messages. `Project`, `service_name`, and `module_name` remain
 independent service identifiers. This changes new projects, not an initialized
 database; `make local` with its default `DELETE_OLD_SQL=false` preserves existing
 SQL and dictionary data.
 
-Run `make test-branding` to check custom names, valid JSON in SQL, and invalid
-input rejection using temporary output directories.
+Run `make test-branding` to check names, domains, email defaults, valid JSON in
+SQL, and invalid input rejection using temporary output directories.
 
 ## Generated Project
 

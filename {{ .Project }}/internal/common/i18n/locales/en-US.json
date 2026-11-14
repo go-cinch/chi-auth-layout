@@ -83,11 +83,11 @@
   "AUTH_PERMISSION_GRANT_REQUIRED": "All permissions or the permission management grant in the current scope is required",
   "DICTIONARY_VERSION_CONFLICT": "The catalog changed. Compare the latest online version before submitting.",
   "DICTIONARY_GROUP_NOT_EMPTY": "Only empty permission groups can be deleted",
-  "AUTH_MFA_INVALID": "invalid or already used verification code; use a new code",
-  "AUTH_STEP_UP_REQUIRED": "verify two-factor authentication before this operation",
-  "AUTH_MFA_ENROLLMENT_REQUIRED": "bind an authenticator before continuing",
-  "AUTH_MFA_ALREADY_ENABLED": "two-factor authentication is already enabled",
-  "AUTH_MFA_RATE_LIMITED": "too many verification attempts; try again later",
-  "AUTH_MFA_UNAVAILABLE": "two-factor authentication is temporarily unavailable",
-  "AUTH_MFA_USER_NOT_FOUND": "user not found"
+  "AUTH_VERIFICATION_INVALID": "invalid or already used verification code; use a new code",
+  "AUTH_STEP_UP_REQUIRED": "verify your identity before this sensitive operation",
+  "AUTH_TOTP_ENROLLMENT_REQUIRED": "bind an authenticator before continuing",
+  "AUTH_TOTP_ALREADY_BOUND": "a TOTP authenticator is already bound",
+  "AUTH_VERIFICATION_RATE_LIMITED": "too many verification attempts; try again later",
+  "AUTH_VERIFICATION_UNAVAILABLE": "identity verification is temporarily unavailable",
+  "AUTH_TOTP_USER_NOT_FOUND": "user not found"
 }

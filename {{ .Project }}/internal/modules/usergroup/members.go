@@ -173,6 +173,18 @@ func (m *Module) ListMembers(ctx context.Context, id int64, input ListMembersInp
 	return result, rows.Err()
 }
 
+func replaceUsers(ctx context.Context, executor db.SQLExecutor, groupID int64, users []int64) error {
+	if _, err := executor.ExecContext(ctx, `DELETE FROM t_user_user_group_relation WHERE user_group_id = $1`, groupID); err != nil {
+		return fmt.Errorf("replace user group members: %w", err)
+	}
+	for _, userID := range users {
+		if _, err := executor.ExecContext(ctx, `INSERT INTO t_user_user_group_relation (user_id, user_group_id) VALUES ($1, $2)`, userID, groupID); err != nil {
+			return fmt.Errorf("add user group member: %w", err)
+		}
+	}
+	return nil
+}
+
 func memberDelta(input UpdateUserGroupInput) ([]int64, []int64, error) {
 	if input.UserIDs != nil && (input.AddUserIDs != nil || input.RemoveUserIDs != nil) {
 		return nil, nil, ErrInvalid

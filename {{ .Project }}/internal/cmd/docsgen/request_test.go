@@ -60,17 +60,6 @@ func TestJSONRequestBodies(t *testing.T) {
 	}
 }
 
-func TestSchemaExamples(t *testing.T) {
-	for _, tc := range []struct{ typ, input, want string }{
-		{"integer", "1990", "1990"}, {"number", "1.5", "1.5"}, {"boolean", "true", "true"},
-		{"string", "hello", `"hello"`}, {"integer", "invalid", `"invalid"`},
-	} {
-		if got := schemaExample(&schema{typeName: tc.typ, example: tc.input}); got != tc.want {
-			t.Fatalf("example: %s", got)
-		}
-	}
-}
-
 type requestSchemaDoc struct {
 	Ref                  string `yaml:"$ref"`
 	Type                 string

@@ -48,6 +48,7 @@ type User struct {
 	CreatedAt         int64               `json:"created_at"`
 	UpdatedAt         int64               `json:"updated_at"`
 	Username          string              `json:"username"`
+	Email             *string             `json:"email,omitempty"`
 	Code              string              `json:"code"`
 	Status            int16               `json:"status"`
 	Metadata          map[string]any      `json:"metadata"`
@@ -250,7 +251,7 @@ func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, erro
 		return nil, ErrInvalid
 	}
 	var value *User
-	err = m.store.Tx(ctx, func(ctx context.Context) error {
+	err = m.store.MutationTx(ctx, func(ctx context.Context) error {
 		if input.ActionBindings != nil {
 			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "user", "create", *input.ActionBindings)
 			if errors.Is(err, actionmodule.ErrInvalid) {
@@ -367,7 +368,10 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 		return nil, ErrInvalid
 	}
 	var value *User
-	err := m.store.Tx(ctx, func(ctx context.Context) error {
+	err := m.store.MutationTx(ctx, func(ctx context.Context) error {
+		if input.RoleID != nil || input.ActionCodes != nil || input.ActionBindings != nil || input.Status != nil {
+			actionmodule.MarkPermissionMutation(ctx)
+		}
 		if input.ActionBindings != nil {
 			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "user", "update", *input.ActionBindings)
 			if errors.Is(err, actionmodule.ErrInvalid) {
@@ -507,7 +511,7 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 		}
 		return nil
 	}
-	return m.store.Tx(ctx, operation)
+	return m.store.MutationTx(ctx, operation)
 }
 
 // Time filters preserve optional bounds and use JavaScript-safe Unix milliseconds.

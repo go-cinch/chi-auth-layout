@@ -123,10 +123,6 @@ func TestInboxAndManagement(t *testing.T) {
 	if _, err := m.List(t.Context(), 2, ListInput{Read: &read}); err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery("SELECT unread_count").WillReturnRows(statusRows(3, time.Now(), nil))
-	if n, err := m.UnreadCount(t.Context(), 2); err != nil || n != 3 {
-		t.Fatal(n, err)
-	}
 	for _, operation := range []func() error{func() error { return m.Read(t.Context(), 2, 1) }, func() error { return m.Delete(t.Context(), 2, 1) }, func() error { return m.ReadAll(t.Context(), 2) }} {
 		expectStatusTx(mock)
 		mock.ExpectExec("INSERT INTO t_msg_recipient").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -162,9 +158,6 @@ func TestFailures(t *testing.T) {
 	}
 	if _, err := m.ListSent(t.Context(), ListInput{Type: "invalid"}); err == nil {
 		t.Fatal("invalid type")
-	}
-	if _, err := m.UnreadCount(t.Context(), 0); err == nil {
-		t.Fatal("invalid count")
 	}
 	for _, err := range []error{m.Read(t.Context(), 0, 1), m.Delete(t.Context(), 1, 0), m.ReadAll(t.Context(), 0), m.DeleteSent(t.Context(), 0)} {
 		if err == nil {

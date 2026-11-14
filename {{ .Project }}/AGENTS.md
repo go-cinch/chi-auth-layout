@@ -2,6 +2,7 @@
 
 ## Scoped Guidelines
 
+- Follow [command guidelines](internal/cmd/AGENTS.md) when changing development commands or generators under `internal/cmd`.
 - Follow [business module guidelines](internal/modules/AGENTS.md) when changing business modules or module contracts, including routing, authentication/authorization, response handling, application wiring, and API documentation generation in `internal/common/server`, `internal/app`, or `internal/cmd`.
 - Follow [database guidelines](internal/infra/db/AGENTS.md) when changing database infrastructure, schemas, or migrations. Business code using transactions must also follow their [transaction rules](internal/infra/db/AGENTS.md#transactions).
 
@@ -65,7 +66,7 @@
 {{ if .Computed.enable_redis_final -}}
 ### Redis Keys
 
-- Configure `<environment>:<service>:` through `redis.prefix` in `conf/redis.yml` or `SERVICE_REDIS_PREFIX`; the default is `dev:auth:`. Replicas of one deployment share a prefix; services and environments use distinct prefixes.
+- Derive `<environment>:<service>:` from `server.env` and `server.name` after environment overrides (`SERVICE_SERVER_ENV`, `SERVICE_SERVER_NAME`). Do not configure a separate Redis prefix. Replicas of one deployment share a prefix; services and environments use distinct prefixes.
 - Use `<environment>:<service>:<resource-type>:<subtype>:<id>`. Separate every segment, including IDs, with `:`; use lowercase kebab-case names and reserve opaque URL-safe values for ID segments. Correct: `prod:auth:point-captcha:slider-proof:<id>`. Never join IDs with `-`, `.`, or `_`.
 - Pass relative keys such as `point-captcha:slider-proof:<id>` to `internal/infra/rds`; its client prefixes all key-bearing operations, including multi-key deletion and Lua `KEYS`. Do not repeat the prefix, environment, or service in business keys.
 - Create all Redis connections, including cache connections, in `internal/infra/rds` using its prefix-aware client. Never expose the raw client, embed its unrestricted command API, or bypass it with `Do` or raw pipelines. Extend the shared client with key-isolation tests when adding commands.

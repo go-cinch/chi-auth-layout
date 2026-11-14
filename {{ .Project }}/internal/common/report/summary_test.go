@@ -19,3 +19,12 @@ func TestManagementPointZeroLoginSeriesIsPresent(t *testing.T) {
 		t.Fatalf("point: %s %v", encoded, err)
 	}
 }
+
+func TestSelectedSummaryKeepsZerosAndEmptyArrays(t *testing.T) {
+	value := New("active")
+	value.Fields = Fields{"total", "groups"}
+	data, err := json.Marshal(value)
+	if err != nil || string(data) != `{"groups":[],"total":0}` {
+		t.Fatal(string(data), err)
+	}
+}

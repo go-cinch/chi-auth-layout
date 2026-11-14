@@ -191,33 +191,6 @@ func TestActionListAndLookup(t *testing.T) {
 	}
 }
 
-func TestActionListGroups(t *testing.T) {
-	m, mock := newTestModule(t)
-	ctx := context.Background()
-
-	if _, err := m.ListGroups(ctx, strings.Repeat("x", 51)); !errors.Is(err, ErrInvalid) {
-		t.Fatal(err)
-	}
-	mock.ExpectQuery("SELECT MIN\\(action_group\\).*GROUP BY.*LIMIT 20").WillReturnRows(
-		sqlmock.NewRows([]string{"action_group"}).AddRow("Action").AddRow("User"),
-	)
-	result, err := m.ListGroups(ctx, "")
-	if err != nil || len(result.Items) != 2 || result.Items[0] != "Action" {
-		t.Fatalf("list groups: %#v %v", result, err)
-	}
-	mock.ExpectQuery("SELECT MIN\\(action_group\\).*LIKE.*GROUP BY.*LIMIT 20").WithArgs("%User%").WillReturnRows(
-		sqlmock.NewRows([]string{"action_group"}).AddRow("User"),
-	)
-	result, err = m.ListGroups(ctx, " User ")
-	if err != nil || len(result.Items) != 1 || result.Items[0] != "User" {
-		t.Fatalf("search groups: %#v %v", result, err)
-	}
-	mock.ExpectQuery("SELECT MIN\\(action_group\\)").WillReturnError(sql.ErrConnDone)
-	if _, err := m.ListGroups(ctx, ""); err == nil {
-		t.Fatal("expected database error")
-	}
-}
-
 func TestActionErrorsAndHelpers(t *testing.T) {
 	if got := like("a%b_c!"); got != "%a!%b!_c!!%" {
 		t.Fatal(got)
@@ -281,17 +254,12 @@ func TestActionLocalizedNameAndSearch(t *testing.T) {
 	}
 }
 
-func TestLocalizedGroupSearchAndNameFilters(t *testing.T) {
+func TestLocalizedGroupAndNameFilters(t *testing.T) {
 	localizer := localization.New()
 	m, mock := newTestModule(t)
 	localizer = m.catalogSource.(*localization.Module)
 	installActionTestLabels(t, localizer)
 	ctx := i18n.WithLocale(t.Context(), "zh-CN")
-	mock.ExpectQuery("SELECT MIN.*action_group = ANY").WithArgs("%消息%", pq.Array([]string{"admin:demo:record"})).WillReturnRows(sqlmock.NewRows([]string{"action_group"}).AddRow("admin:demo:record"))
-	groups, err := m.ListGroups(ctx, "消息")
-	if err != nil || len(groups.Items) != 1 || groups.Items[0] != "admin:demo:record" {
-		t.Fatalf("groups=%+v err=%v", groups, err)
-	}
 	mock.ExpectQuery("SELECT COUNT.*action_group = ANY").WithArgs("%消息%", pq.Array([]string{"admin:demo:record"})).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
 	if _, err := m.List(ctx, ListActionsInput{Group: "消息"}); err != nil {
 		t.Fatal(err)

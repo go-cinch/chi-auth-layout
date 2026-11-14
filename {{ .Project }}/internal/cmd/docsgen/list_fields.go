@@ -10,7 +10,7 @@ func (g *generator) describeListFields(r *route) {
 		return
 	}
 	fields := map[string]string{
-		"/user":            "id,created_at,updated_at,username,code,role_id,last_logged_in_at,login_count,status,metadata,wrong,action_codes,actions,role,role_summary",
+		"/user":            "id,created_at,updated_at,username,email,code,role_id,last_logged_in_at,login_count,status,metadata,wrong,action_codes,actions,role,role_summary",
 		"/role":            "id,created_at,updated_at,name,word,action_codes,actions,action_summaries",
 		"/action":          "id,created_at,updated_at,code,name,group,word,scope,config,resource,menu,button",
 		"/dictionary":      "id,created_at,updated_at,key,name,description,enabled,value",

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/DATA-DOG/go-sqlmock"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +21,74 @@ func TestConfiguredAuditChartWindow(t *testing.T) {
 	mock.ExpectQuery("SELECT MIN.*MAX").WillReturnRows(sqlmock.NewRows([]string{"first", "last"}).AddRow(from, to))
 	if _, err := m.Summary(t.Context(), Filter{Kind: "login", From: &from}, "trend"); !errors.Is(err, ErrFilter) {
 		t.Fatal("derived chart range ignored maximum", err)
+	}
+}
+
+func TestSummaryChartsShareOptionalBounds(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		from, to    *int64
+		first, last any
+		start, end  int64
+	}{
+		{"from", auditTime(3600000), nil, int64(3600000), int64(7199999), 3600000, 7200000},
+		{"to", nil, auditTime(7200000), int64(3600000), int64(7199999), 3600000, 7200000},
+		{"empty_from", auditTime(3600000), nil, nil, nil, 3600000, 3600001},
+		{"empty_to", nil, auditTime(7200000), nil, nil, 7199999, 7200000},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m, mock := setup(t)
+			clause := " WHERE kind=$1 AND occurred_at >= $2"
+			bound := test.from
+			if bound == nil {
+				clause = " WHERE kind=$1 AND occurred_at < $2"
+				bound = test.to
+			}
+			// Both charts share one extent lookup and retain the original SQL bounds.
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT MIN(occurred_at), MAX(occurred_at) FROM t_audit_event"+clause)).WithArgs("login", *bound).
+				WillReturnRows(sqlmock.NewRows([]string{"first", "last"}).AddRow(test.first, test.last)).RowsWillBeClosed()
+			mock.ExpectQuery("SELECT .*occurred_at /.*"+regexp.QuoteMeta(clause+" GROUP BY 1 ORDER BY 1")).WithArgs("login", *bound, int64(3600)).
+				WillReturnRows(sqlmock.NewRows([]string{"at", "success", "failure"})).RowsWillBeClosed()
+			mock.ExpectQuery("SELECT width_bucket.*"+regexp.QuoteMeta(clause+" GROUP BY 1")).WithArgs("login", *bound, sqlmock.AnyArg()).
+				WillReturnRows(sqlmock.NewRows([]string{"index", "count", "failed"})).RowsWillBeClosed()
+			value, err := m.Summary(t.Context(), Filter{Kind: "login", From: test.from, To: test.to}, "trend", "heatmap")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value.From != test.from || value.To != test.to {
+				t.Fatal("chart allocation changed public bounds")
+			}
+			if len(value.Trend) != 1 || value.Trend[0].At != test.start/3600000*3600000 || value.BucketMS != 3600000 {
+				t.Fatalf("trend: %+v", value)
+			}
+			if len(value.Heatmap) != 1 || value.Heatmap[0].StartedAt != test.start || value.Heatmap[0].EndedAt != test.end {
+				t.Fatalf("heatmap: %+v", value.Heatmap)
+			}
+		})
+	}
+}
+
+func TestSummaryChartReadErrors(t *testing.T) {
+	for _, field := range []string{"trend", "heatmap"} {
+		for _, failure := range []string{"scan", "iteration"} {
+			t.Run(field+"/"+failure, func(t *testing.T) {
+				m, mock := setup(t)
+				rows := sqlmock.NewRows([]string{"bucket", "success", "failure"})
+				if failure == "scan" {
+					rows.AddRow("invalid integer", 1, 0)
+				} else {
+					rows.AddRow(0, 1, 0).RowError(0, sqlmock.ErrCancelled)
+				}
+				mock.ExpectQuery("SELECT").WillReturnRows(rows).RowsWillBeClosed()
+				_, err := m.Summary(t.Context(), Filter{Kind: "login", From: auditTime(1), To: auditTime(3600000)}, field)
+				if err == nil {
+					t.Fatal("lost chart read error")
+				}
+				if failure == "iteration" && !errors.Is(err, sqlmock.ErrCancelled) {
+					t.Fatal(err)
+				}
+			})
+		}
 	}
 }
 

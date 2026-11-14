@@ -60,7 +60,7 @@ func TestHTTP(t *testing.T) {
 	call("/audit/login/missing", 404)
 	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnError(sql.ErrNoRows)
 	call("/audit/login/detail/1", 404)
-	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnRows(row())
+	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnRows(detailRow())
 	call("/audit/login/detail/1", 200)
 	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnError(sqlmock.ErrCancelled)
 	call("/audit/login/detail/1", 500)
@@ -104,6 +104,11 @@ func TestAuditTargets(t *testing.T) {
 		{"PATCH", "/reset/pwd", "operation", "reset_password", ""},
 		{"POST", "/logout", "operation", "logout", ""},
 		{"POST", "/pub/challenge", "", "", ""},
+        {"POST", "/email/unbind/request", "operation", "request_email_unlink", ""},
+        {"POST", "/email/unbind", "operation", "unlink_email", ""},
+        {"POST", "/pub/email/unbind", "operation", "confirm_email_unlink", ""},
+        {"GET", "/email/unbind/status", "", "", ""},
+        {"PATCH", "/pub/email/unbind", "", "", ""},
 		{"POST", "/other", "", "", ""},
 		{"POST", "/user", "operation", "create", ""},
 		{"PATCH", "/user/2", "operation", "update", "2"},
@@ -126,7 +131,13 @@ func TestAuditClassificationUsesConfiguredAuthPath(t *testing.T) {
 	for _, prefix := range []string{"", "/auth", "/identity/v2"} {
 		m := &Module{}
 		m.SetAuthHTTPPath(prefix)
-		login := m.AuditTarget("POST", prefix+"/pub/login")
+		for _, route := range []string{"/email/unbind/request", "/email/unbind", "/pub/email/unbind"} {
+			target := m.AuditTarget("POST", prefix+route)
+			if target.Kind != "operation" || target.ResourceType != "user" || !target.OmitPayload {
+				t.Fatalf("incorrect sensitive audit target: %s %+v", route, target)
+			}
+		}
+        login := m.AuditTarget("POST", prefix+"/pub/login")
 		if login.Kind != "login" || login.Operation != "login" {
 			t.Fatal(prefix, login)
 		}

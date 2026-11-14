@@ -8,17 +8,17 @@ import (
 )
 
 func WriteHTTPSecurityError(w http.ResponseWriter, r *http.Request, err error) {
-	SetMFAErrorHeaders(w, err)
+	SetVerificationErrorHeaders(w, err)
 	switch apperror.Code(err) {
-	case "AUTH_STEP_UP_REQUIRED", "AUTH_MFA_ENROLLMENT_REQUIRED":
+	case "AUTH_EMAIL_BINDING_REQUIRED", "AUTH_STEP_UP_REQUIRED", "AUTH_TOTP_ENROLLMENT_REQUIRED":
 		WriteError(w, r, http.StatusForbidden, err)
-	case "AUTH_MFA_INVALID":
+	case "AUTH_VERIFICATION_INVALID":
 		WriteError(w, r, http.StatusBadRequest, err)
-	case "AUTH_MFA_RATE_LIMITED":
+	case "AUTH_VERIFICATION_RATE_LIMITED":
 		WriteError(w, r, http.StatusTooManyRequests, err)
 	case "AUTH_UNAUTHORIZED":
 		WriteError(w, r, http.StatusUnauthorized, err)
-	case "AUTH_MFA_UNAVAILABLE":
+	case "AUTH_VERIFICATION_UNAVAILABLE":
 		WriteError(w, r, http.StatusServiceUnavailable, err)
 	default:
 		slog.ErrorContext(r.Context(), "http security check failed: "+err.Error(), "operation", "http_security_check", "outcome", "failure", "error", err)
@@ -26,13 +26,11 @@ func WriteHTTPSecurityError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-func SetMFAErrorHeaders(w http.ResponseWriter, err error) {
+func SetVerificationErrorHeaders(w http.ResponseWriter, err error) {
 	switch apperror.Code(err) {
-	case "AUTH_STEP_UP_REQUIRED", "AUTH_MFA_INVALID", "AUTH_MFA_RATE_LIMITED", "AUTH_MFA_ENROLLMENT_REQUIRED":
-		w.Header().Set(authn.MFARequiredHeader, "true")
+	case "AUTH_LOGIN_MFA_REQUIRED", "AUTH_STEP_UP_REQUIRED", "AUTH_VERIFICATION_INVALID", "AUTH_VERIFICATION_RATE_LIMITED", "AUTH_TOTP_ENROLLMENT_REQUIRED":
+		w.Header().Set(authn.VerificationRequiredHeader, "true")
 		w.Header().Set("Cache-Control", "no-store")
-		if apperror.Code(err) == "AUTH_MFA_ENROLLMENT_REQUIRED" {
-			w.Header().Set(authn.MFAEnrollmentRequiredHeader, "true")
-		}
+
 	}
 }

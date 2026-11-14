@@ -15,13 +15,13 @@ func (g *generator) describeDetailFields(r *route) {
 		case r.path == "/msg/sent/{id}":
 			fields = "id,created_at,updated_at,title,content,summary,type,scope,sender_id,published_at,expired_at,read_at,recipient_ids,recipients"
 		case r.path == "/user/{id}":
-			fields = "id,created_at,updated_at,username,code,role_id,last_logged_in_at,login_count,status,metadata,wrong,action_codes,actions,role,role_summary,permission_sources"
+			fields = "id,created_at,updated_at,username,email,code,role_id,last_logged_in_at,login_count,status,metadata,wrong,action_codes,actions,role,role_summary,permission_sources"
 		case r.path == "/role/{id}":
 			fields = "id,created_at,updated_at,name,word,action_codes,actions,action_summaries"
 		case strings.HasPrefix(r.path, "/audit/") && strings.Contains(r.path, "/detail/"):
 			fields = "id,occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,header,request_params,response_params"
 		case r.pkg != nil && r.pkg.name == "auth" && r.handler != nil && r.handler.Name.Name == "info":
-			fields = "id,username,code,role,scope,permission"
+			fields = "id,username,code,role,scope,permission,email,email_verified_at,email_binding_required,metadata,verification,ui_preferences"
 		}
 		if fields != "" {
 			g.describeSelectedDetail(r, fields)

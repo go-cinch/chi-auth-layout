@@ -21,15 +21,15 @@ func TestTOTPRFC6238VectorsAndReplay(t *testing.T) {
 		if err != nil || step != tc.at/30 {
 			t.Fatalf("RFC vector at %d failed", tc.at)
 		}
-		if _, err := verifyTOTP(secret, tc.code, now, step, 30*time.Second); !errors.Is(err, ErrMFAInvalid) {
+		if _, err := verifyTOTP(secret, tc.code, now, step, 30*time.Second); !errors.Is(err, ErrVerificationInvalid) {
 			t.Fatal("replayed time step accepted")
 		}
-		if _, err := verifyTOTP(secret, tc.code, now.Add(90*time.Second), -1, 30*time.Second); !errors.Is(err, ErrMFAInvalid) {
+		if _, err := verifyTOTP(secret, tc.code, now.Add(90*time.Second), -1, 30*time.Second); !errors.Is(err, ErrVerificationInvalid) {
 			t.Fatal("expired code accepted")
 		}
 	}
 	for _, code := range []string{"", "12345", "1234567", "abcdef"} {
-		if _, err := verifyTOTP(secret, code, time.Now(), -1, 30*time.Second); !errors.Is(err, ErrMFAInvalid) {
+		if _, err := verifyTOTP(secret, code, time.Now(), -1, 30*time.Second); !errors.Is(err, ErrVerificationInvalid) {
 			t.Fatal("invalid code accepted")
 		}
 	}
@@ -65,14 +65,14 @@ func TestConfiguredTOTPPeriod(t *testing.T) {
 	if err != nil || step != 2 {
 		t.Fatal("configured period was ignored", err)
 	}
-	if _, err := verifyTOTP(secret, "359152", time.Unix(120, 0), -1, 30*time.Second); !errors.Is(err, ErrMFAInvalid) {
+	if _, err := verifyTOTP(secret, "359152", time.Unix(120, 0), -1, 30*time.Second); !errors.Is(err, ErrVerificationInvalid) {
 		t.Fatal("wrong period accepted", err)
 	}
-	if _, err := verifyTOTP(secret, "359152", time.Unix(120, 0), step, time.Minute); !errors.Is(err, ErrMFAInvalid) {
+	if _, err := verifyTOTP(secret, "359152", time.Unix(120, 0), step, time.Minute); !errors.Is(err, ErrVerificationInvalid) {
 		t.Fatal("custom-period replay accepted", err)
 	}
 	for _, invalid := range []time.Duration{0, -time.Second, 1500 * time.Millisecond} {
-		if _, err := verifyTOTP(secret, "359152", time.Unix(120, 0), -1, invalid); !errors.Is(err, ErrMFAInvalid) {
+		if _, err := verifyTOTP(secret, "359152", time.Unix(120, 0), -1, invalid); !errors.Is(err, ErrVerificationInvalid) {
 			t.Fatal("invalid period accepted", invalid)
 		}
 	}

@@ -10,16 +10,16 @@ import (
 func AuthHTTPPaths(prefix string) map[string]string {
 	paths := make(map[string]string)
 	for _, relative := range []string{
-		"/pub/register/username", "/pub/challenge", "/pub/register",
+		"/pub/i18n", "/pub/status", "/status", "/pub/opt", "/pub/timezones", "/pub/register/username", "/pub/challenge", "/pub/register",
 		"/pub/slider/challenge", "/pub/slider/verify", "/pub/login/verification",
 		"/pub/captcha", "/pub/captcha/verify", "/pub/login", "/pub/refresh", "/pub/logout",
 		"/permission", "/logout", "/challenge", "/captcha", "/captcha/verify",
 		"/change/pwd", "/reset/pwd", "/info",
-		"/mfa", "/mfa/challenge", "/mfa/setup", "/mfa/confirm", "/mfa/test",
+		"/totp", "/totp/challenge", "/totp/setup", "/totp/confirm", "/totp/test", "/totp/recovery/email-code", "/totp/recovery/confirm", "/email/code", "/email/sensitive-code", "/email/code/status", "/email/bind", "/email/unbind/status", "/email/unbind/request", "/email/unbind", "/pub/totp/reset/email-code", "/pub/totp/reset/confirm", "/pub/email/unbind", "/pub/login/email-code", "/pub/login/email-code/status",
 	} {
 		paths["/auth"+relative] = prefix + relative
 	}
-	paths["/auth/mfa/reset/{id}"] = prefix + "/mfa/reset/{{ if eq .Computed.http_router_final "gin" }}:id{{ else }}{id}{{ end }}"
+	paths["/auth/totp/reset/{id}"] = prefix + "/totp/reset/{{ if eq .Computed.http_router_final "gin" }}:id{{ else }}{id}{{ end }}"
 	return paths
 }
 
@@ -36,24 +36,26 @@ func RelativeAuthHTTPPath(path, prefix string) (string, bool) {
 	return "", false
 }
 
-// authHTTPMethod identifies the method owned by each canonical Auth path.
+// ownsAuthHTTPMethod checks the allowed methods for each canonical Auth path.
 // Parameterized paths are recognized with the same matcher as route permissions.
-func authHTTPMethod(relative string) string {
+func ownsAuthHTTPMethod(relative, method string) bool {
 	switch relative {
-	case "/pub/register/username", "/pub/login/verification", "/permission", "/mfa", "/info":
-		return http.MethodGet
+	case "/info":
+		return method == http.MethodGet || method == http.MethodPatch
+	case "/pub/i18n", "/status", "/pub/status", "/email/unbind/status", "/pub/opt", "/pub/timezones", "/pub/register/username", "/pub/login/verification", "/permission", "/totp", "/email/code/status", "/pub/login/email-code/status":
+		return method == http.MethodGet
 	case "/change/pwd", "/reset/pwd":
-		return http.MethodPatch
-	case "/pub/challenge", "/pub/register", "/pub/slider/challenge", "/pub/slider/verify",
+		return method == http.MethodPatch
+	case "/email/unbind/request", "/email/unbind", "/pub/totp/reset/email-code", "/pub/totp/reset/confirm", "/pub/email/unbind", "/pub/challenge", "/pub/register", "/pub/slider/challenge", "/pub/slider/verify",
 		"/pub/captcha", "/pub/captcha/verify", "/pub/login", "/pub/refresh", "/pub/logout",
 		"/logout", "/challenge", "/captcha", "/captcha/verify",
-		"/mfa/challenge", "/mfa/setup", "/mfa/confirm", "/mfa/test":
-		return http.MethodPost
+		"/totp/challenge", "/totp/setup", "/totp/confirm", "/totp/test", "/totp/recovery/email-code", "/totp/recovery/confirm", "/email/code", "/email/sensitive-code", "/email/bind", "/pub/login/email-code":
+		return method == http.MethodPost
 	}
-	if matchRouteTemplate("/mfa/reset/{id}", relative) {
-		return http.MethodPost
+	if matchRouteTemplate("/totp/reset/{id}", relative) {
+		return method == http.MethodPost
 	}
-	return ""
+	return false
 }
 
 // PasswordResetAllowedHTTP is owned by the auth capability, independently of
@@ -63,9 +65,9 @@ func PasswordResetAllowedHTTP(method, path string, prefixes ...string) bool {
 	if len(prefixes) > 0 {
 		prefix = prefixes[0]
 	}
-	return (method == http.MethodGet && path == prefix+"/mfa") ||
-		(method == http.MethodPost && (path == prefix+"/mfa/challenge" || path == prefix+"/mfa/setup" || path == prefix+"/mfa/confirm")) ||
-		(method == http.MethodPatch && path == prefix+"/reset/pwd") ||
+	return (method == http.MethodGet && (path == prefix+"/totp" || path == prefix+"/status")) ||
+		(method == http.MethodPost && (path == prefix+"/totp/challenge" || path == prefix+"/totp/setup" || path == prefix+"/totp/confirm" || path == prefix+"/email/sensitive-code")) ||
+		(method == http.MethodPatch && (path == prefix+"/reset/pwd" || path == prefix+"/info")) ||
 		(method == http.MethodPost && (path == prefix+"/challenge" || path == prefix+"/logout" || path == prefix+"/pub/logout" || path == prefix+"/pub/refresh"))
 }
 

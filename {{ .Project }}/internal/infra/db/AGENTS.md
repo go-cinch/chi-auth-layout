@@ -9,7 +9,7 @@
 
 ## Connection Lifecycle
 
-- Validate the driver and DSN before opening a connection.
+- Validate the PostgreSQL DSN before opening a connection.
 - Use `database.autoCreate` only when the configured account is allowed to create databases. Production deployments should normally provision databases outside the application.
 - Configure pool limits and connection lifetime through `conf/database.yml`; do not hardcode environment-specific values.
 - Close partially initialized resources on every startup failure path.
@@ -49,7 +49,7 @@ return store.Tx(ctx, func(txCtx context.Context) error {
 - Every business table must place `created_at`, then `updated_at`, immediately after `id`; both use `BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint)`. All business instants, including nullable timestamps, store Unix milliseconds as `BIGINT`; HTTP and Go use the same integer values. Do not store timezone-dependent wall-clock timestamps or explicitly convert values to UTC.
 - On updates, preserve `created_at` and explicitly set `updated_at` in SQL; the default applies only to inserts. Use `time.Now().UnixMilli()` for application-supplied timestamps.
 - Name indexes and constraints with descriptive prefixes such as `idx_`, `uk_`, `ck_`, and `fk_`.
-- Avoid reserved or ambiguous identifiers when practical. If a reserved name is intentional, quote it consistently for the selected database dialect.
+- Avoid reserved or ambiguous identifiers when practical. If a reserved name is intentional, quote it consistently for PostgreSQL.
 - Declare nullability, defaults, uniqueness, referential integrity, and domain checks explicitly in SQL.
 - Add comments for non-obvious identifiers, state fields, counters, timestamps, and JSON columns.
 - Prefer database constraints over application-only validation for data integrity.
@@ -64,6 +64,7 @@ return store.Tx(ctx, func(txCtx context.Context) error {
 - An uncommitted migration may be revised with its related code. Keep one table's complete initial definition together instead of immediately adding follow-up alterations.
 - Format every SQL migration consistently: four-space indentation, uppercase SQL keywords, one column or constraint per line, a blank line between statements and between table definitions, comments and indexes, and spaces after commas. Preserve intentional newlines inside seeded permission strings; do not mix indentation styles. Keep schema in the schema migration and seed rows in the data migration.
 - Keep migrations simple and readable.
+- The scaffold initialization baseline contains five files: schema, auth defaults, action defaults, dictionary defaults, and mail-template defaults. Fold uncommitted feature iterations into this baseline when explicitly requested; this is not an upgrade path for retained databases. Mail-template seed revisions and publications start at 1. Menu sorts start at 0 and increase by 1 per scope and parent, preserving explicit child order.
 
 ## Security and Observability
 

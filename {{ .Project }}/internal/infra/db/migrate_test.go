@@ -22,7 +22,7 @@ func TestEmbeddedMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 4 {
+	if len(files) != 5 {
 		t.Fatalf("required auth migrations missing: %v", files)
 	}
 	for _, name := range files {
@@ -36,7 +36,7 @@ func TestEmbeddedMigrations(t *testing.T) {
 	}
 }
 
-func TestDefaultCatalogIncludesCurrentMFAEndpoints(t *testing.T) {
+func TestDefaultCatalogIncludesCurrentTOTPEndpoints(t *testing.T) {
 	seed := readSeedMigration(t, "04-dictionary-default-data")
 	pattern := regexp.MustCompile(`'I18N_CATALOG',\s*'[^']+',\s*'((?:[^']|'')*)'::(?i:jsonb)`)
 	match := pattern.FindStringSubmatch(seed)
@@ -56,21 +56,21 @@ func TestDefaultCatalogIncludesCurrentMFAEndpoints(t *testing.T) {
 		seen[endpoint.Method+" "+endpoint.Path]++
 	}
 	for _, endpoint := range []string{
-		"GET /auth/mfa", "POST /auth/mfa/challenge", "POST /auth/mfa/setup",
-		"POST /auth/mfa/confirm", "POST /auth/mfa/test",
+		"GET /auth/totp", "POST /auth/totp/challenge", "POST /auth/totp/setup",
+		"POST /auth/totp/confirm", "POST /auth/totp/test",
 	} {
 		if seen[endpoint] != 1 {
 			t.Errorf("default session access must grant %s exactly once, got %d", endpoint, seen[endpoint])
 		}
 	}
 	for endpoint := range seen {
-		if strings.Contains(endpoint, "/mfa/reset") {
-			t.Errorf("default session access grants administrator MFA reset: %s", endpoint)
+		if strings.Contains(endpoint, "/totp/reset") {
+			t.Errorf("default session access grants administrator Verification reset: %s", endpoint)
 		}
 	}
 	for key, feature := range catalog.ResourceCatalog.Buttons {
 		for _, endpoint := range feature.HTTP {
-			if endpoint.Path == "/auth/mfa/verify" {
+			if endpoint.Path == "/auth/totp/verify" {
 				t.Errorf("retired standalone verification remains in %s", key)
 			}
 		}
@@ -84,8 +84,11 @@ func TestMigrateUpPreservesDatabaseError(t *testing.T) {
 	}
 	defer database.Close()
 	failure := errors.New("migration table unavailable")
-	mock.ExpectExec(`(?i)create table if not exists "schema_migrations"`).WillReturnError(failure)
-	if err := MigrateUp(t.Context(), database, "postgres"); !errors.Is(err, failure) {
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("TableExists").WillReturnError(failure)
+	mock.ExpectRollback()
+	if err := MigrateUp(t.Context(), database); !errors.Is(err, failure) {
 		t.Fatalf("migration database failure = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -111,9 +114,19 @@ func TestMigrateUpDoesNotReplayAppliedMigrations(t *testing.T) {
 	for _, name := range files {
 		rows.AddRow(path.Base(name), time.Unix(1, 0))
 	}
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("TableExists").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery("ColumnExists").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	versions := sqlmock.NewRows([]string{"line", "version", "created_at"})
+	for version := 1; version <= 8; version++ {
+		versions.AddRow("main", version, time.Unix(1, 0))
+	}
+	mock.ExpectQuery("RiverMigrationGetByLine").WillReturnRows(versions)
+	mock.ExpectCommit()
 	mock.ExpectExec(`(?i)create table if not exists "schema_migrations"`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT \* FROM "schema_migrations"`).WillReturnRows(rows)
-	if err := MigrateUp(t.Context(), database, "postgres"); err != nil {
+	if err := MigrateUp(t.Context(), database); err != nil {
 		t.Fatalf("already migrated database: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -185,11 +198,11 @@ func TestDefaultAssignmentsReferenceSplitActionCatalog(t *testing.T) {
 			deleteActions++
 		}
 	}
-	if deleteActions != 6 {
-		t.Fatalf("seed delete permissions = %d, want 6", deleteActions)
+	if deleteActions != 7 {
+		t.Fatalf("seed delete permissions = %d, want 7", deleteActions)
 	}
-	if len(codes) != 31 {
-		t.Fatalf("seed action codes = %d, want 31", len(codes))
+	if len(codes) != 35 {
+		t.Fatalf("seed action codes = %d, want 35", len(codes))
 	}
 	assignments := regexp.MustCompile(`(?m)^\s*\(\d+,\s*'[^']+',\s*'[^']+',\s*'([^']+)'\)[,;]$`).FindAllStringSubmatch(accounts, -1)
 	if len(assignments) != 8 {
@@ -256,8 +269,8 @@ func TestDefaultActionButtonCatalog(t *testing.T) {
 			}
 		}
 	}
-	if len(configs) != 31 {
-		t.Fatalf("decoded action definitions = %d, want 31", len(configs))
+	if len(configs) != 35 {
+		t.Fatalf("decoded action definitions = %d, want 35", len(configs))
 	}
 	hasButton := func(word, button string) bool {
 		for _, ui := range configs[word].UI {
@@ -295,6 +308,12 @@ func TestDefaultActionButtonCatalog(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.ReplaceAll(match[1], "''", "'")), &catalog); err != nil {
 		t.Fatal(err)
 	}
+	// Logical features also own buttons without cached action UI projections.
+	for _, feature := range catalog.ResourceCatalog.Buttons {
+		for _, button := range feature.Btn {
+			buttons[button] = true
+		}
+	}
 	for _, locale := range []string{"zh-CN", "en-US"} {
 		frontend := catalog.Messages[locale].Frontend
 		resourceLabels, _ := frontend["resources"].(map[string]any)
@@ -329,4 +348,72 @@ func readSeedMigration(t *testing.T, suffix string) string {
 		t.Fatal(err)
 	}
 	return string(content)
+}
+
+func TestBaselineResourceSorts(t *testing.T) {
+	migration := readSeedMigration(t, "04-dictionary-default-data")
+	match := regexp.MustCompile(`'I18N_CATALOG',\s*'[^']+',\s*'((?:[^']|'')*)'::(?i:jsonb)`).FindStringSubmatch(migration)
+	if len(match) != 2 {
+		t.Fatal("missing catalog")
+	}
+	var catalog localization.Catalog
+	if err := json.Unmarshal([]byte(strings.ReplaceAll(match[1], "''", "'")), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	resources := catalog.ResourceCatalog.Resources
+	groups := map[string][]string{}
+	for key, node := range resources {
+		group := strings.SplitN(key, ":", 2)[0] + "|" + node.Parent
+		groups[group] = append(groups[group], key)
+	}
+	for group, keys := range groups {
+		seen := map[int]bool{}
+		for _, key := range keys {
+			value := resources[key].Sort
+			if value < 0 || value >= len(keys) || seen[value] {
+				t.Fatalf("%s has a non-contiguous or duplicate sort: %s=%d", group, key, value)
+			}
+			seen[value] = true
+		}
+	}
+	for key, node := range resources {
+		index := 0
+		for _, child := range node.ChildOrder {
+			if child.Kind != "node" {
+				continue
+			}
+			if resources[child.Key].Sort != index {
+				t.Fatalf("%s child order disagrees with sort for %s", key, child.Key)
+			}
+			index++
+		}
+	}
+	for index, key := range []string{"admin:system:user", "admin:system:user-group", "admin:system:role", "admin:system:action", "admin:system:dictionary", "admin:system:msg", "admin:system:developer", "admin:system:mail-template"} {
+		if resources[key].Sort != index {
+			t.Fatalf("system menu moved: %s", key)
+		}
+	}
+}
+
+func TestMailTemplateBaselineJSON(t *testing.T) {
+	migration := readSeedMigration(t, "05-mail-template-default-data")
+	parts := strings.Split(migration, "$template$")
+	if len(parts) != 19 {
+		t.Fatal("expected nine mail templates")
+	}
+	for index := 1; index < len(parts); index += 2 {
+		var content map[string]struct{ Subject, HTML, Text string }
+		if err := json.Unmarshal([]byte(parts[index]), &content); err != nil {
+			t.Fatal(err)
+		}
+		for _, locale := range []string{"zh-CN", "en-US"} {
+			item := content[locale]
+			if item.Subject == "" || item.HTML == "" || item.Text == "" {
+				t.Fatal("incomplete seed translation", index, locale)
+			}
+			if !strings.Contains(item.HTML, "data:image/png;base64,") {
+				t.Fatal("embedded raster brand logo missing", index, locale)
+			}
+		}
+	}
 }

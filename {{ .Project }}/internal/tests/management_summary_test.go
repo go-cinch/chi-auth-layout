@@ -211,7 +211,7 @@ func TestManagementSummaryPermissionBoundary(t *testing.T) {
 		}
 	}
 	exec(`UPDATE t_user SET role_id=NULL,action='',login_count=1 WHERE id=2`)
-	var identity authn.Identity
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}}
 	if err := store.DB.QueryRowContext(ctx, `SELECT id,username,code,credential_version FROM t_user WHERE id=2`).Scan(&identity.UserID, &identity.Username, &identity.Code, &identity.CredentialVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestManagementSummaryPermissionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authentication := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.MFA{})
+	authentication := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.Verification{})
 	limits, _ := pagination.New(100, 100)
 	actions := action.New(store, limits, localizer)
 	roles := role.New(store, limits, actions)

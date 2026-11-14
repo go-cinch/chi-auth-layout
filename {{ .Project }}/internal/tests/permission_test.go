@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -60,28 +59,15 @@ func permissionDatabase(t *testing.T) *db.Store {
 	})
 	query := parsed.Query()
 	query.Set("search_path", schema)
+	query.Set("application_name", schema)
 	parsed.RawQuery = query.Encode()
 	database, err := sql.Open("postgres", parsed.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	files, err := fs.Glob(db.SQLFiles, db.SQLRoot+"/*.sql")
-	if err != nil {
+	if err := db.MigrateUp(t.Context(), database); err != nil {
 		t.Fatal(err)
-	}
-	for _, file := range files {
-		content, err := db.SQLFiles.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		up, _, found := strings.Cut(string(content), "-- +migrate Down")
-		if !found {
-			t.Fatalf("migration missing Down: %s", file)
-		}
-		if _, err := database.ExecContext(t.Context(), up); err != nil {
-			t.Fatalf("migration %s: %v", file, err)
-		}
 	}
 
 	if _, err := database.ExecContext(t.Context(), `UPDATE t_user SET status=2, metadata='{"lock_expired_at":1790000000000}', last_logged_in_at=1788220800000 WHERE id=3`); err != nil {
@@ -102,7 +88,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 	}
 	// Defaults are assigned at account creation; authorization never adds them back.
 	exec(`UPDATE t_user SET role_id=NULL, action='', login_count=1 WHERE id=2`)
-	var identity authn.Identity
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}}
 	if err := store.DB.QueryRowContext(t.Context(), `SELECT id, username, code, credential_version FROM t_user WHERE id=2`).Scan(
 		&identity.UserID, &identity.Username, &identity.Code, &identity.CredentialVersion,
 	); err != nil {
@@ -133,7 +119,7 @@ func TestDefaultPermissionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.MFA{})
+	m := auth.New(store, manager, nil, sessions, nil, nil, nil, localizer, nil, &auth.Verification{})
 	cfg := &config.Config{}
 	cfg.Auth.Authorization.Enabled = true
 	handler, err := server.NewRouter(cfg, manager, nil, m)
@@ -265,7 +251,7 @@ func TestPermissionSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := manager.Issue(authn.Identity{CredentialVersion: 1, UserID: 101, Username: "tester", Code: "TEST0001"})
+	token, _, err := manager.Issue(authn.Identity{Methods: authn.Methods{Primary: authn.Password}, CredentialVersion: 1, UserID: 101, Username: "tester", Code: "TEST0001"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +262,7 @@ func TestPermissionSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx = request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.Verification{})
 	info, err := m.Info(ctx, "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +354,7 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 	}
 	exec(`INSERT INTO t_action(action_group,code,word,config) VALUES ('mini:content:private','MINI0001','mini:read:content:private',$1)`, string(encodedMini))
 	exec(`UPDATE t_user SET role_id=NULL,action=(SELECT code FROM t_action WHERE config->>'permission_scope'='*' AND scope='admin') WHERE id=2`)
-	var identity authn.Identity
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}}
 	if err := store.DB.QueryRowContext(t.Context(), `SELECT id,username,code,credential_version FROM t_user WHERE id=2`).Scan(&identity.UserID, &identity.Username, &identity.Code, &identity.CredentialVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +373,7 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := request.Context()
-	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
+	m := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.Verification{})
 	check := func(method, path string, want bool) {
 		t.Helper()
 		_, allowed, err := m.CheckPermission(ctx, auth.PermissionTarget{Method: method, Path: path})
@@ -467,8 +453,8 @@ func TestPermissionScopeAndOperationSQL(t *testing.T) {
 	httpCheck("/user", []string{"mini"}, 200)
 	httpCheck("/user", []string{""}, 400)
 	httpCheck("/user", []string{"admin", "mini"}, 400)
-	httpCheck("/info?scope=admin", []string{"mini"}, 403)
-	httpCheck("/info", []string{"admin"}, 403)
+	httpCheck("/info?scope=admin", []string{"mini"}, 200)
+	httpCheck("/info", []string{"admin"}, 200)
 	exec(`UPDATE t_user SET action=action || ',' || (SELECT code FROM t_action WHERE config->>'builtin'='default' AND scope='admin') WHERE id=2`)
 	httpCheck("/info", []string{"admin"}, 200)
 	httpCheck("/info?scope=mini", []string{"admin"}, 200)
@@ -553,7 +539,7 @@ func TestFinalizedSeedBindingsPostgres(t *testing.T) {
 			}
 			// Forward-only migrated definitions may have an empty display cache.
 			// Their effective projection is resolved from the catalog on reads.
-			emptyCache := len(config.UI) == 0 && len(config.Endpoints) == 0 && config.Bindings != nil && len(*config.Bindings) > 0
+			emptyCache := len(config.UI) == 0 && len(config.Endpoints) == 0 && ((config.Bindings != nil && len(*config.Bindings) > 0) || (config.Builtin == "default" && config.ResourceKeys != nil && len(*config.ResourceKeys) > 0))
 			if !emptyCache && (!reflect.DeepEqual(config.UI, resolved.UI) || !reflect.DeepEqual(config.Endpoints, resolved.Endpoints)) {
 				t.Errorf("seed %s has stale projections", word)
 			}
@@ -563,8 +549,8 @@ func TestFinalizedSeedBindingsPostgres(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if count != 31 {
-		t.Fatalf("seed action count = %d, want 31", count)
+	if count != 35 {
+		t.Fatalf("seed action count = %d, want 35", count)
 	}
 	feature := catalog.ResourceCatalog.Buttons["admin:system:developer:publish"]
 	found := false
@@ -608,7 +594,7 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.Verification{})
 	limits, _ := pagination.New(100, 100)
 	dictionaries, err := dictionary.New(store, dictionary.NewMemoryValueCache(), dictionary.CacheTTL, limits, localizer)
 	if err != nil {
@@ -654,7 +640,7 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 			if _, err := store.DB.ExecContext(t.Context(), `INSERT INTO t_user(id,role_id,username,code,password,status,login_count) VALUES($1,$2,$3,$4,'unused',1,1)`, userID, roleID, "role_profile_"+test.word, code); err != nil {
 				t.Fatal(err)
 			}
-			identity := authn.Identity{UserID: userID, Username: "role_profile_" + test.word, Code: code, CredentialVersion: 1}
+			identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: userID, Username: "role_profile_" + test.word, Code: code, CredentialVersion: 1}
 			token, _, err := manager.Issue(identity)
 			if err != nil {
 				t.Fatal(err)

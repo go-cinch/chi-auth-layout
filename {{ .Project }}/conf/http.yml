@@ -3,6 +3,10 @@ http:
   timeout: {{ or .Scaffold.http_timeout "30s" }}
   readHeaderTimeout: 5s
   idleTimeout: 2m
+  clientIP:
+    # Comma-separated trusted gateway CIDRs. Empty trusts no forwarding headers.
+    # Trusted gateways must overwrite X-Verified-Client-IP with one valid IP.
+    trustedProxies: ""
   # JSON request limits in bytes. Restart after changes; each handler selects a category.
   bodyLimits:
     authChallenge: 1024
@@ -14,9 +18,9 @@ http:
   docs:
     enabled: false
     servers:
-      - url: "https://example.com/api/{{ .Computed.service_name_kebab }}"
+      - url: "https://{{ .Computed.brand_domain_final }}/api/{{ .Computed.service_name_kebab }}"
         description: "prod"
-      - url: "https://dev.example.com/api/{{ .Computed.service_name_kebab }}"
+      - url: "https://dev.{{ .Computed.brand_domain_final }}/api/{{ .Computed.service_name_kebab }}"
         description: "dev"
       - url: "http://127.0.0.1:{{ or .Scaffold.http_port "8080" }}"
         description: "local"

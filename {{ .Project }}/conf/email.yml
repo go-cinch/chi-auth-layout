@@ -1,0 +1,18 @@
+email:
+  # Local debugging: complete queued deliveries without SMTP.
+  skipDelivery: false
+  enabled: true
+  host: "smtp.resend.com"
+  port: 2587
+  username: "resend"
+  # Set the SMTP API key after generation, or use SERVICE_EMAIL_PASSWORD.
+  password: ""
+  # Sender address on your verified Resend domain, e.g. no-reply@mail.example.com.
+  from: "no-reply@{{ .Computed.brand_domain_final }}"
+  fromName: "{{ (fromJSON .Computed.brand).title }}"
+  # Optional SMTP greeting name and NTLM authentication domain.
+  helo: ""
+  domain: ""
+  security: "starttls"
+  authentication: "auto"
+  timeout: 20s

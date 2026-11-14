@@ -17,7 +17,7 @@ func TestHTTPSecurityGuardEnforcedWithoutAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := manager.Issue(authn.Identity{UserID: 1, Username: "operator", Code: "ABCDEFGH", CredentialVersion: 1})
+	token, _, err := manager.Issue(authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 1, Username: "operator", Code: "ABCDEFGH", CredentialVersion: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,9 +36,10 @@ func TestHTTPSecurityGuardEnforcedWithoutAuthorization(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer "+token)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != 403 || response.Header().Get(authn.MFARequiredHeader) != "true" || !strings.Contains(response.Body.String(), "AUTH_STEP_UP_REQUIRED") {
+	if response.Code != 403 || response.Header().Get(authn.VerificationRequiredHeader) != "true" || !strings.Contains(response.Body.String(), "AUTH_STEP_UP_REQUIRED") {
 		t.Fatal("guard was bypassed with permissions disabled", response.Code)
 	}
+    if response.Header().Get("X-Password-Reset-Required") != "" || response.Header().Get("X-MFA-Enrollment-Required") != "" { t.Fatal("retired headers returned") }
 	manager.SetHTTPSecurityPolicy(func(*http.Request) error { return nil })
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -52,10 +53,10 @@ func TestHTTPSecurityErrorMapping(t *testing.T) {
 		err    error
 		status int
 	}{
-		{apperror.New("AUTH_MFA_ENROLLMENT_REQUIRED", "enroll"), 403},
-		{apperror.New("AUTH_MFA_UNAVAILABLE", "unavailable"), 503},
-		{apperror.New("AUTH_MFA_INVALID", "invalid"), 400},
-		{apperror.New("AUTH_MFA_RATE_LIMITED", "rate limit"), 429},
+		{apperror.New("AUTH_TOTP_ENROLLMENT_REQUIRED", "enroll"), 403},
+		{apperror.New("AUTH_VERIFICATION_UNAVAILABLE", "unavailable"), 503},
+		{apperror.New("AUTH_VERIFICATION_INVALID", "invalid"), 400},
+		{apperror.New("AUTH_VERIFICATION_RATE_LIMITED", "rate limit"), 429},
 		{apperror.New("AUTH_UNAUTHORIZED", "unauthorized"), 401},
 		{errors.New("database unavailable"), 500},
 	} {

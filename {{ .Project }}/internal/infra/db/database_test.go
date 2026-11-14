@@ -12,17 +12,9 @@ import (
 	"github.com/lib/pq"
 )
 
-func TestNewRejectsInvalidConfiguration(t *testing.T) {
-	configs := []*config.Config{
-		{},
-		{Database: config.DatabaseConfig{Driver: "sqlite"}},
-		{Database: config.DatabaseConfig{Driver: "mysql"}},
-		{Database: config.DatabaseConfig{Driver: "postgres"}},
-	}
-	for _, cfg := range configs {
-		if _, _, err := New(t.Context(), cfg); err == nil {
-			t.Fatalf("New() accepted config %#v", cfg.Database)
-		}
+func TestNewRequiresDSN(t *testing.T) {
+	if _, _, err := New(t.Context(), &config.Config{}); err == nil || err.Error() != "database dsn is required" {
+		t.Fatalf("New() error = %v", err)
 	}
 }
 
@@ -32,7 +24,7 @@ func TestInvalidDSNDoesNotExposeParserCredentials(t *testing.T) {
 		"postgres://test:private-password-fragment@localhost:invalid/db",
 		"postgres://test:private-password-fragment@localhost/db?sslmode=invalid",
 	} {
-		cfg := &config.Config{Database: config.DatabaseConfig{Driver: "postgres", DSN: dsn}}
+		cfg := &config.Config{Database: config.DatabaseConfig{DSN: dsn}}
 {{ if .Computed.enable_trace_final }}
 		for _, tracing := range []bool{false, true} {
 			cfg.Tracer.Enabled = tracing
@@ -53,25 +45,13 @@ func TestInvalidDSNDoesNotExposeParserCredentials(t *testing.T) {
 }
 
 func TestDatabaseConnectionError(t *testing.T) {
-	tests := []struct {
-		driver string
-		dsn    string
-		err    error
-	}{
-		{
-			driver: "postgres",
-			dsn:    "postgresql://root:password@127.0.0.1:5432/app?sslmode=disable",
-			err:    &pq.Error{Code: "28P01", Message: `password authentication failed for user "root"`},
-		},
-	}
-	for _, test := range tests {
-		err := databaseConnectionError(test.err, test.driver, test.dsn)
-		if strings.Contains(err.Error(), "root:password") || !strings.Contains(err.Error(), "root:pas***ord") {
-			t.Fatalf("%s authentication error = %q", test.driver, err)
-		}
+	dsn := "postgresql://root:password@127.0.0.1:5432/app?sslmode=disable"
+	err := databaseConnectionError(&pq.Error{Code: "28P01"}, dsn)
+	if strings.Contains(err.Error(), "root:password") || !strings.Contains(err.Error(), "root:pas***ord") {
+		t.Fatalf("authentication error = %q", err)
 	}
 
-	err := databaseConnectionError(io.EOF, "postgres", "dsn")
+	err = databaseConnectionError(io.EOF, dsn)
 	if !errors.Is(err, io.EOF) || strings.Contains(err.Error(), "dsn:") {
 		t.Fatalf("ordinary connection error = %v", err)
 	}
@@ -79,8 +59,7 @@ func TestDatabaseConnectionError(t *testing.T) {
 
 func TestNewReturnsPingError(t *testing.T) {
 	cfg := &config.Config{Database: config.DatabaseConfig{
-		Driver: "postgres",
-		DSN:    "postgresql://root:password@127.0.0.1:1/app?sslmode=disable",
+		DSN: "postgresql://root:password@127.0.0.1:1/app?sslmode=disable",
 	}}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

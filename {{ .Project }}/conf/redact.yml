@@ -1,13 +1,13 @@
 redact:
   keys:
     - customerNumber
-    - auth.jwt.key
+    - auth.session.jwt.key
     - secret
     - secret_ciphertext
     - uri
     - recovery_codes
     - verification_code
     - mfa_ticket
-    - x-mfa-code
-    - x-mfa-recovery-code
+    - x-totp-code
+    - x-recovery-code
     - x-mfa-ticket

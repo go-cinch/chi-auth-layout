@@ -24,7 +24,7 @@ func TestIdentityValidator(t *testing.T) {
 			t.Run(scenario+map[bool]string{false: "/authorization-off", true: "/authorization-on"}[enabled], func(t *testing.T) {
 				m, _, mock := newAuthTestModule(t)
 				localizer = m.catalogSource.(*localization.Module)
-				identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+				identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
 				issued, err := m.sessions.Issue(t.Context(), identity, false)
 				if err != nil {
 					t.Fatal(err)
@@ -123,7 +123,7 @@ func (s identityReadFailureStore) Get(context.Context, string) (string, error) {
 
 func TestIdentityValidatorRequiresFirstLoginPasswordReset(t *testing.T) {
 	m, _, mock := newAuthTestModule(t)
-	identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
 	issued, err := m.sessions.Issue(t.Context(), identity, false)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestIdentityValidatorPreservesStorageErrors(t *testing.T) {
 		for _, failure := range []error{errors.New("storage unavailable"), context.Canceled, context.DeadlineExceeded} {
 			t.Run(source+"/"+failure.Error(), func(t *testing.T) {
 				m, _, mock := newAuthTestModule(t)
-				identity := authn.Identity{UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
+				identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: 3, Username: "readonly", Code: "EXP78RGH", CredentialVersion: 1}
 				issued, err := m.sessions.Issue(t.Context(), identity, false)
 				if err != nil {
 					t.Fatal(err)

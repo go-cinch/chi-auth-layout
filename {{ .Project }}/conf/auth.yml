@@ -1,67 +1,117 @@
 auth:
+  history:
+    # Daily River cleanup of expired email tickets/cooldowns and old scan batches.
+    # Retention starts at expiry for tickets/cooldowns, and creation for scan batches.
+    retentionDays: 30
   # Empty mounts authentication endpoints at the service root; /auth retains the prefixed layout.
   path: ""
+  email:
+    # Require a verified email before first business access. False permits skipping.
+    requireBinding: false
+    # Hide this onboarding step only when skipping is allowed.
+    hideOnboarding: true
+    # Trusted Vben confirmation page (full deployment URL, including hash route when used).
+    unlinkURL: {{ printf "%q" (or .Scaffold.email_unlink_url "") }}
+    # Full public operation-audit page URL (history or hash routing).
+    auditURL: {{ printf "%q" (or .Scaffold.email_audit_url "") }}
+    # Resolved from the latest published version at each worker send/retry.
+    templates:
+      signInCode: "auth.sign_in_code"
+      emailBindingCode: "auth.email_binding_code"
+      sensitiveOperationCode: "auth.sensitive_operation_code"
+      authenticatorResetCode: "auth.totp_reset_code"
+      confirmEmailUnlinking: "auth.confirm_email_unlinking"
+      emailUnlinked: "auth.email_unlinked"
+      emailLinked: "auth.email_linked"
+      authenticatorLinked: "auth.totp_linked"
+      authenticatorRelinked: "auth.totp_linked"
+      sensitiveOperationNotification: "auth.sensitive_operation_notification"
+    codeTTL: 5m
+    resendInterval: 1m
+    maxAttempts: 5
+    # Total SMTP send attempts, including the initial send (3 = 1 send + 2 retries).
+    sendLimit: 3
+    # In ascending severity; crossing multiple tiers sends only the highest one.
+    alertTiers:
+      - window: 5m
+        count: 3
+      - window: 10m
+        count: 5
+      - window: 15m
+        count: 6
   authorization:
     enabled: true
-  switches:
+  testing:
+    # Local debugging only: accept fixed email verification code 000000.
+    emailCode: false
     enableE2ETest: false
     # Optional live switch file. Only trimmed "true" enables E2E; read errors disable it.
     # When set, the file overrides enableE2ETest on every captcha validation.
     enableE2ETestFile: ""
-  mfa:
-    # Lifetime of the password-verified, one-use login/recovery ticket.
-    loginTicketTTL: 5m
-    # When true, login requires MFA verification or enrollment before password reset.
-    # When false, skip MFA checks, including for already-bound users.
-    # Existing authenticators and recovery codes are retained for re-enabling.
-    enabled: true
-    # Must match the period configured in authenticator apps. Existing accounts
-    # need re-enrollment when this value changes.
-    totpPeriod: 1m
-    # Lifetime of a pending authenticator enrollment and its QR code.
+  password:
+    reset:
+      # False allows explicitly skipping the first-login password reset.
+      required: false
+      # Hide this onboarding step only when skipping is allowed.
+      hideOnboarding: true
+    change:
+      # Temporarily require point selection after repeated incorrect current passwords.
+      threshold: 3
+      # Persistently disable self-service password changes at this many failures.
+      lockThreshold: 6
+      failureTTL: 10m
+  totp:
+    # Controls TOTP login verification and enrollment; email verification is independent.
+    # Defaults to disabled when the generated project excludes Redis support.
+    enabled: {{ .Computed.enable_redis_final }}
+    # Local debugging only: accept reusable authenticator code 999999.
+    debug: false
+    # Previously bound users must re-enroll after recovery even when binding is optional.
+    requireBinding: false
+    hideOnboarding: true
+    # Default for new bindings; existing bindings retain their stored period.
+    period: 30s
     enrollmentTTL: 5m
-    # Fixed session-scoped grant after successful sensitive-operation verification.
-    # Login, recovery, enrollment and refresh do not extend this deadline.
+    # Display label only; independent of JWT issuer and encryption keys.
+    accountNamePrefix: "{{ (fromJSON .Computed.brand).lower }} admin"
+  mfa:
+    # One-use continuation after the primary login factor, also used for recovery.
+    loginTicketTTL: 5m
+  verification:
+    # Session-scoped sensitive-operation grant for TOTP or email verification.
     sensitiveLifetime: 1h
-    # Attempts are shared by sessions of the same user and credential version.
-    # Independent of the login ticket lifetime and enrollment/TOTP timing.
+    # Shared account/credential-version budget for TOTP, enrollment and recovery.
     rateLimit:
       window: 5m
       maxAttempts: 10
-    # Display label only; independent of the JWT issuer and MFA encryption key.
-    accountNamePrefix: "{{ (fromJSON .Computed.brand).lower }} admin"
-    # Empty derives a separate MFA key from the persisted JWT key and issuer.
-    # Production: mount a persistent base64 32-byte key independently of JWT rotation.
+    # Empty uses the historical domain-separated derivation from the JWT key/issuer.
+    # Production: persistent base64 32-byte key, independent of JWT rotation.
     encryptionKeyFile: ""
-  jwt:
-    issuer: "{{ .Computed.service_name_final }}"
-    key: "{{ randAlphaNum 64 }}"
-    lifetime: 15m
-  refresh:
-    # Absolute lifetimes from login; refreshing never extends either deadline.
-    sessionLifetime: 12h
-    rememberLifetime: 168h
-    # Concurrent refreshes and retries return the same token within this window.
-    retryWindow: 10s
+  session:
+    jwt:
+      issuer: "{{ .Computed.service_name_final }}"
+      key: "{{ randAlphaNum 64 }}"
+      lifetime: 15m
+    refresh:
+      # Absolute lifetimes from login; refreshing never extends either deadline.
+      sessionLifetime: 12h
+      rememberLifetime: 168h
+      # Concurrent refreshes and retries return the same token within this window.
+      retryWindow: 10s
   challengeEncryption:
     keyId: "challenge-v1"
     # Empty generates an ephemeral RSA-3072 key for local, single-instance use.
     # Production replicas must mount and share the same PKCS#8 or PKCS#1 PEM key.
     privateKeyFile: ""
     ttl: 1m
-  pointCaptcha:
-    # Require point selection after this many consecutive wrong passwords.
-    threshold: 5
-    ttl: 2m
-    width: 300
-    height: 180
-    tolerance: 22
-  sliderCaptcha:
-    ttl: 2m
-    minimumDuration: 200ms
-  passwordChange:
-    # Temporarily require point selection after repeated incorrect current passwords.
-    threshold: 3
-    # Persistently disable self-service password changes at this many failures.
-    lockThreshold: 6
-    failureTTL: 10m
+  captcha:
+    point:
+      # Require point selection after this many consecutive wrong passwords.
+      threshold: 5
+      ttl: 2m
+      width: 300
+      height: 180
+      tolerance: 22
+    slider:
+      ttl: 2m
+      minimumDuration: 200ms

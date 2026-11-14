@@ -56,18 +56,31 @@ func (m *Module) CheckPermission(ctx context.Context, target PermissionTarget) (
 	if identity.PasswordResetRequired && (target.Resource != "" || !PasswordResetAllowedHTTP(target.Method, target.Path, m.httpPath)) {
 		return identity, false, authn.ErrPasswordResetRequired
 	}
-    if target.Method == "POST" && target.Resource == "" && matchRouteTemplate(m.httpPath+"/mfa/reset/{id}", target.Path) {
-        allowed, err := m.canResetMFA(ctx)
+    if target.Method == "POST" && target.Resource == "" && matchRouteTemplate(m.httpPath+"/totp/reset/{id}", target.Path) {
+        allowed, err := m.canResetTOTP(ctx)
         return identity, allowed, err
     }
 	protocol := "http"
 	if target.Resource != "" {
+		required, err := m.totpEnrollmentRequired(ctx, identity)
+		if err != nil {
+			return identity, false, err
+		}
+		if required {
+			return identity, false, ErrTOTPEnrollmentRequired
+		}
 		protocol = "grpc"
 	}
 	permission, err := m.permissionsFor(ctx, identity.UserID, authn.PermissionScope(ctx), report.Fields{protocol})
 	if err != nil {
 		return authn.Identity{}, false, err
 	}
+    // Every authenticated account can read its own identity and update its onboarding preference,
+    // including an account with no menus. This grants no business permissions.
+    // The password-reset and Verification enrollment restrictions still apply.
+    if target.Resource == "" && ((target.Path == m.httpPath+"/info" && ownsAuthHTTPMethod("/info", target.Method)) || (target.Path == m.httpPath+"/status" && target.Method == "GET")) {
+        return identity, true, nil
+    }
 	resolved, registered := m.resolveHTTPRoute(target)
 	for _, endpoint := range permission.endpoints {
 		if registered {

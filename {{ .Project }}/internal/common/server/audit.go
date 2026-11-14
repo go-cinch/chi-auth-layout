@@ -33,13 +33,19 @@ func finishAudit(recorder modules.HTTPAuditRecorder, r *http.Request, s *auditct
 	}
 	e := s.Snapshot()
 	e.Kind, e.Module = target.Kind, target.Module
-	e.Operation, e.ResourceType, e.ResourceID = target.Operation, target.ResourceType, target.ResourceID
+	e.ResourceType = target.ResourceType
+	if e.Operation == "" {
+		e.Operation = target.Operation
+	}
+	if e.ResourceID == "" {
+		e.ResourceID = target.ResourceID
+	}
 	e.Method, e.Path = r.Method, r.URL.Path
 	e.Status, e.DurationMS, e.OccurredAt = status, time.Since(start).Milliseconds(), start.UnixMilli()
 	e.IP = clientIP(r)
 	e.Header = requestHeader
 	e.UserAgent, e.TraceID = r.UserAgent(), header.Get("X-Trace-Id")
-	if target.Kind == "operation" {
+	if target.Kind == "operation" && !target.OmitPayload {
 		e.RequestParams = auditRequest(r, request, policy)
 		e.ResponseParams = auditResponse(header, response, policy)
 	}
@@ -82,7 +88,7 @@ func Audit(recorder modules.HTTPAuditRecorder, policy redact.Policy, settings co
 		ctx, state := auditctx.WithState(c.Request.Context())
 		c.Request = c.Request.WithContext(ctx)
 		request, response := &auditBuffer{limit: settings.PayloadLimit}, &auditBuffer{limit: settings.PayloadLimit}
-		if target.Kind == "operation" {
+		if target.Kind == "operation" && !target.OmitPayload {
 			if c.Request.Body != nil && !auditFile(c.Request.Header) {
 				c.Request.Body = &auditBody{ReadCloser: c.Request.Body, buffer: request}
 
@@ -116,7 +122,7 @@ func Audit(recorder modules.HTTPAuditRecorder, policy redact.Policy, settings co
 			r = r.WithContext(ctx)
 			request, response := &auditBuffer{limit: settings.PayloadLimit}, &auditBuffer{limit: settings.PayloadLimit}
 			writer := wrapResponseWriter(w, r.ProtoMajor)
-			if target.Kind == "operation" {
+			if target.Kind == "operation" && !target.OmitPayload {
 				if r.Body != nil && !auditFile(r.Header) {
 					r.Body = &auditBody{ReadCloser: r.Body, buffer: request}
 				}

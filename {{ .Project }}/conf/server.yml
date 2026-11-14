@@ -1,2 +1,4 @@
 server:
   name: "{{ .Computed.service_name_final }}"
+  # Deployment namespace; override with SERVICE_SERVER_ENV.
+  env: dev

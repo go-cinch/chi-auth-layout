@@ -7,17 +7,17 @@ func (g *generator) describeCatalogRoute(r *route) {
 		return
 	}
 	var description, example string
-	switch r.path {
-	case "/dictionary/pub/i18n":
+	switch {
+	case r.tag == "auth" && r.handler != nil && r.handler.Name.Name == "localization":
 		example = "default_locale,locales,group_order,frontend_messages"
 		description = "Select default_locale,locales,scopes,operations,group_order,messages,frontend_messages. Omitted f returns default_locale and locales. schema_version is always present. frontend_messages returns only messages.<locale>.frontend, including projected menu labels; messages returns all namespaces. These two selectors are mutually exclusive. Only selected fields are present; selected empty collections remain arrays or objects."
 		if component := g.components["PublicCatalog"]; component != nil {
 			component.required = []string{"schema_version"}
 		}
-	case "/action/catalog":
+	case r.path == "/action/catalog":
 		example = "scopes,operations,resource_catalog,defined_actions"
 		description = "Select scopes,operations,resource_catalog,defined_actions. Omitted f returns scopes and operations. Only selected fields are present; empty selected collections remain arrays."
-	case "/action/effective":
+	case r.path == "/action/effective":
 		example = "btn,http,grpc"
 		description = "Select btn,http,grpc. Omitted f returns btn. scope is always present; selected empty collections are arrays."
 		for i := range r.parameters {

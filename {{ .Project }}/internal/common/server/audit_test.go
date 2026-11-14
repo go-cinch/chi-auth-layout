@@ -45,16 +45,17 @@ func (a *recordedAudit) RecordHTTP(ctx context.Context, e auditctx.Event) error 
 
 func auditHandler(recorder *recordedAudit, handler http.HandlerFunc, configured ...config.AuditConfig) http.Handler {
 	policy := redact.New("tenantSecret")
+ trusted, _ := parseTrustedProxies("127.0.0.0/8,::1/128")
 	settings := config.DefaultAudit()
 	if len(configured)>0 {settings=configured[0]}
 
 {{ if eq .Computed.http_router_final "gin" }}
 	router := gin.New()
-	router.Use(ClientIP(), Audit(recorder, policy, settings), Recoverer())
+	router.Use(ClientIP(trusted...), Audit(recorder, policy, settings), Recoverer())
 	router.POST("/test", func(c *gin.Context) { handler(c.Writer, c.Request) })
 	return router
 {{ else }}
-	return ClientIP()(Audit(recorder, policy, settings)(Recoverer()(handler)))
+	return ClientIP(trusted...)(Audit(recorder, policy, settings)(Recoverer()(handler)))
 {{ end }}
 
 }

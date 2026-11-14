@@ -91,7 +91,6 @@ type CatalogSource interface {
 	Current() localization.Catalog
 	Install([]byte) error
 	Reset()
-	PublicCatalog(...string) localization.PublicCatalog
 }
 
 type Module struct {
@@ -299,7 +298,7 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 		return nil, ErrInvalid
 	}
 	candidate := &Dictionary{Key: input.Key, Value: input.Value}
-	if err := m.prepareLocalization(candidate); err != nil {
+	if err := m.prepareValue(candidate); err != nil {
 		return nil, err
 	}
 	input.Value = candidate.Value
@@ -308,7 +307,7 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 		enabled = *input.Enabled
 	}
 	var value *Dictionary
-	err := m.store.Tx(ctx, func(ctx context.Context) error {
+	err := m.store.MutationTx(ctx, func(ctx context.Context) error {
 		if err := m.guardCatalogMutation(ctx, nil, input.Key); err != nil {
 			return err
 		}
@@ -320,7 +319,7 @@ func (m *Module) Create(ctx context.Context, input CreateDictionaryInput) (*Dict
 		}
 		value, err = get(ctx, m.store.SQL(ctx), id)
 		if err == nil {
-			err = m.prepareLocalization(value)
+			err = m.prepareValue(value)
 		}
 		return err
 	})
@@ -369,7 +368,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateDictionaryInp
 		return nil, ErrInvalid
 	}
 	var value *Dictionary
-	err := m.store.Tx(ctx, func(ctx context.Context) error {
+	err := m.store.MutationTx(ctx, func(ctx context.Context) error {
 		nextKey := ""
 		if input.Key != nil {
 			nextKey = *input.Key
@@ -446,7 +445,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateDictionaryInp
 		value, err = get(ctx, m.store.SQL(ctx), id)
 		if err == nil {
 			original := string(value.Value)
-			err = m.prepareLocalization(value)
+			err = m.prepareValue(value)
 			if err == nil && original != string(value.Value) {
 				_, err = m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_dictionary SET value = $2::jsonb, updated_at = $3 WHERE id = $1`, id, string(value.Value), value.UpdatedAt)
 			}
@@ -491,8 +490,8 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 		}
 		return nil
 	}
-	if m.permissionContext(ctx) {
-		err = m.store.Tx(ctx, operation)
+	if m.permissionContext(ctx) || db.HasMutationRecorder(ctx) {
+		err = m.store.MutationTx(ctx, operation)
 	} else {
 		err = operation(ctx)
 	}
@@ -573,6 +572,22 @@ func filters(input ListDictionariesInput) (string, []any) {
 	return " WHERE " + strings.Join(parts, " AND "), args
 }
 
+func (m *Module) prepareValue(value *Dictionary) error {
+	switch value.Key {
+	case LocalizationKey:
+		return m.prepareLocalization(value)
+	case TimezoneDictionaryKey:
+		if _, err := ParseTimezoneCatalog(value.Value); err != nil {
+			return ErrInvalid
+		}
+	case UIPreferenceDictionaryKey:
+		if _, err := ParseUIPreferenceDefaults(value.Value); err != nil {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
+
 func validKey(value string) bool {
 	return len(value) <= 100 && dictionaryKeyPattern.MatchString(value)
 }
@@ -606,4 +621,26 @@ func mapWriteError(err error) error {
 		return ErrConflict
 	}
 	return err
+}
+
+// Required dictionary failures are server configuration errors, not resource 404s.
+var (
+	ErrRequiredMissing  = errors.New("required dictionary is missing")
+	ErrRequiredDisabled = errors.New("required dictionary is disabled")
+)
+
+func (m *Module) requiredValue(ctx context.Context, key string) ([]byte, error) {
+	var raw []byte
+	var enabled bool
+	err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT value, enabled FROM t_dictionary WHERE dictionary_key = $1`, key).Scan(&raw, &enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%s: %w", key, ErrRequiredMissing)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read dictionary %s: %w", key, err)
+	}
+	if !enabled {
+		return nil, fmt.Errorf("%s: %w", key, ErrRequiredDisabled)
+	}
+	return raw, nil
 }

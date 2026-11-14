@@ -1,11 +1,21 @@
 package audit
 
-import "{{ .Computed.module_name_final }}/internal/common/report"
+import (
+	"encoding/json"
+	"{{ .Computed.module_name_final }}/internal/common/report"
+)
 
-var listFields = []string{"mfa_fingerprint", "mfa_verified_at", "id", "occurred_at", "kind", "user_id", "username", "module", "method", "path", "ip", "user_agent", "trace_id", "error_code", "status", "duration_ms", "operation", "resource_type", "resource_id"}
+var listFields = []string{"step_up_fingerprint", "step_up_verified_at", "id", "occurred_at", "kind", "user_id", "username", "module", "method", "path", "ip", "user_agent", "trace_id", "error_code", "status", "duration_ms", "operation", "resource_type", "resource_id"}
 
+// List and export load metadata only. Nil fields preserve the complete JSON
+// shape and RawMessage null values; detail adds and scans its own payload columns.
 func listProjection(value *Event, fields report.Fields) report.Projection {
 	value.selectedFields = fields
+	if fields == nil {
+		value.Header = json.RawMessage("null")
+		value.RequestParams = json.RawMessage("null")
+		value.ResponseParams = json.RawMessage("null")
+	}
 	p := report.Projection{Fields: fields}
 	p.Add("id", "id", &value.ID)
 	p.Add("occurred_at", "occurred_at", &value.OccurredAt)
@@ -24,8 +34,8 @@ func listProjection(value *Event, fields report.Fields) report.Projection {
 	p.Add("operation", "operation", &value.Operation)
 	p.Add("resource_type", "resource_type", &value.ResourceType)
 	p.Add("resource_id", "resource_id", &value.ResourceID)
-	p.Add("mfa_fingerprint", "mfa_fingerprint", &value.MFAFingerprint)
-	p.Add("mfa_verified_at", "COALESCE(mfa_verified_at,0)", &value.MFAVerifiedAt)
+	p.Add("step_up_fingerprint", "step_up_fingerprint", &value.StepUpFingerprint)
+	p.Add("step_up_verified_at", "COALESCE(step_up_verified_at,0)", &value.StepUpVerifiedAt)
 	return p
 }
 

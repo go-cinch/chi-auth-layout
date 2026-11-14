@@ -3,6 +3,9 @@ module {{ .Computed.module_name_final }}
 go 1.27.3
 
 require (
+	github.com/riverqueue/river v0.51.2
+	github.com/riverqueue/river/riverdriver/riverdatabasesql v0.51.2
+	github.com/wneessen/go-mail v0.8.1
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/text v0.41.0
 {{- if .Computed.enable_grpc_final }}

@@ -200,7 +200,7 @@ func (m *Module) Create(ctx context.Context, input CreateUserGroupInput, fields 
 		return nil, ErrInvalid
 	}
 	var value *UserGroup
-	err := m.store.Tx(ctx, func(ctx context.Context) error {
+	err := m.store.MutationTx(ctx, func(ctx context.Context) error {
 		if input.ActionBindings != nil {
 			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "user-group", "create", *input.ActionBindings)
 			if errors.Is(err, actionmodule.ErrInvalid) {
@@ -284,7 +284,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInpu
 		return nil, err
 	}
 	var value *UserGroup
-	err = m.store.Tx(ctx, func(ctx context.Context) error {
+	err = m.store.MutationTx(ctx, func(ctx context.Context) error {
 		if input.ActionBindings != nil {
 			codes, err := actionmodule.ResolveAssignment(ctx, m.actions, "user-group", "update", *input.ActionBindings)
 			if errors.Is(err, actionmodule.ErrInvalid) {
@@ -380,18 +380,6 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserGroupInpu
 	return value, nil
 }
 
-func replaceUsers(ctx context.Context, executor db.SQLExecutor, groupID int64, users []int64) error {
-	if _, err := executor.ExecContext(ctx, `DELETE FROM t_user_user_group_relation WHERE user_group_id = $1`, groupID); err != nil {
-		return fmt.Errorf("replace user group members: %w", err)
-	}
-	for _, userID := range users {
-		if _, err := executor.ExecContext(ctx, `INSERT INTO t_user_user_group_relation (user_id, user_group_id) VALUES ($1, $2)`, userID, groupID); err != nil {
-			return fmt.Errorf("add user group member: %w", err)
-		}
-	}
-	return nil
-}
-
 func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 	ids, err := normalizeIDs(ids)
 	if err != nil {
@@ -428,8 +416,8 @@ func (m *Module) Delete(ctx context.Context, ids ...int64) error {
 		}
 		return nil
 	}
-	if m.administration != nil {
-		return m.store.Tx(ctx, operation)
+	if m.administration != nil || db.HasMutationRecorder(ctx) {
+		return m.store.MutationTx(ctx, operation)
 	}
 	return operation(ctx)
 }

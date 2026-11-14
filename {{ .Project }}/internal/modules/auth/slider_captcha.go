@@ -192,7 +192,7 @@ func (c *SliderCaptcha) validDrag(input SliderCaptchaVerification) bool {
 func normalizeSliderCaptchaSubject(purpose, username string) (string, string, bool) {
 	purpose = strings.TrimSpace(purpose)
 	username = strings.TrimSpace(username)
-	return purpose, username, (purpose == sliderCaptchaPurposeLogin || purpose == sliderCaptchaPurposeRegister) && username != "" && len(username) <= 128
+	return purpose, username, (purpose == sliderCaptchaPurposeLogin || purpose == sliderCaptchaPurposeRegister || purpose == "email_login") && username != ""
 }
 
 func newSliderCaptchaID(prefix string) (string, error) {

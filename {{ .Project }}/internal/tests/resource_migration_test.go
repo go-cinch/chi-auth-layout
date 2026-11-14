@@ -116,10 +116,10 @@ func TestDeveloperPublishRefreshesFiltersAndStoredProjections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.MFA{})
+	policy := auth.New(store, manager, nil, nil, nil, nil, nil, localizer, nil, &auth.Verification{})
 	actions.SetPermissionAdministration(policy)
 	dictionaries.SetPermissionAdministration(policy)
-	var identity authn.Identity
+	identity := authn.Identity{Methods: authn.Methods{Primary: authn.Password}}
 	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT id,username,code,credential_version FROM t_user WHERE id=1`).Scan(&identity.UserID, &identity.Username, &identity.Code, &identity.CredentialVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -296,52 +296,51 @@ func TestPublishEmptyResourcesKeepsAssociations(t *testing.T) {
 
 func TestResourcePermissionMigrationsAreReversible(t *testing.T) {
 	store := permissionDatabase(t)
-	sqlPart := func(suffix string, down bool) string {
+	files, err := fs.Glob(migrationdb.SQLFiles, migrationdb.SQLRoot+"/*.sql")
+	if err != nil || len(files) == 0 {
+		t.Fatal("migration lookup", err)
+	}
+	sqlPart := func(file string, down bool) string {
 		t.Helper()
-		files, err := fs.Glob(migrationdb.SQLFiles, migrationdb.SQLRoot+"/*-"+suffix+".sql")
-		if err != nil || len(files) != 1 {
-			t.Fatalf("migration lookup %s: %v %v", suffix, files, err)
-		}
-		raw, err := migrationdb.SQLFiles.ReadFile(files[0])
+		raw, err := migrationdb.SQLFiles.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
 		}
 		up, undo, ok := strings.Cut(string(raw), "-- +migrate Down")
 		if !ok {
-			t.Fatal("missing Down")
+			t.Fatal("missing Down", file)
 		}
 		if down {
 			return undo
 		}
 		return up
 	}
-	suffixes := []string{"01-auth-schema", "02-auth-default-data", "03-action-default-data", "04-dictionary-default-data"}
 	if err := store.Tx(t.Context(), func(ctx context.Context) error {
-		for i := len(suffixes) - 1; i >= 0; i-- {
-			if _, err := store.SQL(ctx).ExecContext(ctx, sqlPart(suffixes[i], true)); err != nil {
+		for i := len(files) - 1; i >= 0; i-- {
+			if _, err := store.SQL(ctx).ExecContext(ctx, sqlPart(files[i], true)); err != nil {
 				return err
 			}
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("rollback four consolidated migrations: %v", err)
+		t.Fatalf("rollback auth migrations: %v", err)
 	}
 	var removed bool
 	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT to_regclass('t_user') IS NULL AND to_regclass('t_action') IS NULL AND to_regclass('t_dictionary') IS NULL`).Scan(&removed); err != nil || !removed {
 		t.Fatalf("schema was not removed: %v", err)
 	}
 	if err := store.Tx(t.Context(), func(ctx context.Context) error {
-		for _, suffix := range suffixes {
-			if _, err := store.SQL(ctx).ExecContext(ctx, sqlPart(suffix, false)); err != nil {
+		for _, file := range files {
+			if _, err := store.SQL(ctx).ExecContext(ctx, sqlPart(file, false)); err != nil {
 				return err
 			}
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("reapply four consolidated migrations: %v", err)
+		t.Fatalf("reapply auth migrations: %v", err)
 	}
 	var users, actions int
-	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM t_user),(SELECT COUNT(*) FROM t_action)`).Scan(&users, &actions); err != nil || users != 8 || actions != 31 {
+	if err := store.SQL(t.Context()).QueryRowContext(t.Context(), `SELECT (SELECT COUNT(*) FROM t_user),(SELECT COUNT(*) FROM t_action)`).Scan(&users, &actions); err != nil || users != 8 || actions != 35 {
 		t.Fatalf("seed restoration: users=%d actions=%d err=%v", users, actions, err)
 	}
 }

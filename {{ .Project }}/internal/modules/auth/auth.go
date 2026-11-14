@@ -1,58 +1,50 @@
 package auth
 
 import (
-	"{{ .Computed.module_name_final }}/internal/modules/localization"
-
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/auditctx"
-
-	"github.com/lib/pq"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/common/code"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	"{{ .Computed.module_name_final }}/internal/modules"
 	"{{ .Computed.module_name_final }}/internal/modules/action"
+	"{{ .Computed.module_name_final }}/internal/modules/dictionary"
+	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
 var (
-	ErrInvalid               = apperror.New("AUTH_INVALID", "invalid login")
-	ErrLoginFailed           = apperror.New("AUTH_LOGIN_FAILED", "invalid username or password")
-	ErrPendingApproval       = apperror.New("AUTH_PENDING_APPROVAL", "user registration is pending approval")
-	ErrLocked                = apperror.New("AUTH_LOCKED", "user is locked")
-	ErrPointCaptchaRequired  = apperror.New("AUTH_POINT_CAPTCHA_REQUIRED", "invalid captcha")
-	ErrInfoScopeRequired     = apperror.New("AUTH_INFO_SCOPE_REQUIRED", "please specify a permission scope")
-	ErrInfoScopeInvalid      = apperror.New("AUTH_INFO_SCOPE_INVALID", "invalid permission scope")
-	ErrUnauthorized          = apperror.New("AUTH_UNAUTHORIZED", "unauthorized")
-	ErrInvalidRegistration   = apperror.New("AUTH_INVALID_REGISTRATION", "invalid registration")
-	ErrUsernameExists        = apperror.New("AUTH_USERNAME_EXISTS", "username already exists")
-	ErrInvalidPasswordChange = apperror.New("AUTH_INVALID_PASSWORD_CHANGE", "invalid password change")
-	ErrIncorrectPassword     = apperror.New("AUTH_INCORRECT_PASSWORD", "current password is incorrect")
-	ErrSamePassword          = apperror.New("AUTH_SAME_PASSWORD", "new password must differ from current password")
-	ErrPasswordChangeLocked  = apperror.New("AUTH_PASSWORD_CHANGE_LOCKED", "self-service password change is locked; please contact an administrator")
+	ErrInvalid              = apperror.New("AUTH_INVALID", "invalid login")
+	ErrLoginFailed          = apperror.New("AUTH_LOGIN_FAILED", "invalid username or password")
+	ErrPendingApproval      = apperror.New("AUTH_PENDING_APPROVAL", "user registration is pending approval")
+	ErrLocked               = apperror.New("AUTH_LOCKED", "user is locked")
+	ErrPointCaptchaRequired = apperror.New("AUTH_POINT_CAPTCHA_REQUIRED", "invalid captcha")
+	ErrInfoScopeRequired    = apperror.New("AUTH_INFO_SCOPE_REQUIRED", "please specify a permission scope")
+	ErrInfoScopeInvalid     = apperror.New("AUTH_INFO_SCOPE_INVALID", "invalid permission scope")
+	ErrUnauthorized         = apperror.New("AUTH_UNAUTHORIZED", "unauthorized")
 )
 
-const PasswordChangeFailuresMetadataKey = "password_change_failures"
-
 type LoginInput struct {
-	Username      string         `json:"username" example:"super"`
-	Password      string         `json:"password" example:"super"`
-	RememberMe    bool           `json:"remember_me"`
-	CaptchaID     string         `json:"captcha_id,omitempty"`
-	CaptchaPoints []CaptchaPoint `json:"captcha_points,omitempty"`
-	SliderProof   string         `json:"slider_proof,omitempty"`
+	Method           string         `json:"method,omitempty"`
+	BrowserUUID      string         `json:"browser_uuid,omitempty"`
+	VerificationID   string         `json:"verification_id,omitempty"`
+	VerificationCode string         `json:"verification_code,omitempty"`
+	Username         string         `json:"username" example:"super"`
+	Password         string         `json:"password" example:"super"`
+	RememberMe       bool           `json:"remember_me"`
+	CaptchaID        string         `json:"captcha_id,omitempty"`
+	CaptchaPoints    []CaptchaPoint `json:"captcha_points,omitempty"`
+	SliderProof      string         `json:"slider_proof,omitempty"`
 }
 
 type LoginResult struct {
 	MFARequired           bool   `json:"-"`
 	MFATicket             string `json:"-"`
-	MFAEnrollmentRequired bool   `json:"-"`
+	TOTPEnrollmentRequired bool   `json:"-"`
 	PasswordResetRequired bool   `json:"-"`
 	AccessToken           string `json:"access_token"`
 	RefreshToken          string `json:"refresh_token"`
@@ -69,37 +61,38 @@ type PointCaptchaVerificationResult struct {
 	Captcha  *PointCaptchaChallenge `json:"captcha,omitempty"`
 }
 
-type RegisterInput struct {
-	Username    string `json:"username" example:"operator"`
-	Password    string `json:"password" example:"change-me"`
-	SliderProof string `json:"slider_proof,omitempty"`
-}
-
-type PasswordChangeInput struct {
-	OldPassword   string         `json:"old_password" example:"current-password"`
-	NewPassword   string         `json:"new_password" example:"new-password"`
-	CaptchaID     string         `json:"captcha_id,omitempty"`
-	CaptchaPoints []CaptchaPoint `json:"captcha_points,omitempty"`
-}
-
-type UsernameAvailability struct {
-	Available bool `json:"available"`
-}
-
 type UserRole struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 	Word string `json:"word"`
 }
 
+type SelfMetadata struct {
+	Language             string `json:"language"`
+	Timezone             string `json:"timezone"`
+	EmailBindingSkipped  bool   `json:"email_binding_skipped"`
+	TOTPEnrollmentSkipped bool   `json:"totp_enrollment_skipped"`
+	PasswordResetSkipped bool   `json:"password_reset_skipped"`
+}
+
+type TOTPInfo struct {
+	Bound bool `json:"bound"`
+}
+
 type UserInfo struct {
-	selectedFields []string
-	Scope          string     `json:"scope"`
-	ID             int64      `json:"id"`
-	Username       string     `json:"username"`
-	Code           string     `json:"code"`
-	Role           *UserRole  `json:"role,omitempty"`
-	Permission     Permission `json:"permission"`
+	UIPreferences        map[string]dictionary.UIPreferences `json:"ui_preferences,omitempty"`
+	TOTP                  *TOTPInfo                            `json:"totp,omitempty"`
+	Metadata             *SelfMetadata                       `json:"metadata,omitempty"`
+	Email                string                              `json:"email"`
+	EmailVerifiedAt      *int64                              `json:"email_verified_at"`
+	EmailBindingRequired bool                                `json:"email_binding_required"`
+	selectedFields       []string
+	Scope                string     `json:"scope"`
+	ID                   int64      `json:"id"`
+	Username             string     `json:"username"`
+	Code                 string     `json:"code"`
+	Role                 *UserRole  `json:"role,omitempty"`
+	Permission           Permission `json:"permission"`
 }
 
 type loginUser struct {
@@ -129,27 +122,19 @@ func requiresPointCaptcha(err error) bool {
 	return errors.As(err, &failure) && failure.captchaRequired
 }
 
-type passwordChangeFailure struct {
-	cause           error
-	captchaRequired bool
-}
-
-func (e *passwordChangeFailure) Error() string { return e.cause.Error() }
-
-func (e *passwordChangeFailure) Unwrap() error { return e.cause }
-
-func requiresPasswordChangeCaptcha(err error) bool {
-	var failure *passwordChangeFailure
-	return errors.As(err, &failure) && failure.captchaRequired
-}
-
 type CatalogSource interface {
+	PublicCatalog(...string) localization.PublicCatalog
 	Current() localization.Catalog
 	Select([]string) localization.Catalog
 }
 
 type Module struct {
-	mfa                    *MFA
+	uiPreferenceSource     UIPreferenceSource
+	timezoneSource         TimezoneSource
+	passwordResetOptional  bool
+	onboardingVisibility   OnboardingVisibility
+	emailCodes             *EmailCodes
+	verification                    *Verification
 	httpPath               string
 	defaultUserPermissions DefaultUserPermissions
 	catalogSource          CatalogSource
@@ -163,9 +148,9 @@ type Module struct {
 	passwordGuard          *PasswordChangeGuard
 }
 
-func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, catalog CatalogSource, defaults DefaultUserPermissions, mfa *MFA, paths ...string) *Module {
-	if mfa == nil {
-		panic("auth: MFA dependency is required; provide an explicitly disabled MFA when not enforcing it")
+func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials, sessions *Sessions, captcha *PointCaptcha, sliderCaptcha *SliderCaptcha, passwordGuard *PasswordChangeGuard, catalog CatalogSource, defaults DefaultUserPermissions, verification *Verification, paths ...string) *Module {
+	if verification == nil {
+		panic("auth: verification dependency is required; provide an explicitly disabled Verification when not enforcing it")
 	}
 	prefix := ""
 	if len(paths) > 0 {
@@ -174,279 +159,47 @@ func New(store *db.Store, authenticator *authn.Manager, credentials *Credentials
 	if prefix == "/" {
 		prefix = ""
 	}
-	return &Module{httpPath: prefix, defaultUserPermissions: defaults, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, mfa: mfa}
+	return &Module{httpPath: prefix, defaultUserPermissions: defaults, catalogSource: catalog, store: store, authenticator: authenticator, credentials: credentials, sessions: sessions, captcha: captcha, sliderCaptcha: sliderCaptcha, passwordGuard: passwordGuard, verification: verification}
 }
 
-func (m *Module) Register(ctx context.Context, input RegisterInput) error {
-	username := strings.TrimSpace(input.Username)
-	if username == "" || strings.TrimSpace(input.Password) == "" {
-		return ErrInvalidRegistration
-	}
-	input.Username = username
-	passwordHash, err := HashPassword(input.Password)
-	if err != nil {
-		return fmt.Errorf("hash registration password: %w", err)
-	}
-	if m.defaultUserPermissions == nil {
-		return errors.New("default user permission provider is unavailable")
-	}
-	return m.store.Tx(ctx, func(ctx context.Context) error {
-		codes, err := m.defaultUserPermissions.DefaultUserCodes(ctx, nil)
-		if err != nil {
-			return err
-		}
-		var id int64
-		if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT nextval('t_user_id_seq')`).Scan(&id); err != nil {
-			return fmt.Errorf("allocate registered user id: %w", err)
-		}
-		// Broadcast eligibility compares this timestamp with database publication time.
-		for range 5 {
-			userCode, err := code.Generate()
-			if err != nil {
-				return fmt.Errorf("create registered user code: %w", err)
-			}
-			result, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_user (id, created_at, updated_at, role_id, action, username, code, password, status, wrong) VALUES ($1, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint, NULL, $5, $2, $3, $4, 0, 0) ON CONFLICT ON CONSTRAINT uk_user_code DO NOTHING`,
-				id, input.Username, userCode, string(passwordHash), strings.Join(codes, ","))
-			if err != nil {
-				var postgresError *pq.Error
-				if errors.As(err, &postgresError) && postgresError.Code == "23505" && postgresError.Constraint == "uk_user_username" {
-					return ErrUsernameExists
-				}
-				return fmt.Errorf("create registered user: %w", err)
-			}
-			inserted, err := result.RowsAffected()
-			if err != nil {
-				return fmt.Errorf("create registered user result: %w", err)
-			}
-			if inserted == 1 {
-				return nil
-			}
-		}
-		return errors.New("create registered user: generate unique code")
-	})
-}
-
-func (m *Module) UsernameAvailability(ctx context.Context, username string) (*UsernameAvailability, error) {
-	normalized := strings.TrimSpace(username)
-	if normalized == "" {
-		return nil, ErrInvalidRegistration
-	}
-	username = normalized
-	var exists bool
-	if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM t_user WHERE username = $1)`, username).Scan(&exists); err != nil {
-		return nil, fmt.Errorf("check username availability: %w", err)
-	}
-	return &UsernameAvailability{Available: !exists}, nil
-}
-
-func (m *Module) PasswordChangeChallenge(ctx context.Context) (*CredentialChallenge, error) {
-	identity, ok := authn.FromContext(ctx)
-	if !ok {
-		return nil, ErrUnauthorized
-	}
-	return m.credentials.PasswordChangeChallenge(ctx, identity.UserID)
-}
-
-func (m *Module) OpenPasswordChange(ctx context.Context, encrypted EncryptedPasswordChangeInput) (PasswordChangeInput, error) {
-	identity, ok := authn.FromContext(ctx)
-	if !ok {
-		return PasswordChangeInput{}, ErrUnauthorized
-	}
-	return m.credentials.OpenPasswordChange(ctx, identity.UserID, encrypted)
-}
-
-func (m *Module) NewPasswordChangeCaptcha(ctx context.Context) (*PointCaptchaChallenge, error) {
-	identity, ok := authn.FromContext(ctx)
-	if !ok {
-		return nil, ErrUnauthorized
-	}
-	return m.passwordGuard.NewChallenge(ctx, identity.UserID)
-}
-
-func (m *Module) RefreshPasswordChangeCaptcha(ctx context.Context, captchaID string) (*PointCaptchaChallenge, error) {
-	if _, ok := authn.FromContext(ctx); !ok {
-		return nil, ErrUnauthorized
-	}
-	return m.passwordGuard.RefreshChallenge(ctx, captchaID)
-}
-
-func (m *Module) VerifyPasswordChangeCaptcha(ctx context.Context, captchaID string, points []CaptchaPoint) (*PointCaptchaVerificationResult, error) {
-	identity, ok := authn.FromContext(ctx)
-	if !ok {
-		return nil, ErrUnauthorized
-	}
-	verified, err := m.passwordGuard.Check(ctx, identity.UserID, captchaID, points)
-	if err != nil {
-		return nil, err
-	}
-	if verified {
-		return &PointCaptchaVerificationResult{Verified: true}, nil
-	}
-	captcha, err := m.passwordGuard.NewChallenge(ctx, identity.UserID)
-	if err != nil {
-		return nil, err
-	}
-	return &PointCaptchaVerificationResult{Captcha: captcha}, nil
-}
-
-func (m *Module) ChangePassword(ctx context.Context, input PasswordChangeInput) error {
-	identity, ok := authn.FromContext(ctx)
-	if !ok {
-		return ErrUnauthorized
-	}
-	if identity.PasswordResetRequired {
-		return authn.ErrPasswordResetRequired
-	}
-	if strings.TrimSpace(input.OldPassword) == "" || strings.TrimSpace(input.NewPassword) == "" {
-		return ErrInvalidPasswordChange
-	}
-	locked, err := m.passwordChangeLocked(ctx, identity)
-	if err != nil {
-		return err
-	}
-	if locked {
-		return ErrPasswordChangeLocked
-	}
-	failureCount, err := m.passwordGuard.FailureCount(ctx, identity.UserID)
-	if err != nil {
-		return err
-	}
-	if m.passwordGuard.LockRequired(failureCount) {
-		if err := m.persistPasswordChangeLock(ctx, identity); err != nil {
-			return err
-		}
-		return ErrPasswordChangeLocked
-	}
-	captchaRequired := m.passwordGuard.CaptchaRequired(failureCount)
-	if captchaRequired {
-		verified, err := m.passwordGuard.Verify(ctx, identity.UserID, input.CaptchaID, input.CaptchaPoints)
-		if err != nil {
-			return err
-		}
-		if !verified {
-			return &passwordChangeFailure{cause: ErrPointCaptchaRequired, captchaRequired: true}
-		}
-	}
-	err = m.store.Tx(ctx, func(ctx context.Context) error {
-		var currentPasswordHash string
-		var credentialVersion int64
-		err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT password, credential_version FROM t_user WHERE id = $1 AND code = $2 FOR UPDATE`, identity.UserID, identity.Code).Scan(&currentPasswordHash, &credentialVersion)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrUnauthorized
-		}
-		if err != nil {
-			return fmt.Errorf("query current password: %w", err)
-		}
-		if credentialVersion != identity.CredentialVersion || credentialVersion <= 0 {
-			return ErrUnauthorized
-		}
-		if !VerifyPassword(currentPasswordHash, input.OldPassword) {
-			return ErrIncorrectPassword
-		}
-		if VerifyPassword(currentPasswordHash, input.NewPassword) {
-			return ErrSamePassword
-		}
-		passwordHash, err := HashPassword(input.NewPassword)
-		if err != nil {
-			return fmt.Errorf("hash changed password: %w", err)
-		}
-		now := time.Now().UnixMilli()
-		result, err := m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_user SET password = $1, credential_version = credential_version + 1, wrong = 0, updated_at = $2 WHERE id = $3 AND code = $4`, string(passwordHash), now, identity.UserID, identity.Code)
-		if err != nil {
-			return fmt.Errorf("update current password: %w", err)
-		}
-		updated, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("update current password result: %w", err)
-		}
-		if updated != 1 {
-			return ErrUnauthorized
-		}
-		return nil
-	})
-	if errors.Is(err, ErrIncorrectPassword) {
-		failureCount, guardErr := m.passwordGuard.RecordFailure(ctx, identity.UserID)
-		if guardErr != nil {
-			return guardErr
-		}
-		if m.passwordGuard.LockRequired(failureCount) {
-			if err := m.persistPasswordChangeLock(ctx, identity); err != nil {
-				return err
-			}
-			return ErrPasswordChangeLocked
-		}
-		return &passwordChangeFailure{cause: ErrIncorrectPassword, captchaRequired: m.passwordGuard.CaptchaRequired(failureCount)}
-	}
-	if errors.Is(err, ErrSamePassword) && captchaRequired {
-		return &passwordChangeFailure{cause: ErrSamePassword, captchaRequired: true}
-	}
-	if err != nil {
-		return err
-	}
-	if err := m.passwordGuard.Clear(ctx, identity.UserID); err != nil {
-		slog.WarnContext(ctx, fmt.Sprintf("clear password change failures for user %d failed: %v", identity.UserID, err), "operation", "clear_password_change_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
-	}
-	return nil
-}
-
-func (m *Module) passwordChangeLocked(ctx context.Context, identity authn.Identity) (bool, error) {
-	const query = `SELECT CASE
-		WHEN metadata ? 'password_change_failures' AND jsonb_typeof(metadata -> 'password_change_failures') = 'number'
-		THEN (metadata ->> 'password_change_failures')::numeric >= $3
-		ELSE false
-	END FROM t_user WHERE id = $1 AND code = $2`
-	var locked bool
-	err := m.store.SQL(ctx).QueryRowContext(ctx, query, identity.UserID, identity.Code, m.passwordGuard.LockThreshold()).Scan(&locked)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, ErrUnauthorized
-	}
-	if err != nil {
-		return false, fmt.Errorf("query password change lock: %w", err)
-	}
-	return locked, nil
-}
-
-func (m *Module) persistPasswordChangeLock(ctx context.Context, identity authn.Identity) error {
-	now := time.Now().UnixMilli()
-	result, err := m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_user SET metadata = jsonb_set(metadata, '{password_change_failures}', to_jsonb($1::bigint), true), updated_at = $2 WHERE id = $3 AND code = $4`,
-		m.passwordGuard.LockThreshold(), now, identity.UserID, identity.Code)
-	if err != nil {
-		return fmt.Errorf("persist password change lock: %w", err)
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("persist password change lock result: %w", err)
-	}
-	if updated != 1 {
-		return ErrUnauthorized
-	}
-	if err := m.passwordGuard.Clear(ctx, identity.UserID); err != nil {
-		slog.WarnContext(ctx, fmt.Sprintf("clear locked password change failures for user %d failed: %v", identity.UserID, err), "operation", "clear_locked_password_change_failures", "outcome", "failure", "error", err, "user_id", identity.UserID)
-	}
-	return nil
-}
-
-func (m *Module) LoginVerification(ctx context.Context, username string) (*LoginVerificationResult, error) {
+func (m *Module) loginCaptchaRequired(ctx context.Context, username string) (bool, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
-		return nil, ErrInvalid
+		return false, ErrInvalid
+	}
+	resolved, err := m.resolveLoginUsername(ctx, username)
+	if errors.Is(err, ErrLoginFailed) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
 	}
 	var wrong int64
-	err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT wrong FROM t_user WHERE username = $1`, username).Scan(&wrong)
+	err = m.store.SQL(ctx).QueryRowContext(ctx, `SELECT wrong FROM t_user WHERE username = $1`, resolved).Scan(&wrong)
 	if errors.Is(err, sql.ErrNoRows) {
-		return &LoginVerificationResult{}, nil
+		return false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("query login verification: %w", err)
+		return false, fmt.Errorf("query login verification: %w", err)
 	}
-	if !m.captcha.Required(wrong) {
-		return &LoginVerificationResult{}, nil
-	}
-	captcha, err := m.captcha.NewChallenge(ctx, username)
+	return m.captcha.Required(wrong), nil
+}
+
+// LoginVerification is the legacy combined requirement/challenge operation.
+// New clients read /pub/status, then explicitly request POST /pub/captcha.
+func (m *Module) LoginVerification(ctx context.Context, username string) (*LoginVerificationResult, error) {
+	required, err := m.loginCaptchaRequired(ctx, username)
 	if err != nil {
-		return nil, fmt.Errorf("create login verification captcha: %w", err)
+		return nil, err
 	}
-	return &LoginVerificationResult{CaptchaRequired: true, Captcha: captcha}, nil
+	result := &LoginVerificationResult{CaptchaRequired: required}
+	if required {
+		result.Captcha, err = m.captcha.NewChallenge(ctx, strings.TrimSpace(username))
+		if err != nil {
+			return nil, fmt.Errorf("create login verification captcha: %w", err)
+		}
+	}
+	return result, nil
 }
 
 func (m *Module) VerifyLoginCaptcha(ctx context.Context, username, captchaID string, points []CaptchaPoint) (*PointCaptchaVerificationResult, error) {
@@ -469,6 +222,13 @@ func (m *Module) VerifyLoginCaptcha(ctx context.Context, username, captchaID str
 }
 
 func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, error) {
+	input.Username = strings.TrimSpace(input.Username)
+	if input.Method == "email_code" {
+		return m.loginEmail(ctx, input)
+	}
+	if input.Method != "" && input.Method != "password" {
+		return nil, ErrInvalid
+	}
 	input.Username = strings.TrimSpace(input.Username)
 	if input.Username == "" || strings.TrimSpace(input.Password) == "" {
 		return nil, ErrInvalid
@@ -516,17 +276,25 @@ func (m *Module) Login(ctx context.Context, input LoginInput) (*LoginResult, err
 		}
 		return nil, &loginFailure{cause: ErrLoginFailed, captchaRequired: m.captcha.Required(wrong)}
 	}
-	enrollmentRequired, err := m.mfaEnrollmentRequired(ctx, user.identity)
+	return m.completeFirstFactorLogin(ctx, user.identity, input.RememberMe, authn.Password)
+}
+
+func (m *Module) completeFirstFactorLogin(ctx context.Context, identity authn.Identity, rememberMe bool, primary authn.Method) (*LoginResult, error) {
+	identity.Methods = authn.Methods{Primary: primary}
+	if !m.totpEnabled() {
+		return m.finishLogin(ctx, identity, rememberMe, false)
+	}
+	bound, err := m.verification.hasTOTP(ctx, identity.UserID)
 	if err != nil {
 		return nil, err
 	}
-	if m.mfaEnabled() && !enrollmentRequired {
-		return m.beginMFALogin(ctx, user.identity, input.RememberMe)
+	if bound {
+		return m.beginMFALogin(ctx, identity, rememberMe)
 	}
-	return m.finishLogin(ctx, user.identity, input.RememberMe, enrollmentRequired)
+	return m.finishLogin(ctx, identity, rememberMe, true)
 }
 
-// The password or MFA continuation flow has already established enrollment state.
+// The primary-factor or MFA continuation flow has already established enrollment state.
 // Session issuance does not query or overwrite that business decision.
 func (m *Module) finishLogin(ctx context.Context, identity authn.Identity, rememberMe, enrollmentRequired bool) (*LoginResult, error) {
 	result, sessionID, err := m.issueLoginResult(ctx, identity, rememberMe)
@@ -535,7 +303,12 @@ func (m *Module) finishLogin(ctx context.Context, identity authn.Identity, remem
 	}
 	now := time.Now().UnixMilli()
 	var loginCount int64
-	const query = `UPDATE t_user SET last_logged_in_at = CASE WHEN login_count > 0 THEN $1 ELSE last_logged_in_at END, login_count = CASE WHEN login_count > 0 THEN login_count + 1 ELSE 0 END, wrong = 0, updated_at = $1 WHERE id = $2 AND credential_version = $3 AND status = $4 RETURNING login_count`
+	query := `UPDATE t_user SET last_logged_in_at = CASE WHEN login_count > 0 THEN $1 ELSE last_logged_in_at END, login_count = CASE WHEN login_count > 0 THEN login_count + 1 ELSE 0 END, wrong = 0, updated_at = $1 WHERE id = $2 AND credential_version = $3 AND status = $4`
+	// An email login may be waiting for MFA while the owner unlinks the address.
+	if identity.Methods.Primary == authn.EmailCode {
+		query += " AND email IS NOT NULL AND email_verified_at IS NOT NULL"
+	}
+	query += " RETURNING login_count"
 	err = m.store.SQL(ctx).QueryRowContext(ctx, query, now, identity.UserID, identity.CredentialVersion, userStatusActive).Scan(&loginCount)
 	if err != nil {
 		_ = m.sessions.Revoke(context.WithoutCancel(ctx), sessionID)
@@ -546,9 +319,9 @@ func (m *Module) finishLogin(ctx context.Context, identity authn.Identity, remem
 	}
 	auditctx.Identity(ctx, identity.UserID, identity.Username)
 	result.PasswordResetRequired = loginCount == 0
-	result.MFAEnrollmentRequired = enrollmentRequired
-	if enrollmentRequired {
-		if err := m.grantMFAEnrollment(ctx, identity, sessionID); err != nil {
+	result.TOTPEnrollmentRequired = enrollmentRequired
+	if enrollmentRequired && identity.Methods.Primary == authn.Password {
+		if err := m.grantTOTPEnrollment(ctx, identity, sessionID); err != nil {
 			_ = m.sessions.Revoke(context.WithoutCancel(ctx), sessionID)
 			return nil, err
 		}
@@ -574,6 +347,10 @@ func (m *Module) Refresh(ctx context.Context, refreshToken string) (*LoginResult
 		}
 		return nil, err
 	}
+	required, err := m.totpEnrollmentRequired(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
 	// Prepare the access token before committing the rotation. If signing fails,
 	// the caller can still use its existing access and refresh credentials.
 	token, expiredAt, err := m.authenticator.Issue(identity)
@@ -587,11 +364,7 @@ func (m *Module) Refresh(ctx context.Context, refreshToken string) (*LoginResult
 	if err != nil {
 		return nil, fmt.Errorf("renew login session: %w", err)
 	}
-	required, err := m.mfaEnrollmentRequired(ctx, identity)
-	if err != nil {
-		return nil, err
-	}
-	return &LoginResult{AccessToken: token, RefreshToken: refresh.RefreshToken, ExpiredAt: expiredAt.UnixMilli(), PasswordResetRequired: identity.PasswordResetRequired, MFAEnrollmentRequired: required}, nil
+	return &LoginResult{AccessToken: token, RefreshToken: refresh.RefreshToken, ExpiredAt: expiredAt.UnixMilli(), PasswordResetRequired: identity.PasswordResetRequired, TOTPEnrollmentRequired: required}, nil
 }
 
 func (m *Module) refreshIdentity(ctx context.Context, identity authn.Identity) (authn.Identity, error) {
@@ -615,6 +388,10 @@ func (m *Module) refreshIdentity(ctx context.Context, identity authn.Identity) (
 }
 
 func (m *Module) loginUser(ctx context.Context, username string) (*loginUser, error) {
+	username, resolveErr := m.resolveLoginUsername(ctx, username)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
 	const query = `SELECT id, username, code, password, status, wrong, credential_version FROM t_user WHERE username = $1`
 	var user loginUser
 	err := m.store.SQL(ctx).QueryRowContext(ctx, query, username).Scan(
@@ -700,6 +477,9 @@ func (m *Module) Info(ctx context.Context, scopes ...string) (*UserInfo, error) 
 	value.Scope = scope
 	permission.Navigation = permissionNavigation(catalog.ResourceCatalog, scope, permission.Menus)
 	value.Permission = permission
+	if err := m.populateEmailInfo(ctx, &value); err != nil {
+		return nil, err
+	}
 	return &value, nil
 }
 
@@ -716,5 +496,5 @@ func (m *Module) Logout(ctx context.Context, refreshToken string) error {
 	// Revoke first so no new request can use this grant. Attempt both operations
 	// even when one fails; a retry with the same signed token can finish either.
 	revokeErr := m.sessions.Revoke(ctx, sessionID)
-	return errors.Join(revokeErr, m.clearSensitiveMFA(ctx, sessionID))
+	return errors.Join(revokeErr, m.clearSensitiveProof(ctx, sessionID))
 }

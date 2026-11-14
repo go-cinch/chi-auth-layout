@@ -68,7 +68,7 @@ func TestCredentialVersionTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, localizer, nil, &auth.MFA{})
+	m := auth.New(store, manager, nil, sessions, captcha, slider, guard, localizer, nil, &auth.Verification{})
 	actions := action.New(store, limits, localizer)
 	users := user.New(store, limits, nil, guard, actions, role.New(store, limits, actions))
 	login := func(password string) *auth.LoginResult {

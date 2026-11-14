@@ -64,9 +64,6 @@ func (m *Module) refreshLocalization(ctx context.Context) error {
 }
 
 func (m *Module) prepareLocalization(value *Dictionary) error {
-	if value.Key != LocalizationKey {
-		return nil
-	}
 	normalized, err := m.catalogSource.CanonicalCatalog(value.Value)
 	if err != nil {
 		return ErrInvalid

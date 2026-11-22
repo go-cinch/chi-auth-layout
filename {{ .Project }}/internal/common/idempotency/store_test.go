@@ -65,3 +65,19 @@ func TestMemoryStoreClaimIsAtomic(t *testing.T) {
 		t.Fatalf("successful claims = %d", claimed.Load())
 	}
 }
+
+func TestTransactionalAndLegacyClaims(t *testing.T) {
+	s := NewMemoryStore()
+	for _, step := range []struct {
+		reserve func(context.Context, string, time.Duration) (bool, error)
+		key     string
+		want    bool
+	}{
+		{s.Claim, "legacy", true}, {s.AllowTransactional, "legacy", false},
+		{s.AllowTransactional, "new", true}, {s.AllowTransactional, "new", true}, {s.Claim, "new", false},
+	} {
+		if ok, err := step.reserve(t.Context(), step.key, time.Hour); ok != step.want || err != nil {
+			t.Fatalf("reserve %s = %v, %v", step.key, ok, err)
+		}
+	}
+}

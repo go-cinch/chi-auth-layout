@@ -5,7 +5,7 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/report"
 )
 
-var listFields = []string{"step_up_fingerprint", "step_up_verified_at", "id", "occurred_at", "kind", "user_id", "username", "module", "method", "path", "ip", "user_agent", "trace_id", "error_code", "status", "duration_ms", "operation", "resource_type", "resource_id"}
+var listFields = []string{"step_up_fingerprint", "step_up_verified_at", "id", "occurred_at", "kind", "user_id", "username", "module", "method", "path", "ip", "user_agent", "trace_id", "error_code", "status", "duration_ms", "operation", "resource_type", "resource_id", "outcome"}
 
 // List and export load metadata only. Nil fields preserve the complete JSON
 // shape and RawMessage null values; detail adds and scans its own payload columns.
@@ -36,6 +36,7 @@ func listProjection(value *Event, fields report.Fields) report.Projection {
 	p.Add("resource_id", "resource_id", &value.ResourceID)
 	p.Add("step_up_fingerprint", "step_up_fingerprint", &value.StepUpFingerprint)
 	p.Add("step_up_verified_at", "COALESCE(step_up_verified_at,0)", &value.StepUpVerifiedAt)
+	p.Add("outcome", outcomeSQL, &value.Outcome)
 	return p
 }
 

@@ -242,6 +242,7 @@ func TestOnboardingStatusOwnsSessionRequirements(t *testing.T) {
 	identity.PasswordResetRequired = true
 	ctx = verificationContextWithIdentity(t, ctx, identity)
 	expectTOTPBound(mock, false)
+	expectPasswordResetOrigin(mock, true)
 	response := emailHTTP(t, m, ctx, "GET", "/status?purpose=onboarding&f=requirements", nil)
 	var result StatusResult
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != 200 {
@@ -259,6 +260,7 @@ func TestOnboardingStatusOwnsSessionRequirements(t *testing.T) {
 	m.emailCodes.config.RequireBinding = true
 	expectTOTPBound(mock, false)
 	mock.ExpectQuery("SELECT COALESCE\\(email, ''\\) FROM t_user").WillReturnRows(sqlmock.NewRows([]string{"email"}).AddRow(""))
+	expectPasswordResetOrigin(mock, true)
 	resultPtr, err := m.Status(ctx, StatusQuery{Purpose: "onboarding", Fields: report.Fields{"requirements"}})
 	if err != nil || !*resultPtr.Requirements.EmailBindingRequired {
 		t.Fatal(resultPtr, err)

@@ -102,7 +102,7 @@ Keep these three path layers distinct:
 
 ### Idempotency
 
-- Modules that use `x-idempotent` for POST create operations must implement `modules.IdempotentHTTPModule`. Clients reuse one key for retries of the same logical creation. The router atomically claims non-empty keys before the handler; repeated keys return HTTP 409.
+- Modules that use `x-idempotent` for POST create operations must implement `modules.IdempotentHTTPModule`. Clients reuse one key for retries of the same logical creation. The router atomically claims non-empty keys before the handler; repeated keys return HTTP 409. A transactional POST such as message publication declares its path through TransactionalPOSTModule, so the router validates the key and the handler records or replays the committed result within the business transaction.
 
 ### Input, Responses, and Errors
 

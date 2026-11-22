@@ -6,5 +6,7 @@ audit:
   exportMaxRows: 10000
   # Persistence budget after the HTTP response; independent of request cancellation.
   recordTimeout: 1s
+  # Dedicated Redis Stream relative to the environment/service prefix.
+  stream: "audit:events"
   # Maximum captured bytes per header/request/response snapshot. Oversize content is omitted.
   payloadLimit: 65536

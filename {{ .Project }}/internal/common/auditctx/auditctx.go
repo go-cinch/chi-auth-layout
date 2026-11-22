@@ -18,6 +18,8 @@ type Target struct {
 }
 
 type Event struct {
+	// A login request may also perform a separately auditable operation on the account.
+	AdditionalUserOperation string `json:"-"`
 	StepUpFingerprint string          `json:"step_up_fingerprint"`
 	StepUpVerifiedAt  int64           `json:"step_up_verified_at"`
 	Header         json.RawMessage `json:"header"`
@@ -57,6 +59,14 @@ func Identity(ctx context.Context, id int64, username string) {
 		s.mu.Lock()
 		s.event.UserID = id
 		s.event.Username = username
+		s.mu.Unlock()
+	}
+}
+
+func AlsoRecordUserOperation(ctx context.Context, operation string) {
+	if s, ok := ctx.Value(key{}).(*State); ok {
+		s.mu.Lock()
+		s.event.AdditionalUserOperation = operation
 		s.mu.Unlock()
 	}
 }

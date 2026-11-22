@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/server"
 {{ if eq .Computed.http_router_final "gin" }}
@@ -28,6 +29,7 @@ func (m *Module) resetTicket(ctx context.Context, ticket string) (mfaPending, er
 	if !p.Identity.Methods.Valid() || p.ExpiredAt <= time.Now().UnixMilli() {
 		return p, ErrVerificationInvalid
 	}
+	auditctx.Identity(ctx, p.Identity.UserID, p.Identity.Username)
 	return p, m.verification.attempt(ctx, p.Identity)
 }
 

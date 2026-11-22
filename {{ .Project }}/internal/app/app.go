@@ -42,6 +42,7 @@ import (
 type Application struct {
 	authPath                    string
 	passwordResetOptional       bool
+	adminPasswordResetOptional  bool
 	onboardingVisibility        authmodule.OnboardingVisibility
 	auditSettings               config.AuditConfig
 	pagination                  pagination.Limits
@@ -111,6 +112,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 	}
 	application := &Application{
 		passwordResetOptional:       !cfg.Auth.Password.Reset.Required,
+		adminPasswordResetOptional:  !cfg.Auth.Password.Reset.RequiredAfterAdminReset,
 		onboardingVisibility:        authmodule.OnboardingVisibility{TOTP: cfg.Auth.TOTP.HideOnboarding, PasswordReset: cfg.Auth.Password.Reset.HideOnboarding, Email: cfg.Auth.Email.HideOnboarding},
 		auditSettings:               cfg.Audit,
 		authPath:                    authPath,
@@ -130,6 +132,7 @@ func New(ctx context.Context, confPath string) (*Application, error) {
 		return nil, err
 	}
 	application.wireBusinessModules()
+	application.authModule.SetRegistrationEnabled(cfg.Auth.Registration.Enabled)
 
 	httpModules {{ if .Computed.enable_grpc_final }}, grpcModules {{ end }} := application.generatedModules()
 	if err := application.configureTransports(cfg, httpModules {{ if .Computed.enable_grpc_final }}, grpcModules {{ end }}); err != nil {

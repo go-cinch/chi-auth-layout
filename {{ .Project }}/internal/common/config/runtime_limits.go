@@ -10,7 +10,7 @@ import (
 // Defaults preserve older configuration directories and programmatic routers.
 // The generated conf files declare the same defaults for new services.
 func DefaultAudit() AuditConfig {
-	return AuditConfig{DefaultWindow: 168 * time.Hour, MaxWindow: 2160 * time.Hour, ExportMaxRows: 10000, RecordTimeout: time.Second, PayloadLimit: 64 << 10}
+	return AuditConfig{Stream: "audit:events", DefaultWindow: 168 * time.Hour, MaxWindow: 2160 * time.Hour, ExportMaxRows: 10000, RecordTimeout: time.Second, PayloadLimit: 64 << 10}
 }
 
 func DefaultHTTPBodyLimits() HTTPBodyLimitsConfig {
@@ -19,6 +19,9 @@ func DefaultHTTPBodyLimits() HTTPBodyLimitsConfig {
 
 func ResolveAudit(c AuditConfig) (AuditConfig, error) {
 	d := DefaultAudit()
+	if c.Stream == "" {
+		c.Stream = d.Stream
+	}
 	if c.DefaultWindow == 0 {
 		c.DefaultWindow = d.DefaultWindow
 	}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 {{- if eq .Computed.http_router_final "gin" }}
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 {{- end }}
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/common/server"
@@ -25,6 +27,8 @@ var _ modules.IdempotentHTTPModule = (*Module)(nil)
 func (*Module) Name() string { return "/msg" }
 
 func (*Module) Idempotent() bool { return true }
+
+func (m *Module) TransactionalPOSTPaths() []string { return []string{m.Name()} }
 
 {{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) HTTP(r *gin.RouterGroup) {
@@ -76,11 +80,14 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidBody)
 		return
 	}
+	input.requestKey = strings.TrimSpace(r.Header.Get(server.IdempotencyHeader))
 	value, err := m.Create(r.Context(), identity.UserID, input)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalid), errors.Is(err, ErrRecipient):
 			server.WriteError(w, r, http.StatusBadRequest, err)
+		case errors.Is(err, apperror.DuplicateRequest):
+			server.WriteError(w, r, http.StatusConflict, apperror.DuplicateRequest)
 		case errors.Is(err, ErrNotFound):
 			server.WriteError(w, r, http.StatusNotFound, err)
 		default:
@@ -89,6 +96,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	auditctx.ResourceOperation(r.Context(), "create", strconv.FormatInt(value.ID, 10))
 	server.WriteOK(w, value)
 }
 

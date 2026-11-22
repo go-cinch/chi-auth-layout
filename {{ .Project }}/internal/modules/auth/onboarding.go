@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"{{ .Computed.module_name_final }}/internal/common/authn"
@@ -36,8 +38,35 @@ func (m *Module) SetOnboardingVisibility(visibility OnboardingVisibility) {
 	m.onboardingVisibility = visibility
 }
 
+// SetPasswordResetRequired applies the same policy to both password gates.
 func (m *Module) SetPasswordResetRequired(required bool) {
-	m.passwordResetOptional = !required
+	m.SetPasswordResetPolicy(required, required)
+}
+
+func (m *Module) SetPasswordResetPolicy(firstLoginRequired, afterAdminResetRequired bool) {
+	m.passwordResetOptional = !firstLoginRequired
+	m.adminPasswordResetOptional = !afterAdminResetRequired
+}
+
+// Use the same policy for presenting the gate and accepting an explicit skip.
+// An administrator changing the password also advances credential_version.
+func (m *Module) passwordResetPolicy(ctx context.Context, identity authn.Identity) (reason string, skipAllowed bool, err error) {
+	if !identity.PasswordResetRequired {
+		return "", false, nil
+	}
+	var afterAdminReset bool
+	err = m.store.SQL(ctx).QueryRowContext(ctx, `SELECT admin_password_reset_pending FROM t_user WHERE id=$1 AND code=$2 AND credential_version=$3 AND status=$4`,
+		identity.UserID, identity.Code, identity.CredentialVersion, userStatusActive).Scan(&afterAdminReset)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, ErrUnauthorized
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if afterAdminReset {
+		return "admin_reset", m.adminPasswordResetOptional, nil
+	}
+	return "first_login", m.passwordResetOptional, nil
 }
 
 func (m *Module) SkipOnboarding(ctx context.Context, input OnboardingPreferences) error {
@@ -69,8 +98,18 @@ func (m *Module) SkipOnboarding(ctx context.Context, input OnboardingPreferences
 		}
 		return nil
 	}
-	if input.PasswordResetSkipped && !m.passwordResetOptional {
-		return authn.ErrPasswordResetRequired
+	if input.PasswordResetSkipped {
+		if !identity.PasswordResetRequired {
+			// A retried skip after completion has nothing left to acknowledge.
+			return nil
+		}
+		_, allowed, err := m.passwordResetPolicy(ctx, identity)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return authn.ErrPasswordResetRequired
+		}
 	}
 	required, err := m.totpEnrollmentRequired(ctx, identity)
 	if err != nil {
@@ -85,7 +124,7 @@ func (m *Module) SkipOnboarding(ctx context.Context, input OnboardingPreferences
 		result, err := m.store.SQL(ctx).ExecContext(ctx, `UPDATE t_user SET
             last_logged_in_at=CASE WHEN login_count=0 THEN $1 ELSE last_logged_in_at END,
             login_count=CASE WHEN login_count=0 THEN 1 ELSE login_count END,
-            metadata=jsonb_set(metadata, '{password_reset_skipped}', 'true'::jsonb), updated_at=$1
+            admin_password_reset_pending=FALSE, metadata=jsonb_set(metadata, '{password_reset_skipped}', 'true'::jsonb), updated_at=$1
             WHERE id=$2 AND code=$3 AND credential_version=$4 AND status=$5`, time.Now().UnixMilli(), identity.UserID, identity.Code, identity.CredentialVersion, userStatusActive)
 		if err != nil {
 			return err

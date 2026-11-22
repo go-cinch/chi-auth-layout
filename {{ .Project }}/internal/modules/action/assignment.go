@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,44 @@ import (
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
+
+const permissionMutationLockSQL = `SELECT pg_advisory_xact_lock(73482301991337)`
+
+func (m *Module) checkNewDefinition(ctx context.Context, catalog localization.Catalog, word string, config Config) error {
+	selected, err := assignmentBindings(catalog, word, config)
+	if err != nil {
+		return err
+	}
+	scope, _, _ := strings.Cut(word, ":")
+	candidates, err := assignmentCandidates(ctx, m.store.SQL(ctx), []string{scope})
+	if err != nil {
+		return err
+	}
+	duplicate := false
+	for _, candidate := range candidates {
+		if candidate.Word == word {
+			return ErrConflict
+		}
+		known, err := assignmentBindings(catalog, candidate.Word, candidate.Config)
+		if err != nil {
+			continue
+		}
+		if config.PermissionScope == "*" && slices.ContainsFunc(known, func(binding ResourceBinding) bool {
+			return binding.Operation == "*" && catalog.ResourceCatalog.Resources[binding.ResourceKey].PermissionScope == "*"
+		}) {
+			duplicate = true
+		}
+		if slices.EqualFunc(selected, known, func(a, b ResourceBinding) bool {
+			return a.ResourceKey == b.ResourceKey && a.Operation == b.Operation && slices.Equal(a.FeatureKeys, b.FeatureKeys)
+		}) {
+			duplicate = true
+		}
+	}
+	if duplicate {
+		return ErrPermissionConflict
+	}
+	return nil
+}
 
 // ResolveAssignment joins the owner mutation's transaction. Existing callers
 // using codes keep their contract; resource selections never fall back to codes.
@@ -38,7 +77,7 @@ func (m *Module) ResolveAssignment(ctx context.Context, resource, operation stri
 		return nil, err
 	}
 	executor := m.store.SQL(ctx)
-	if _, err := executor.ExecContext(ctx, `SELECT pg_advisory_xact_lock(73482301991337)`); err != nil {
+	if _, err := executor.ExecContext(ctx, permissionMutationLockSQL); err != nil {
 		return nil, err
 	}
 	if m.definitions == nil {

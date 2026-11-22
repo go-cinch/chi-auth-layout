@@ -75,7 +75,7 @@ func parse(r *http.Request, settings config.AuditConfig) (Filter, error) {
 
 func parseQuery(r *http.Request, q url.Values, settings config.AuditConfig) (Filter, error) {
 	f := Filter{Kind: kind(r)}
-	for _, key := range []string{"q", "module", "result", "from", "to", "time_zone", "p", "s", "weekday", "hour", "username", "ip", "path", "sort"} {
+	for _, key := range []string{"q", "module", "result", "from", "to", "time_zone", "p", "s", "weekday", "hour", "username", "user_id", "ip", "path", "sort"} {
 		if v, ok := q[key]; ok && (len(v) != 1 || v[0] == "") {
 			return f, ErrFilter
 		}
@@ -88,7 +88,7 @@ func parseQuery(r *http.Request, q url.Values, settings config.AuditConfig) (Fil
 	f.Module = q.Get("module")
 	f.Result = q.Get("result")
 	f.Timezone = q.Get("time_zone")
-	for key, target := range map[string]**int64{"from": &f.From, "to": &f.To} {
+	for key, target := range map[string]**int64{"from": &f.From, "to": &f.To, "user_id": &f.UserID} {
 		if v, ok := q[key]; ok {
 			n, e := strconv.ParseInt(v[0], 10, 64)
 			if e != nil || n < 0 {
@@ -266,9 +266,17 @@ func (m *Module) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="audit-`+f.Kind+`.csv"`)
 	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"id", "occurred_at_unix_ms", "username", "user_id", "module", "method", "path", "ip", "status", "duration_ms", "error_code", "trace_id"})
+	columns := []string{"id", "occurred_at_unix_ms", "username", "user_id", "module", "method", "path", "ip", "status", "duration_ms", "error_code", "trace_id"}
+	if f.Kind == "login" {
+		columns = append(columns, "outcome")
+	}
+	_ = writer.Write(columns)
 	for _, e := range items {
-		_ = writer.Write([]string{strconv.FormatInt(e.ID, 10), strconv.FormatInt(e.OccurredAt, 10), csvSafe(e.Username), strconv.FormatInt(e.UserID, 10), e.Module, e.Method, csvSafe(e.Path), csvSafe(e.IP), strconv.Itoa(e.Status), strconv.FormatInt(e.DurationMS, 10), e.ErrorCode, csvSafe(e.TraceID)})
+		record := []string{strconv.FormatInt(e.ID, 10), strconv.FormatInt(e.OccurredAt, 10), csvSafe(e.Username), strconv.FormatInt(e.UserID, 10), e.Module, e.Method, csvSafe(e.Path), csvSafe(e.IP), strconv.Itoa(e.Status), strconv.FormatInt(e.DurationMS, 10), e.ErrorCode, csvSafe(e.TraceID)}
+		if f.Kind == "login" {
+			record = append(record, e.Outcome)
+		}
+		_ = writer.Write(record)
 	}
 	writer.Flush()
 }
@@ -296,12 +304,22 @@ func (m *Module) AuditTarget(method, path string) auditctx.Target {
 			if method == http.MethodPost {
 				return auditctx.Target{Kind: "login", Module: "auth", Operation: "login", ResourceType: "session"}
 			}
-		case "/auth/email/unbind/request", "/auth/email/unbind", "/auth/pub/email/unbind":
+		case "/auth/totp/recovery/confirm", "/auth/pub/totp/reset/confirm":
+			if method == http.MethodPost {
+				operation := "reset_totp"
+				if relative == "/pub/totp/reset/confirm" {
+					operation = "recover_totp_email"
+				}
+				return auditctx.Target{Kind: "operation", Module: "auth", Operation: operation, ResourceType: "user", OmitPayload: true}
+			}
+		case "/auth/email/bind", "/auth/email/unbind/request", "/auth/email/unbind", "/auth/pub/email/unbind":
 			if method != http.MethodPost {
 				return target
 			}
 			operation := "unlink_email"
 			switch relative {
+			case "/email/bind":
+				operation = "bind_email"
 			case "/email/unbind/request":
 				operation = "request_email_unlink"
 			case "/pub/email/unbind":
@@ -316,8 +334,11 @@ func (m *Module) AuditTarget(method, path string) auditctx.Target {
 			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "reset_password", ResourceType: "user"}
 		case "/auth/totp/confirm":
             target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "bind_totp", ResourceType: "user"}
-        case "/auth/logout":
-			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "logout", ResourceType: "session"}
+        case "/auth/logout", "/auth/pub/logout":
+            if method != http.MethodPost {
+                return target
+            }
+			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "logout", ResourceType: "session", OmitPayload: true}
 		}
 	}
     if authEndpoint && strings.HasPrefix(path, "/auth/totp/reset/") {
@@ -325,6 +346,14 @@ func (m *Module) AuditTarget(method, path string) auditctx.Target {
     }
 	if target.Kind == "" {
 		return target
+	}
+	if method == http.MethodPost && len(parts) == 3 && parts[0] == "user" {
+		switch parts[2] {
+		case "lock", "unlock", "reset-password":
+			target.ResourceID = parts[1]
+			target.Operation = strings.ReplaceAll(parts[2], "-", "_")
+			target.OmitPayload = parts[2] == "reset-password"
+		}
 	}
 	if target.Operation == "" {
 		switch method {

@@ -45,15 +45,21 @@ func (a *Application) wireBusinessModules() {
 	a.authModule.SetEmailCodes(a.emailCodes)
 	a.authModule.SetUIPreferenceSource(a.dictionaryModule)
 	a.authModule.SetTimezoneSource(a.dictionaryModule)
-	a.authModule.SetPasswordResetRequired(!a.passwordResetOptional)
+	a.authModule.SetPasswordResetPolicy(!a.passwordResetOptional, !a.adminPasswordResetOptional)
 	a.authModule.SetOnboardingVisibility(a.onboardingVisibility)
 	if a.authenticator != nil {
 		a.authenticator.SetHTTPSecurityPolicy(a.authModule.CheckHTTPSecurity)
 	}
 	a.auditModule = auditmodule.New(a.db, a.pagination, a.auditSettings)
 	a.auditModule.SetAuthHTTPPath(a.authPath)
+{{- if .Computed.enable_redis_final }}
+	if a.rds != nil {
+		a.auditModule.UseRedisStream(a.rds)
+	}
+{{- end }}
 	if a.dictionaryModule != nil {
 		a.actionModule.SetNameLocalization(a.dictionaryModule)
+		a.actionModule.SetGroupStorage(a.dictionaryModule)
 		a.actionModule.SetDefinitionCatalog(a.dictionaryModule)
 		a.dictionaryModule.SetPermissionGroups(a.actionModule)
 		a.dictionaryModule.SetResourcePermissions(a.actionModule)

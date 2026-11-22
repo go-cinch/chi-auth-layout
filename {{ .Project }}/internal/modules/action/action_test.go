@@ -81,7 +81,10 @@ func TestActionCRUD(t *testing.T) {
 		}
 	}
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(permissionMutationLockSQL)).WillReturnResult(sqlmock.NewResult(0, 1))
 	expectRegisteredActionCatalog(t, mock, localizer)
+	mock.ExpectQuery("SELECT code, word, config").WithArgs(pq.Array([]string{"admin"})).
+		WillReturnRows(sqlmock.NewRows([]string{"code", "word", "config"}))
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(24))
 	for _, count := range []int64{0, 1} {
 		mock.ExpectExec("INSERT INTO t_action").WithArgs(int64(24), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "admin:demo:record", "admin:read:demo:record", `{"bindings":[{"resource_key":"admin:demo:record","operation":"read","feature_keys":null}],"feature_keys":null,"ui":[],"endpoints":[]}`).WillReturnResult(sqlmock.NewResult(0, count))
@@ -128,6 +131,32 @@ func TestActionCRUD(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(deleteAssignedActionsSQL)).WithArgs(pq.Array([]int64{99}), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	if err := m.Delete(ctx, 99); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
+	}
+}
+
+func TestCreateRejectsIdenticalPermissions(t *testing.T) {
+	m, mock := newTestModule(t)
+	ctx := t.Context()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(permissionMutationLockSQL)).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectRegisteredActionCatalog(t, mock, m.catalogSource.(*localization.Module))
+	mock.ExpectQuery("SELECT code, word, config").WithArgs(pq.Array([]string{"admin"})).
+		WillReturnRows(sqlmock.NewRows([]string{"code", "word", "config"}).AddRow(
+			"ABCDEFGH",
+			"admin:read:demo:original",
+			`{"bindings":[{"resource_key":"admin:system:user","operation":"read","feature_keys":["admin:system:user:detail","admin:system:user:query"]}]}`,
+		))
+	mock.ExpectRollback()
+	bindings := []ResourceBinding{
+		{ResourceKey: "admin:system:user", Operation: "read", FeatureKeys: []string{"admin:system:user:query", "admin:system:user:detail"}},
+	}
+	_, err := m.Create(ctx, CreateActionInput{
+		Word: "admin:read:demo:duplicate",
+		Group: "admin:system:user",
+		Config: Config{Bindings: &bindings, UI: []UIBinding{}, Endpoints: []Endpoint{}},
+	})
+	if !errors.Is(err, ErrPermissionConflict) {
+		t.Fatalf("create duplicate: %v", err)
 	}
 }
 

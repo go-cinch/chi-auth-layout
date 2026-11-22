@@ -94,7 +94,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 			if idempotencyKeys == nil || cfg.Idempotency.TTL <= 0 {
 				return nil, errors.New("idempotency store and positive ttl are required")
 			}
-			group.Use(GinIdempotency(idempotencyKeys, cfg.Idempotency.TTL))
+			group.Use(GinIdempotency(idempotencyKeys, cfg.Idempotency.TTL, transactionalPOSTPaths(module)...))
 		}
 
 		module.HTTP(group)
@@ -199,7 +199,7 @@ func NewRouter(cfg *config.Config, authenticator *authn.Manager, idempotencyKeys
 		}
 		wrapModule := func(next http.Handler) http.Handler {
 			if isIdempotentModule(module) {
-				next = Idempotency(idempotencyKeys, cfg.Idempotency.TTL)(next)
+				next = Idempotency(idempotencyKeys, cfg.Idempotency.TTL, transactionalPOSTPaths(module)...)(next)
 			}
 			if !isPublicModule(module) {
 				next = authenticationMiddleware(authenticator, permissionAuthorizer, permissionEndpoint, pattern, module, next)
@@ -242,6 +242,13 @@ func httpTranslator(mounted []modules.Module) i18n.Translator {
 		if source, ok := module.(modules.HTTPLocalizer); ok {
 			return source.Translator()
 		}
+	}
+	return nil
+}
+
+func transactionalPOSTPaths(module modules.HTTPModule) []string {
+	if transactional, ok := module.(modules.TransactionalPOSTModule); ok {
+		return transactional.TransactionalPOSTPaths()
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/server"
 {{ if eq .Computed.http_router_final "gin" }}
@@ -122,6 +123,12 @@ func (m *Module) confirmAccountReset(w http.ResponseWriter, r *http.Request) {
 {{ end }}
 	w.Header().Set("Cache-Control", "no-store")
 	ctx := r.Context()
+	codes := r.Header.Values(authn.RecoveryCodeHeader)
+	if len(codes) > 0 {
+		auditctx.ResourceOperation(ctx, "reset_totp_recovery_code", "")
+	} else {
+		auditctx.ResourceOperation(ctx, "reset_totp_email", "")
+	}
 	pending, err := m.accountResetSession(ctx)
 	if err != nil {
 		writeEmailError(w, r, err, nil)
@@ -132,7 +139,6 @@ func (m *Module) confirmAccountReset(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	codes := r.Header.Values(authn.RecoveryCodeHeader)
 	if len(codes) > 1 {
 		writeEmailError(w, r, ErrVerificationInvalid, nil)
 		return

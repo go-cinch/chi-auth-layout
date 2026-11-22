@@ -351,6 +351,7 @@ func (c ResourceCatalog) ResolveBinding(scope, key, operation string, selected [
 	}
 	seen := map[string]bool{}
 	buttons := []string{}
+	seenButtons := map[string]bool{}
 	pageEntries := map[string]bool{}
 	endpoints := map[ResourceEndpoint]bool{}
 	for _, featureKey := range selected {
@@ -363,7 +364,12 @@ func (c ResourceCatalog) ResolveBinding(scope, key, operation string, selected [
 			result.PermissionScopes = append(result.PermissionScopes, feature.PermissionResource+":"+operation)
 		}
 		if hasField(fields, "ui") {
-			buttons = append(buttons, feature.Btn...)
+			for _, button := range feature.Btn {
+				if !seenButtons[button] {
+					seenButtons[button] = true
+					buttons = append(buttons, button)
+				}
+			}
 			for _, entry := range feature.EntryKeys {
 				pageEntries[entry] = true
 			}

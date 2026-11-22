@@ -5,6 +5,9 @@ auth:
     retentionDays: 30
   # Empty mounts authentication endpoints at the service root; /auth retains the prefixed layout.
   path: ""
+  registration:
+    # Allow anonymous users to create accounts.
+    enabled: false
   email:
     # Require a verified email before first business access. False permits skipping.
     requireBinding: false
@@ -54,6 +57,9 @@ auth:
     reset:
       # False allows explicitly skipping the first-login password reset.
       required: false
+      # After an administrator sets a new password, require the user to change it
+      # at the next login. When omitted, inherit required above.
+      requiredAfterAdminReset: false
       # Hide this onboarding step only when skipping is allowed.
       hideOnboarding: true
     change:

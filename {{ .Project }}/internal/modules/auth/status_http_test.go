@@ -77,7 +77,7 @@ func TestStatusHTTPBoundaries(t *testing.T) {
 	response = emailHTTP(t, m, ctx, "GET", "/pub/opt", nil)
 	var options map[string]any
 	_ = json.Unmarshal(response.Body.Bytes(), &options)
-	if response.Code != 200 || len(options) != 4 || options["totp_enabled"] != false || options["email_enabled"] != false {
+	if response.Code != 200 || len(options) != 5 || options["registration_enabled"] != false || options["totp_enabled"] != false || options["email_enabled"] != false {
 		t.Fatal(options)
 	}
 }

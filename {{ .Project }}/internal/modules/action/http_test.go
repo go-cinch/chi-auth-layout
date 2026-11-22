@@ -40,6 +40,13 @@ func TestActionHTTP(t *testing.T) {
 		return recorder.Body.String()
 	}
 
+	// Group commands never accept an entire dictionary or default-policy flags.
+	request(http.MethodPatch, "/group", `{"operation":"create","word":"admin:test:one","value":{}}`, http.StatusBadRequest)
+	request(http.MethodPatch, "/group", `{"operation":"update","word":"admin:test:two","original_word":"admin:test:one"}`, http.StatusBadRequest)
+	request(http.MethodPatch, "/group", `{"operation":"delete","word":"admin:bad","expected_names":{}}`, http.StatusBadRequest)
+	request(http.MethodPatch, "/group/order", `{"order":[],"group_defaults":{}}`, http.StatusBadRequest)
+	request(http.MethodPatch, "/group/order", `{"order":[]}`, http.StatusBadRequest)
+
 	request(http.MethodGet, "/bad", "", http.StatusBadRequest)
 	mock.ExpectQuery("SELECT .* FROM t_action WHERE id").WithArgs(int64(1)).WillReturnError(sqlmock.ErrCancelled)
 	request(http.MethodGet, "/1", "", http.StatusInternalServerError)
@@ -52,7 +59,10 @@ func TestActionHTTP(t *testing.T) {
 	request(http.MethodPost, "/", `{}`, http.StatusBadRequest)
 	request(http.MethodPost, "/", `{"name":"x","word":"x","unknown":1}`, http.StatusBadRequest)
 	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(permissionMutationLockSQL)).WillReturnResult(sqlmock.NewResult(0, 1))
 	expectRegisteredActionCatalog(t, mock, localizer)
+	mock.ExpectQuery("SELECT code, word, config").WithArgs(pq.Array([]string{"admin"})).
+		WillReturnRows(sqlmock.NewRows([]string{"code", "word", "config"}))
 	mock.ExpectQuery("SELECT nextval").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(24))
 	mock.ExpectExec("INSERT INTO t_action").WillReturnResult(sqlmock.NewResult(0, 1))
 	expectActionGet(mock, 24, "ABCDEFGH", "Demo")

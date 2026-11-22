@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"slices"
 	"testing"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
@@ -67,5 +68,35 @@ func TestNavigationVisibilityUsesExplicitFlag(t *testing.T) {
 	navigation := permissionNavigation(catalog, "admin", menus)
 	if len(navigation) != 1 || navigation[0].ResourceKey != "admin:default" {
 		t.Fatalf("visibility depends on key instead of explicit flag: %+v", navigation)
+	}
+}
+
+func permissionNavigation(catalog localization.ResourceCatalog, scope string, menus []PermissionMenu) []PermissionNavigation {
+	p := Permission{Menus: menus}
+	p.projectNavigation(catalog, scope)
+	return p.Navigation
+}
+
+func TestSharedPageKeepsVisibleEntryAndGrantedButtons(t *testing.T) {
+	hidden := false
+	catalog := localization.ResourceCatalog{Resources: map[string]localization.Resource{
+		"admin:hidden":      {Kind: "directory", FrontendVisible: &hidden},
+		"admin:hidden:a":    {Parent: "admin:hidden", Entries: map[string]localization.ResourceEntry{"alias": {Path: "/roles"}}},
+		"admin:system":      {Kind: "directory"},
+		"admin:system:role": {Parent: "admin:system", Entries: map[string]localization.ResourceEntry{"role": {Path: "/roles"}, "role-alias": {Path: "/roles"}}},
+	}}
+	p := Permission{Menus: []PermissionMenu{
+		{MenuKey: "alias", MenuPath: "/roles", Buttons: []string{"query"}},
+		{MenuKey: "role", ParentMenuKey: "system", MenuPath: "/roles", Buttons: []string{"query", "edit"}},
+		{MenuKey: "role-alias", MenuPath: "/roles", Buttons: []string{"view"}},
+		{MenuKey: "other", MenuPath: "/other", Buttons: []string{"other-button"}},
+	}}
+	p.projectNavigation(catalog, "admin")
+	if len(p.Menus) != 2 || p.Menus[0].MenuKey != "role" || p.Menus[0].ParentMenuKey != "system" ||
+		!slices.Equal(p.Menus[0].Buttons, []string{"query", "edit", "view"}) || !slices.Equal(p.Menus[1].Buttons, []string{"other-button"}) {
+		t.Fatalf("unexpected route permissions: %+v", p.Menus)
+	}
+	if len(p.Navigation) != 1 || len(p.Navigation[0].Children) != 1 || p.Navigation[0].Children[0].MenuKey != "role" {
+		t.Fatalf("unexpected navigation: %+v", p.Navigation)
 	}
 }

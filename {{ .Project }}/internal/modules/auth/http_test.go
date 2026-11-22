@@ -133,6 +133,15 @@ func TestAuthHTTP(t *testing.T) {
 		return recorder
 	}
 
+	request(http.MethodGet, "/pub/register/username?username=new-user", "", "", http.StatusNotFound)
+	request(http.MethodPost, "/pub/register", "{}", "", http.StatusNotFound)
+	m.SetRegistrationEnabled(true)
+	options := request(http.MethodGet, "/pub/opt", "", "", http.StatusOK)
+	var properties SystemProperties
+	if err := json.Unmarshal(options.Body.Bytes(), &properties); err != nil || !properties.RegistrationEnabled {
+		t.Fatalf("registration missing from public options: %s", options.Body.String())
+	}
+
 	request(http.MethodGet, "/info", "", "", http.StatusUnauthorized)
 	request(http.MethodGet, "/permission", "", "", http.StatusUnauthorized)
 	request(http.MethodPost, "/challenge", `{"purpose":"password_change"}`, "", http.StatusUnauthorized)
@@ -712,7 +721,7 @@ func TestConfiguredAuthPathPreservesResetRestriction(t *testing.T) {
 }
 
 func TestAuthHTTPPathMappingsCoverRegisteredRoutes(t *testing.T) {
-	for _, prefix := range []string{"", "/auth"} {
+	for _, prefix := range []string{"", "/auth", "/identity/v2"} {
 		m, manager, _ := newAuthTestModule(t)
 		m.httpPath = prefix
 		if _, err := server.NewRouter(&config.Config{}, manager, nil, m); err != nil {
@@ -727,10 +736,18 @@ func TestAuthHTTPPathMappingsCoverRegisteredRoutes(t *testing.T) {
 			if !ownsAuthHTTPMethod(strings.TrimPrefix(route.Path, prefix), route.Method) {
 				t.Fatalf("auth policy does not match registered route %s %s", route.Method, route.Path)
 			}
-			if !mapped[route.Path] {
+			// The catalog uses {name} for parameters that Gin registers as :name.
+			segments := strings.Split(route.Path, "/")
+			for i, segment := range segments {
+				if name, ok := strings.CutPrefix(segment, ":"); ok {
+					segments[i] = "{" + name + "}"
+				}
+			}
+			catalogPath := strings.Join(segments, "/")
+			if !mapped[catalogPath] {
 				t.Fatalf("registered auth route %s has no configured-path mapping", route.Path)
 			}
-			registered[route.Path] = true
+			registered[catalogPath] = true
 		}
 		for path := range mapped {
 			if !registered[path] {

@@ -84,7 +84,7 @@ func TestBusinessModuleWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(7)).WillReturnRows(
+	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(7), sqlmock.AnyArg()).WillReturnRows(
 		sqlmock.NewRows([]string{"id", "created_at", "updated_at", "role_id", "action", "username", "code", "last_logged_in_at", "status", "metadata", "wrong", "login_count"}).
 			AddRow(7, time.Now().UnixMilli(), time.Now().UnixMilli(), nil, "", "operator", "TEST0007", nil, 1, []byte(`{}`), 0, 1))
 	token, _, err := a.authenticator.Issue(authn.Identity{Methods: authn.Methods{Primary: authn.Password}, CredentialVersion: 1, UserID: 7, Username: "operator", Code: "TEST0007"})

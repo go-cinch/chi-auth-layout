@@ -114,7 +114,7 @@ func TestDictionaryCommittedWritesAndCacheTTL(t *testing.T) {
 	cache.fail = true
 	cache.attempts = 0
 	updated := json.RawMessage(`[2]`)
-	if result, err := m.Update(ctx, value.ID, dictionary.UpdateDictionaryInput{Value: &updated}); err != nil || string(result.Value) != `[2]` {
+	if result, err := m.Update(ctx, value.ID, dictionary.UpdateDictionaryInput{Value: updated}); err != nil || string(result.Value) != `[2]` {
 		t.Fatalf("committed update: %#v %v", result, err)
 	}
 	if cache.attempts != 3 {

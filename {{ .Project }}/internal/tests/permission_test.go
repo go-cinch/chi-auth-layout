@@ -578,10 +578,10 @@ func TestFinalizedSeedBindingsPostgres(t *testing.T) {
 	feature := catalog.ResourceCatalog.Buttons["admin:system:developer:publish"]
 	found := false
 	for _, endpoint := range feature.HTTP {
-		found = found || endpoint.Method == "PATCH" && endpoint.Path == "/dictionary/{id}"
+		found = found || endpoint.Method == "PATCH" && endpoint.Path == "/dictionary/catalog"
 	}
 	if !found {
-		t.Fatal("developer publish does not map to dictionary update")
+		t.Fatal("developer publish does not map to catalog publication")
 	}
 }
 
@@ -737,25 +737,12 @@ func TestDefaultRoleProfilesPostgres(t *testing.T) {
 					t.Fatal(err)
 				}
 				value := json.RawMessage(next)
-				if _, err := dictionaries.Update(ctx, 3, dictionary.UpdateDictionaryInput{Value: &value, ExpectedValue: &raw}); err != nil {
-					t.Fatalf("%s permitted edit: %v", test.word, err)
+				_, err = dictionaries.PublishCatalog(ctx, dictionary.PublishCatalogInput{Value: value, ExpectedValue: raw})
+				if test.developer && err != nil {
+					t.Fatal(err)
 				}
-				if test.word == "admin" {
-					if err := store.DB.QueryRowContext(t.Context(), `SELECT value FROM t_dictionary WHERE id=3`).Scan(&raw); err != nil {
-						t.Fatal(err)
-					}
-					if err := json.Unmarshal(raw, &document); err != nil {
-						t.Fatal(err)
-					}
-					document["messages"].(map[string]any)["en-US"].(map[string]any)["frontend"].(map[string]any)["resources"].(map[string]any)["admin:system:developer"] = "Unauthorized graph edit"
-					next, err = json.Marshal(document)
-					if err != nil {
-						t.Fatal(err)
-					}
-					value = json.RawMessage(next)
-					if _, err := dictionaries.Update(ctx, 3, dictionary.UpdateDictionaryInput{Value: &value, ExpectedValue: &raw}); !errors.Is(err, authn.ErrPermissionAdministrationRequired) {
-						t.Fatalf("admin bypassed catalog boundary: %v", err)
-					}
+				if !test.developer && !errors.Is(err, authn.ErrPermissionAdministrationRequired) {
+					t.Fatalf("unexpected catalog publication result: %v", err)
 				}
 			}
 		})

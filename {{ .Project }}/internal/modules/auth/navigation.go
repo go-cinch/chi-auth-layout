@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
@@ -14,7 +15,8 @@ type PermissionNavigation struct {
 	Children    []PermissionNavigation `json:"children,omitempty"`
 }
 
-func permissionNavigation(catalog localization.ResourceCatalog, scope string, menus []PermissionMenu) []PermissionNavigation {
+func (p *Permission) projectNavigation(catalog localization.ResourceCatalog, scope string) {
+	menus := p.Menus
 	allowed := make(map[string]string, len(menus))
 	for _, menu := range menus {
 		allowed[menu.MenuKey] = menu.MenuPath
@@ -48,6 +50,7 @@ func permissionNavigation(catalog localization.ResourceCatalog, scope string, me
 		}
 		children[parent] = ordered
 	}
+	visible := make(map[string]string)
 	var visit func(string) []PermissionNavigation
 	visit = func(parent string) []PermissionNavigation {
 		result := []PermissionNavigation{}
@@ -77,10 +80,43 @@ func permissionNavigation(catalog localization.ResourceCatalog, scope string, me
 			}
 			sort.Strings(entries)
 			for _, menuKey := range entries {
-				result = append(result, PermissionNavigation{ResourceKey: key, MenuKey: menuKey, MenuPath: resource.Entries[menuKey].Path})
+				path := resource.Entries[menuKey].Path
+				if _, exists := visible[path]; exists {
+					continue
+				}
+				visible[path] = menuKey
+				result = append(result, PermissionNavigation{ResourceKey: key, MenuKey: menuKey, MenuPath: path})
 			}
 		}
 		return result
 	}
-	return visit("")
+	p.Navigation = visit("")
+	p.Menus = uniqueMenuPaths(menus, visible)
+}
+
+// Keep the catalog's first visible entry for a shared route. A route that
+// is only accessible by direct URL keeps its first granted menu key.
+func uniqueMenuPaths(menus []PermissionMenu, visible map[string]string) []PermissionMenu {
+	result := make([]PermissionMenu, 0, len(menus))
+	positions := make(map[string]int, len(menus))
+	for _, menu := range menus {
+		i, exists := positions[menu.MenuPath]
+		if !exists {
+			positions[menu.MenuPath] = len(result)
+			menu.Buttons = slices.Clone(menu.Buttons)
+			result = append(result, menu)
+			continue
+		}
+		selected := &result[i]
+		if visible[menu.MenuPath] == menu.MenuKey {
+			selected.MenuKey = menu.MenuKey
+			selected.ParentMenuKey = menu.ParentMenuKey
+		}
+		for _, button := range menu.Buttons {
+			if !slices.Contains(selected.Buttons, button) {
+				selected.Buttons = append(selected.Buttons, button)
+			}
+		}
+	}
+	return result
 }

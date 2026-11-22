@@ -22,7 +22,7 @@ func TestAuditContract(t *testing.T) {
 		if path == "/audit/login/export" && r.responses[200].contentType != "text/csv" {
 			t.Fatal(r)
 		}
-		if path == "/audit/login" && len(r.parameters) != 14 {
+		if path == "/audit/login" && len(r.parameters) != 15 {
 			t.Fatal(r.parameters)
 		}
 	}

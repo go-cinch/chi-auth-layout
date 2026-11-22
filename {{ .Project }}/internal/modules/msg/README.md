@@ -1,5 +1,16 @@
 # Messages
 
+## Publication retries
+
+For a keyed `POST /msg`, the sender and request key identify one publication.
+The message, recipients, unread counters, and send receipt commit together.
+Retrying the same payload returns the original message ID and publication time.
+Reusing a key for different content returns 409. Withdrawing a publication
+retains its receipt so replay returns 404 and cannot republish it. Unkeyed
+clients continue to create a new publication on each request. Keys already claimed
+by a pre-receipt server retain their existing duplicate protection for its configured
+TTL. Their original message IDs cannot be recovered from a legacy claim.
+
 ## Sent message detail selection
 
 `GET /msg/sent/{id}` accepts `f` with the message list fields plus

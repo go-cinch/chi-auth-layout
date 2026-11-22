@@ -13,6 +13,9 @@ func TestAuthHTTPPathsAndResetAllowlist(t *testing.T) {
 		if paths["/auth/totp/test"] != prefix+"/totp/test" {
 			t.Fatal("test endpoint mount mismatch", prefix)
 		}
+		if got := paths["/auth/totp/reset/{id}"]; got != prefix+"/totp/reset/{id}" {
+			t.Fatalf("reset permission path for prefix %q = %q", prefix, got)
+		}
 		if PasswordResetAllowedHTTP("POST", prefix+"/totp/test", prefix) {
 			t.Fatal("test endpoint bypassed required password reset", prefix)
 		}

@@ -144,7 +144,7 @@ func TestCredentialVersionTransactions(t *testing.T) {
 		t.Fatal(err)
 	}
 	resetPassword := "admin-secret"
-	if _, err := users.Update(ctx, 101, user.UpdateUserInput{Password: &resetPassword}); err != nil {
+	if _, err := users.ResetPassword(ctx, 101, resetPassword); err != nil {
 		t.Fatal(err)
 	}
 	version(3)
@@ -162,7 +162,7 @@ func TestCredentialVersionTransactions(t *testing.T) {
 		t.Fatal("password change commit unexpectedly succeeded")
 	}
 	version(3)
-	if _, err := users.Update(ctx, 101, user.UpdateUserInput{Password: &resetPassword}); err == nil {
+	if _, err := users.ResetPassword(ctx, 101, resetPassword); err == nil {
 		t.Fatal("admin reset commit unexpectedly succeeded")
 	}
 	version(3)

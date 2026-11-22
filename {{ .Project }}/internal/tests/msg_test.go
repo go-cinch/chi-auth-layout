@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -186,6 +187,88 @@ func TestMessageHTTPPermissions(t *testing.T) {
 	handler.ServeHTTP(w, httptest.NewRequest("GET", "/msg/inbox", nil))
 	if w.Code != 401 {
 		t.Fatalf("anonymous inbox: %d", w.Code)
+	}
+}
+
+// Exercise the HTTP key and database transaction together, including concurrent
+// retries, rollback, sender isolation, and a retry after the publication is withdrawn.
+func TestMessageSendReplayPostgres(t *testing.T) {
+	store := permissionDatabase(t)
+	limits, _ := pagination.New(100, 100)
+	messages := msg.New(store, limits)
+	manager, err := authn.New("test", strings.Repeat("k", 64), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Idempotency.TTL = time.Hour
+	handler, err := server.NewRouter(cfg, manager, idempotency.NewMemoryStore(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := func(id int64) string {
+		value, _, err := manager.Issue(authn.Identity{Methods: authn.Methods{Primary: authn.Password}, UserID: id, Username: fmt.Sprint("sender", id), Code: "12345678", CredentialVersion: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	send := func(bearer, payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/msg", strings.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set(server.IdempotencyHeader, "send-replay-test")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w
+	}
+	messageID := func(response *httptest.ResponseRecorder) int64 {
+		t.Helper()
+		var item msg.Message
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &item) != nil || item.ID == 0 {
+			t.Fatalf("expected publication, got %d %s", response.Code, response.Body.String())
+		}
+		return item.ID
+	}
+
+	first, other := token(1), token(2)
+	const payload = `{"title":"Notice","content":"Body","type":"notice","scope":"targeted","recipient_ids":[3]}`
+	if result := send(first, strings.Replace(payload, "[3]", "[999999]", 1)); result.Code != 400 {
+		t.Fatalf("invalid delivery = %d", result.Code)
+	}
+	results := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() { results <- send(first, payload) }()
+	}
+	original := messageID(<-results)
+	if replay := messageID(<-results); replay != original {
+		t.Fatalf("concurrent send returned IDs %d and %d", original, replay)
+	}
+	if count, err := messages.UnreadCount(t.Context(), 3); err != nil || count != 1 {
+		t.Fatalf("concurrent delivery count = %d, err = %v", count, err)
+	}
+	if result := send(first, strings.Replace(payload, "Body", "Changed", 1)); result.Code != 409 {
+		t.Fatalf("different payload reused a key: %d", result.Code)
+	}
+	if id := messageID(send(other, payload)); id == original {
+		t.Fatal("senders shared a publication")
+	}
+	var createdAt int64
+	if err := store.DB.QueryRowContext(t.Context(), `UPDATE t_msg_send_receipt SET updated_at = 1 WHERE msg_id = $1 RETURNING created_at`, original).Scan(&createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := messages.DeleteSent(t.Context(), original); err != nil {
+		t.Fatal(err)
+	}
+	var withdrawn bool
+	if err := store.DB.QueryRowContext(t.Context(), `SELECT msg_id IS NULL AND created_at = $1 AND updated_at >= created_at
+FROM t_msg_send_receipt WHERE sender_id = 1 AND request_key = 'send-replay-test'`, createdAt).Scan(&withdrawn); err != nil || !withdrawn {
+		t.Fatalf("withdrawal did not timestamp the retained receipt: %v", err)
+	}
+	if result := send(first, payload); result.Code != 404 {
+		t.Fatalf("withdrawn publication replay = %d", result.Code)
+	}
+	if count, err := messages.UnreadCount(t.Context(), 3); err != nil || count != 1 {
+		t.Fatalf("remaining deliveries = %d, err = %v", count, err)
 	}
 }
 

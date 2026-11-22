@@ -1,6 +1,7 @@
 -- +migrate Up
 -- Final action definitions. Codes remain stable assignment identities; words and
 -- multilingual action keys identify each scope:operation:module:resource.
+-- Binding-backed actions resolve their UI and endpoints from the current resource catalog on read.
 INSERT INTO t_action (id, action_group, code, word, config) VALUES
     (1, 'admin:system:high-risk', 'M6TG8SR9', 'admin:all:system:all', '{
     "ui": [],
@@ -126,21 +127,7 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
     ]
 }'::JSONB),
     (6, 'admin:system:user', 'R2LTBEEG', 'admin:update:system:user', '{
-    "ui": [
-        {
-            "menu_key": "admin:menu:system:user",
-            "menu_path": "/system/user",
-            "page_entry": false,
-            "button_keys": [
-                "admin:btn:system:user:edit",
-                "admin:btn:system:user:approve",
-                "admin:btn:system:user:lock",
-                "admin:btn:system:user:unlock",
-                "admin:btn:system:user:unlock-password"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        }
-    ],
+    "ui": [],
     "bindings": [
         {
             "operation": "update",
@@ -149,18 +136,12 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
                 "admin:system:user:approve",
                 "admin:system:user:lock",
                 "admin:system:user:unlock",
-                "admin:system:user:unlock-password"
+                "admin:system:user:reset-password"
             ],
             "resource_key": "admin:system:user"
         }
     ],
-    "endpoints": [
-        {
-            "path": "/user/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        }
-    ]
+    "endpoints": []
 }'::JSONB),
     (7, 'admin:system:user', 'JBVF9YWV', 'admin:delete:system:user', '{
     "ui": [
@@ -528,18 +509,7 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
     ]
 }'::JSONB),
     (17, 'admin:system:action', '5RNWYB4S', 'admin:create:system:action', '{
-    "ui": [
-        {
-            "menu_key": "admin:menu:system:action",
-            "menu_path": "/system/action",
-            "page_entry": false,
-            "button_keys": [
-                "admin:btn:system:action:create",
-                "admin:btn:system:action:create-group"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        }
-    ],
+    "ui": [],
     "bindings": [
         {
             "operation": "create",
@@ -550,79 +520,25 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
             "resource_key": "admin:system:action"
         }
     ],
-    "endpoints": [
-        {
-            "path": "/dictionary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/dictionary/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/action",
-            "method": "POST",
-            "protocol": "http"
-        }
-    ]
+    "endpoints": []
 }'::JSONB),
     (18, 'admin:system:action', 'TW535HD8', 'admin:update:system:action', '{
-    "ui": [
-        {
-            "menu_key": "admin:menu:system:action",
-            "menu_path": "/system/action",
-            "page_entry": false,
-            "button_keys": [
-                "admin:btn:system:action:edit",
-                "admin:btn:system:action:reorder-groups"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        }
-    ],
+    "ui": [],
     "bindings": [
         {
             "operation": "update",
             "feature_keys": [
                 "admin:system:action:edit",
-                "admin:system:action:reorder-groups"
+                "admin:system:action:reorder-groups",
+                "admin:system:action:edit-group"
             ],
             "resource_key": "admin:system:action"
         }
     ],
-    "endpoints": [
-        {
-            "path": "/dictionary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/dictionary/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        }
-    ]
+    "endpoints": []
 }'::JSONB),
     (19, 'admin:system:action', 'V75R23SD', 'admin:delete:system:action', '{
-    "ui": [
-        {
-            "menu_key": "admin:menu:system:action",
-            "menu_path": "/system/action",
-            "page_entry": false,
-            "button_keys": [
-                "admin:btn:system:action:delete",
-                "admin:btn:system:action:delete-selected",
-                "admin:btn:system:action:delete-group"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        }
-    ],
+    "ui": [],
     "bindings": [
         {
             "operation": "delete",
@@ -634,23 +550,7 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
             "resource_key": "admin:system:action"
         }
     ],
-    "endpoints": [
-        {
-            "path": "/action/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        },
-        {
-            "path": "/dictionary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/dictionary/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        }
-    ]
+    "endpoints": []
 }'::JSONB),
     (24, 'admin:system:dictionary', 'H3HW2LEB', 'admin:read:system:dictionary', '{
     "ui": [
@@ -1030,82 +930,7 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
     "endpoints": []
 }'::JSONB),
     (36, 'admin:system:high-risk', 'HFSNA574', 'admin:grant:system:permission-admin', '{
-    "ui": [
-        {
-            "menu_key": "admin:menu:system:role",
-            "menu_path": "/system/role",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:role:query",
-                "admin:btn:system:role:reset-query",
-                "admin:btn:system:role:refresh",
-                "admin:btn:system:role:view-detail",
-                "admin:btn:system:role:create",
-                "admin:btn:system:role:edit",
-                "admin:btn:system:role:delete",
-                "admin:btn:system:role:delete-selected"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        },
-        {
-            "menu_key": "admin:menu:system:action",
-            "menu_path": "/system/action",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:action:query",
-                "admin:btn:system:action:reset-query",
-                "admin:btn:system:action:refresh",
-                "admin:btn:system:action:view-detail",
-                "admin:btn:system:action:create",
-                "admin:btn:system:action:create-group",
-                "admin:btn:system:action:edit",
-                "admin:btn:system:action:reorder-groups",
-                "admin:btn:system:action:delete",
-                "admin:btn:system:action:delete-selected",
-                "admin:btn:system:action:delete-group"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        },
-        {
-            "menu_key": "admin:menu:system:user",
-            "menu_path": "/system/user",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:user:query",
-                "admin:btn:system:user:reset-query",
-                "admin:btn:system:user:refresh",
-                "admin:btn:system:user:view-detail",
-                "admin:btn:system:user:create",
-                "admin:btn:system:user:edit",
-                "admin:btn:system:user:approve",
-                "admin:btn:system:user:lock",
-                "admin:btn:system:user:unlock",
-                "admin:btn:system:user:unlock-password",
-                "admin:btn:system:user:delete",
-                "admin:btn:system:user:delete-selected"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        },
-        {
-            "menu_key": "admin:menu:system:user-group",
-            "menu_path": "/system/user-group",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:user-group:query",
-                "admin:btn:system:user-group:reset-query",
-                "admin:btn:system:user-group:refresh",
-                "admin:btn:system:user-group:view-detail",
-                "admin:btn:system:user-group:view-members",
-                "admin:btn:system:user-group:create",
-                "admin:btn:system:user-group:edit",
-                "admin:btn:system:user-group:add-members",
-                "admin:btn:system:user-group:remove-members",
-                "admin:btn:system:user-group:delete",
-                "admin:btn:system:user-group:delete-selected"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        }
-    ],
+    "ui": [],
     "bindings": [
         {
             "operation": "read",
@@ -1198,7 +1023,7 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
                 "admin:system:user:approve",
                 "admin:system:user:lock",
                 "admin:system:user:unlock",
-                "admin:system:user:unlock-password"
+                "admin:system:user:reset-password"
             ],
             "resource_key": "admin:system:user"
         },
@@ -1246,243 +1071,11 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
             "resource_key": "admin:system:user-group"
         }
     ],
-    "endpoints": [
-        {
-            "path": "/role",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/role/summary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/role/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/role",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/role/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/role/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        },
-        {
-            "path": "/action",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/catalog",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/group",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/summary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/dictionary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/dictionary/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/action",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        },
-        {
-            "path": "/user",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user/summary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/user/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/user/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/summary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/{id}/member",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        }
-    ],
+    "endpoints": [],
     "feature_keys": null
 }'::JSONB),
     (37, 'admin:system:developer', '76JJGCBN', 'admin:update:system:developer', '{
-    "ui": [
-        {
-            "menu_key": "admin:menu:system:role",
-            "menu_path": "/system/role",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:role:query",
-                "admin:btn:system:role:reset-query",
-                "admin:btn:system:role:refresh",
-                "admin:btn:system:role:view-detail",
-                "admin:btn:system:role:create",
-                "admin:btn:system:role:edit",
-                "admin:btn:system:role:delete",
-                "admin:btn:system:role:delete-selected"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        },
-        {
-            "menu_key": "admin:menu:system:action",
-            "menu_path": "/system/action",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:action:query",
-                "admin:btn:system:action:reset-query",
-                "admin:btn:system:action:refresh",
-                "admin:btn:system:action:view-detail",
-                "admin:btn:system:action:create",
-                "admin:btn:system:action:create-group",
-                "admin:btn:system:action:edit",
-                "admin:btn:system:action:reorder-groups",
-                "admin:btn:system:action:delete",
-                "admin:btn:system:action:delete-selected",
-                "admin:btn:system:action:delete-group"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        },
-        {
-            "menu_key": "admin:menu:system:user",
-            "menu_path": "/system/user",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:user:query",
-                "admin:btn:system:user:reset-query",
-                "admin:btn:system:user:refresh",
-                "admin:btn:system:user:view-detail",
-                "admin:btn:system:user:create",
-                "admin:btn:system:user:edit",
-                "admin:btn:system:user:approve",
-                "admin:btn:system:user:lock",
-                "admin:btn:system:user:unlock",
-                "admin:btn:system:user:unlock-password",
-                "admin:btn:system:user:delete",
-                "admin:btn:system:user:delete-selected"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        },
-        {
-            "menu_key": "admin:menu:system:user-group",
-            "menu_path": "/system/user-group",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:user-group:query",
-                "admin:btn:system:user-group:reset-query",
-                "admin:btn:system:user-group:refresh",
-                "admin:btn:system:user-group:view-detail",
-                "admin:btn:system:user-group:view-members",
-                "admin:btn:system:user-group:create",
-                "admin:btn:system:user-group:edit",
-                "admin:btn:system:user-group:add-members",
-                "admin:btn:system:user-group:remove-members",
-                "admin:btn:system:user-group:delete",
-                "admin:btn:system:user-group:delete-selected"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        },
-        {
-            "menu_key": "admin:menu:system:developer",
-            "menu_path": "/system/developer",
-            "page_entry": true,
-            "button_keys": [
-                "admin:btn:system:developer:compare-online",
-                "admin:btn:system:developer:refresh",
-                "admin:btn:system:developer:publish"
-            ],
-            "parent_menu_key": "admin:menu:system"
-        }
-    ],
+    "ui": [],
     "bindings": [
         {
             "operation": "read",
@@ -1575,7 +1168,7 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
                 "admin:system:user:approve",
                 "admin:system:user:lock",
                 "admin:system:user:unlock",
-                "admin:system:user:unlock-password"
+                "admin:system:user:reset-password"
             ],
             "resource_key": "admin:system:user"
         },
@@ -1638,153 +1231,7 @@ INSERT INTO t_action (id, action_group, code, word, config) VALUES
             "resource_key": "admin:system:developer"
         }
     ],
-    "endpoints": [
-        {
-            "path": "/role",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/role/summary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/role/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/role",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/role/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/role/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        },
-        {
-            "path": "/action",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/catalog",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/group",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/summary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/dictionary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/dictionary/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/action",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/action/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        },
-        {
-            "path": "/user",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user/summary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/user/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/user/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/summary",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/{id}",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/{id}/member",
-            "method": "GET",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group",
-            "method": "POST",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/{id}",
-            "method": "PATCH",
-            "protocol": "http"
-        },
-        {
-            "path": "/user-group/{id}",
-            "method": "DELETE",
-            "protocol": "http"
-        }
-    ],
+    "endpoints": [],
     "feature_keys": null
 }'::JSONB);
 

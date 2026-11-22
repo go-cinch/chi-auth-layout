@@ -11,6 +11,8 @@ then start both services in the background. Existing services are restarted.
 
 Options (all cleanup switches default to false):
   --stop-auth                     Stop only Auth (8081), then exit; other actions are skipped.
+  --pause-endpoint 'METHOD PATH'   Return HTTP 502 for this Auth API through local Vben.
+  --resume-endpoint 'METHOD PATH'  Restore forwarding for this Auth API through local Vben.
   --clean-sql[=true|false]          Replace generated SQL with the latest template SQL.
   --clean-credentials[=true|false]  Replace backend authentication credentials/key files.
   --clean-auth[=true|false]         Drop/recreate ONLY the local pg container's auth database.
@@ -23,6 +25,8 @@ Aliases: --delete-old-sql, --delete-old-credentials, --reset-auth-db.
 Examples:
   ./local-debug.sh
   ./local-debug.sh --stop-auth
+  ./local-debug.sh --pause-endpoint 'GET /api/auth/action/catalog'
+  ./local-debug.sh --resume-endpoint 'GET /api/auth/action/catalog'
   ./local-debug.sh --clean-sql --clean-auth
   ./local-debug.sh --clean-sql --clean-credentials --clean-auth
   ./local-debug.sh --clean-sql=true --clean-credentials=false --clean-auth=true
@@ -32,6 +36,9 @@ database can cause migration errors; the script never silently resets that datab
 Credential cleanup affects the backend only; Vben's store key is always preserved.
 Retained MFA bindings need their original encryption key. Other backend settings
 use the template defaults. Redis is not cleared. No git pull/commit/push is performed.
+
+Endpoint controls take effect on the next request in Vben started by this script.
+They match the HTTP method and path. Omit the query string from PATH.
 EOF
 }
 
@@ -42,7 +49,11 @@ clean_auth=false
 skip_tests=false
 dry_run=false
 stop_auth=false
-for arg in "$@"; do
+endpoint_action=
+endpoint=
+while [ "$#" -gt 0 ]; do
+  arg=$1
+  shift
   case "$arg" in
     -h|--help) usage; exit 0 ;;
     --clean-sql|--delete-old-sql) clean_sql=true ;;
@@ -52,6 +63,13 @@ for arg in "$@"; do
     --clean-credentials=*|--delete-old-credentials=*) clean_credentials=${arg#*=} ;;
     --clean-auth=*|--reset-auth-db=*) clean_auth=${arg#*=} ;;
     --stop-auth) stop_auth=true ;;
+    --pause-endpoint|--resume-endpoint)
+      [ -z "$endpoint_action" ] || fail 'Specify exactly one endpoint control'
+      [ "$#" -gt 0 ] || fail "$arg requires a quoted 'METHOD /api/auth/path'"
+      endpoint_action=${arg#--}
+      endpoint=$1
+      shift
+      ;;
     --skip-tests) skip_tests=true ;;
     --dry-run) dry_run=true ;;
     *) fail "Unknown argument: $arg (use --help)" ;;
@@ -67,6 +85,39 @@ ROOT=$(cd "$BACKEND_TEMPLATE/.." && pwd -P)
 FRONTEND_TEMPLATE="$ROOT/pc-admin-fe-layout"
 AUTH_DIR="$ROOT/demos/auth"
 VBEN_DIR="$ROOT/demos/vben-antd-vue3"
+LOCAL_DEBUG_DIR="$BACKEND_TEMPLATE/.local-debug"
+AUTH_FAULTS_DIR="$LOCAL_DEBUG_DIR/faults"
+
+if [ -n "$endpoint_action" ]; then
+  if [ "$stop_auth" = true ] || [ "$clean_sql" = true ] || [ "$clean_credentials" = true ] || \
+      [ "$clean_auth" = true ] || [ "$skip_tests" = true ]; then
+    fail 'Endpoint controls cannot be combined with service or cleanup options'
+  fi
+  endpoint_pattern='^[A-Z]+ /api/auth/[^[:space:]?#]+$'
+  [[ "$endpoint" =~ $endpoint_pattern ]] || fail "Expected 'METHOD /api/auth/path' without a query string"
+
+  if [ "$dry_run" = true ]; then
+    printf 'Would %s %s in the local Vben proxy.\n' "${endpoint_action%-endpoint}" "$endpoint"
+    exit 0
+  fi
+  command -v python3 >/dev/null || fail 'Missing command: python3'
+  python3 - "$AUTH_FAULTS_DIR" "$endpoint_action" "$endpoint" <<'PY'
+import hashlib, pathlib, sys
+
+directory, action, endpoint = sys.argv[1:]
+directory = pathlib.Path(directory)
+# One marker per rule makes each toggle atomic and leaves other rules intact.
+marker = directory / hashlib.sha256(endpoint.encode()).hexdigest()
+if action == 'pause-endpoint':
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    marker.touch(mode=0o600, exist_ok=True)
+    print(f'Paused {endpoint} through local Vben (HTTP 502).')
+else:
+    marker.unlink(missing_ok=True)
+    print(f'Resumed forwarding {endpoint} through local Vben.')
+PY
+  exit 0
+fi
 
 stop_service() {
   local port=$1 expected_dir=$2 pid process_dir attempt
@@ -131,7 +182,8 @@ for repo in "$BACKEND_TEMPLATE" "$FRONTEND_TEMPLATE" "$ROOT/demos"; do
 done
 
 # Prevent simultaneous invocations from regenerating the same demos.
-LOCK_DIR="$BACKEND_TEMPLATE/.local-debug.lock"
+LOCK_DIR="$LOCAL_DEBUG_DIR/lock"
+mkdir -p "$LOCAL_DEBUG_DIR"
 mkdir "$LOCK_DIR" 2>/dev/null || fail "Another run is active (lock: $LOCK_DIR)"
 trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 trap 'exit 130' INT
@@ -230,7 +282,8 @@ wait_http() {
 
 start_service "$AUTH_DIR" "$LOG_DIR/auth.log" "$LOG_DIR/auth.pid" ./bin/auth -c ./conf
 wait_http http://127.0.0.1:8081/healthz "$LOG_DIR/auth.pid" "$LOG_DIR/auth.log"
-start_service "$VBEN_DIR" "$LOG_DIR/vben.log" "$LOG_DIR/vben.pid" pnpm dev
+start_service "$VBEN_DIR" "$LOG_DIR/vben.log" "$LOG_DIR/vben.pid" \
+  env LOCAL_DEBUG_AUTH_FAULTS_DIR="$AUTH_FAULTS_DIR" pnpm dev
 wait_http http://127.0.0.1:5666/ "$LOG_DIR/vben.pid" "$LOG_DIR/vben.log"
 wait_http http://127.0.0.1:5666/api/auth/pub/opt "$LOG_DIR/vben.pid" "$LOG_DIR/vben.log"
 printf '\nReady: Auth http://127.0.0.1:8081 | Vben PC http://127.0.0.1:5666\nLogs: %s\n' "$LOG_DIR"

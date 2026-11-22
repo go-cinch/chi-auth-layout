@@ -45,6 +45,11 @@ func LoadDir(dir string) (*Config, []Override, error) {
 	if err := loadOnboardingPolicy(&cfg, values); err != nil {
 		return nil, nil, err
 	}
+	// Resolve delivery after environment overrides. Explicitly unauthenticated
+	// relays do not need a password; other empty-password setups can start offline.
+	if cfg.Email.Enabled && strings.TrimSpace(cfg.Email.Password) == "" && !strings.EqualFold(cfg.Email.Authentication, "none") {
+		cfg.Email.SkipDelivery = true
+	}
 	return &cfg, overrides, nil
 }
 

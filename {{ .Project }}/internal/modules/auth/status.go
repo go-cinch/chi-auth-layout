@@ -27,6 +27,7 @@ type StatusRequirements struct {
 	PasswordResetOnboardingHidden *bool `json:"password_reset_onboarding_hidden,omitempty"`
 	EmailOnboardingHidden         *bool `json:"email_onboarding_hidden,omitempty"`
 	TOTPSkipAllowed                *bool `json:"totp_skip_allowed,omitempty"`
+	PasswordResetReason           string `json:"password_reset_reason,omitempty"`
 	PasswordResetSkipAllowed      *bool `json:"password_reset_skip_allowed,omitempty"`
 	PasswordResetRequired         *bool `json:"password_reset_required,omitempty"`
 	TOTPEnrollmentRequired         *bool `json:"totp_enrollment_required,omitempty"`
@@ -188,11 +189,14 @@ func (m *Module) Status(ctx context.Context, q StatusQuery) (*StatusResult, erro
 			}
 			emailRequired = email == ""
 		}
-		passwordCanSkip := m.passwordResetOptional && identity.PasswordResetRequired
+		passwordReason, passwordCanSkip, err := m.passwordResetPolicy(ctx, identity)
+		if err != nil {
+			return nil, err
+		}
 		totpHidden := m.onboardingVisibility.TOTP && totpCanSkip
 		passwordHidden := m.onboardingVisibility.PasswordReset && passwordCanSkip
 		emailHidden := m.onboardingVisibility.Email && !m.requiresEmailBinding()
-		result.Requirements = &StatusRequirements{TOTPOnboardingHidden: &totpHidden, PasswordResetOnboardingHidden: &passwordHidden, EmailOnboardingHidden: &emailHidden, TOTPSkipAllowed: &totpCanSkip, PasswordResetSkipAllowed: &passwordCanSkip, PasswordResetRequired: &identity.PasswordResetRequired, TOTPEnrollmentRequired: &required, EmailBindingRequired: &emailRequired}
+		result.Requirements = &StatusRequirements{PasswordResetReason: passwordReason, TOTPOnboardingHidden: &totpHidden, PasswordResetOnboardingHidden: &passwordHidden, EmailOnboardingHidden: &emailHidden, TOTPSkipAllowed: &totpCanSkip, PasswordResetSkipAllowed: &passwordCanSkip, PasswordResetRequired: &identity.PasswordResetRequired, TOTPEnrollmentRequired: &required, EmailBindingRequired: &emailRequired}
 	case "totp_enrollment":
 		passwordRequired := false
 		if m.totpEnabled() {
@@ -202,7 +206,7 @@ func (m *Module) Status(ctx context.Context, q StatusQuery) (*StatusResult, erro
 			}
 			passwordRequired = !canEnroll
 		}
-		result.Requirements = &StatusRequirements{EnrollmentRequired: &required, PasswordRequired: &passwordRequired}
+		result.Requirements = &StatusRequirements{EnrollmentRequired: &required, PasswordRequired: &passwordRequired, TOTPSkipAllowed: &totpCanSkip}
 	case "email_bind":
 		if m.emailCodes == nil {
 			return nil, ErrEmailUnavailable

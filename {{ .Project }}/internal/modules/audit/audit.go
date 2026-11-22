@@ -14,6 +14,9 @@ import (
 	"{{ .Computed.module_name_final }}/internal/common/pagination"
 	"{{ .Computed.module_name_final }}/internal/common/report"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
+{{- if .Computed.enable_redis_final }}
+	"{{ .Computed.module_name_final }}/internal/infra/rds"
+{{- end }}
 )
 
 var (
@@ -23,6 +26,9 @@ var (
 )
 
 type Module struct {
+{{- if .Computed.enable_redis_final }}
+	stream       *rds.Stream
+{{- end }}
 	settings     config.AuditConfig
 	authHTTPPath string
 	store        *db.Store
@@ -33,7 +39,16 @@ func New(store *db.Store, limits pagination.Limits, settings config.AuditConfig)
 	return &Module{store: store, limits: limits, settings: settings}
 }
 
+// MFA continuation is a recorded login step with no success or failure yet.
+const (
+	successSQL = "status >= 200 AND status < 400"
+	challengeSQL = "kind = 'login' AND status = 403 AND error_code = 'AUTH_LOGIN_MFA_REQUIRED'"
+	failureSQL = "(status < 200 OR status >= 400) AND NOT (" + challengeSQL + ")"
+	outcomeSQL = "CASE WHEN " + challengeSQL + " THEN 'mfa_challenge' WHEN " + successSQL + " THEN 'success' ELSE 'failure' END"
+)
+
 type Event struct {
+	Outcome string `json:"outcome"`
 	StepUpFingerprint string `json:"step_up_fingerprint"`
 	StepUpVerifiedAt  int64  `json:"step_up_verified_at"`
 	selectedFields report.Fields
@@ -60,6 +75,7 @@ type Event struct {
 	OccurredAt int64  `json:"occurred_at"`
 }
 type Filter struct {
+	UserID   *int64
 	Fields   report.Fields
 	Username string
 	IP       string
@@ -103,10 +119,35 @@ func (m *Module) RecordHTTP(ctx context.Context, event auditctx.Event) error {
 	if (event.Kind != "login" && event.Kind != "operation") || event.UserID < 0 {
 		return ErrFilter
 	}
+{{- if .Computed.enable_redis_final }}
+	if m.stream != nil {
+		return m.enqueue(ctx, event)
+	}
+{{- end }}
+	if event.Kind == "login" && event.AdditionalUserOperation != "" {
+		return m.store.Tx(ctx, func(tx context.Context) error { return m.writeEvents(tx, event, "") })
+	}
+	return m.insertEvent(ctx, event, "")
+}
+
+// writeEvents uses the caller's transaction, including for a paired login and operation.
+func (m *Module) writeEvents(ctx context.Context, event auditctx.Event, deliveryID string) error {
+	if err := m.insertEvent(ctx, event, deliveryID); err != nil {
+		return err
+	}
+	if event.Kind == "login" && event.AdditionalUserOperation != "" {
+		event.Kind, event.ResourceType, event.Operation = "operation", "user", event.AdditionalUserOperation
+		return m.insertEvent(ctx, event, deliveryID)
+	}
+	return nil
+}
+
+func (m *Module) insertEvent(ctx context.Context, event auditctx.Event, deliveryID string) error {
 	if event.ResourceID == "" && event.Kind == "operation" {
 		if event.Module == "auth" && event.ResourceType == "user" && event.UserID > 0 {
 			event.ResourceID = strconv.FormatInt(event.UserID, 10)
 		}
+		// Older producers may have queued a create without an explicit target ID.
 		if event.Operation == "create" && event.Status >= 200 && event.Status < 300 {
 			var body struct {
 				ID json.Number `json:"id"`
@@ -118,10 +159,23 @@ func (m *Module) RecordHTTP(ctx context.Context, event auditctx.Event) error {
 			}
 		}
 	}
-	_, err := m.store.SQL(ctx).ExecContext(ctx, `INSERT INTO t_audit_event
- (occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header,step_up_fingerprint,step_up_verified_at)
- VALUES ($1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NULLIF($21::bigint,0))`,
-		event.OccurredAt, event.Kind, event.UserID, clean(event.Username, 256), clean(event.Module, 64), clean(event.Method, 16), clean(event.Path, 1024), clean(event.IP, 128), clean(event.UserAgent, 512), clean(event.TraceID, 128), clean(event.ErrorCode, 128), event.Status, max(int64(0), event.DurationMS), clean(event.Operation, 32), clean(event.ResourceType, 64), clean(event.ResourceID, 1024), jsonValue(event.RequestParams), jsonValue(event.ResponseParams), jsonValue(event.Header), clean(event.StepUpFingerprint, 128), event.StepUpVerifiedAt)
+	const columns = "occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,request_params,response_params,header,step_up_fingerprint,step_up_verified_at"
+	const values = "$1,$2,NULLIF($3,0),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NULLIF($21::bigint,0)"
+	query := "INSERT INTO t_audit_event (" + columns + ") VALUES (" + values + ")"
+	args := []any{
+		event.OccurredAt, event.Kind, event.UserID, clean(event.Username, 256), clean(event.Module, 64),
+		clean(event.Method, 16), clean(event.Path, 1024), clean(event.IP, 128), clean(event.UserAgent, 512),
+		clean(event.TraceID, 128), clean(event.ErrorCode, 128), event.Status, max(int64(0), event.DurationMS),
+		clean(event.Operation, 32), clean(event.ResourceType, 64), clean(event.ResourceID, 1024),
+		jsonValue(event.RequestParams), jsonValue(event.ResponseParams), jsonValue(event.Header),
+		clean(event.StepUpFingerprint, 128), event.StepUpVerifiedAt,
+	}
+	if deliveryID != "" {
+		query = "INSERT INTO t_audit_event (" + columns + ",delivery_id) VALUES (" + values + ",$22)" +
+			" ON CONFLICT (delivery_id,kind) WHERE delivery_id IS NOT NULL DO NOTHING"
+		args = append(args, deliveryID)
+	}
+	_, err := m.store.SQL(ctx).ExecContext(ctx, query, args...)
 	return err
 }
 
@@ -139,6 +193,9 @@ func normalize(f Filter, settings config.AuditConfig) (Filter, error) {
 	if (f.From != nil && (*f.From < 0 || *f.From > maxTimestamp)) ||
 		(f.To != nil && (*f.To < 0 || *f.To > maxTimestamp)) ||
 		(f.From != nil && f.To != nil && (*f.To <= *f.From || *f.To-*f.From > settings.MaxWindow.Milliseconds())) {
+		return f, ErrFilter
+	}
+	if f.UserID != nil && *f.UserID <= 0 {
 		return f, ErrFilter
 	}
 	f.Query = strings.TrimSpace(f.Query)
@@ -186,10 +243,10 @@ func where(f Filter) (string, []any) {
 		s += fmt.Sprintf(" AND module=$%d", len(args))
 	}
 	if f.Result == "success" {
-		s += " AND status >= 200 AND status < 400"
+		s += " AND " + successSQL
 	}
 	if f.Result == "failure" {
-		s += " AND (status < 200 OR status >= 400)"
+		s += " AND " + failureSQL
 	}
 
 	for _, item := range []struct{ field, value string }{
@@ -199,6 +256,10 @@ func where(f Filter) (string, []any) {
 			args = append(args, item.value)
 			s += fmt.Sprintf(" AND %s=$%d", item.field, len(args))
 		}
+	}
+	if f.UserID != nil {
+		args = append(args, *f.UserID)
+		s += fmt.Sprintf(" AND user_id=$%d", len(args))
 	}
 	if f.Weekday != nil {
 		args = append(args, f.Timezone, *f.Weekday, *f.Hour)
@@ -211,7 +272,7 @@ func where(f Filter) (string, []any) {
 func order(f Filter) string {
 	switch f.Sort {
 	case "failure":
-		return " ORDER BY (status < 200 OR status >= 400) DESC,occurred_at DESC,id DESC"
+		return " ORDER BY (" + failureSQL + ") DESC,occurred_at DESC,id DESC"
 	case "duration":
 		return " ORDER BY duration_ms DESC,occurred_at DESC,id DESC"
 	default:

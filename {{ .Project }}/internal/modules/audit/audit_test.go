@@ -34,18 +34,30 @@ func setup(t *testing.T) (*Module, sqlmock.Sqlmock) {
 }
 
 // Fixtures spell out SQL column order independently of the production projection.
-const metadataColumns = "id,occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,step_up_fingerprint,step_up_verified_at"
+const metadataColumns = "id,occurred_at,kind,user_id,username,module,method,path,ip,user_agent,trace_id,error_code,status,duration_ms,operation,resource_type,resource_id,step_up_fingerprint,step_up_verified_at,outcome"
 
 func eventRows() *sqlmock.Rows {
 	return sqlmock.NewRows(strings.Split(metadataColumns, ","))
 }
 
 func row() *sqlmock.Rows {
-	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "fingerprint", int64(90000))
+	return eventRows().AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "fingerprint", int64(90000), "success")
 }
 
 func detailRow() *sqlmock.Rows {
-	return sqlmock.NewRows(strings.Split(metadataColumns+",header,request_params,response_params", ",")).AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "fingerprint", int64(90000), []byte(`{"x-test":"header"}`), []byte(`{"input":1}`), []byte(`{"output":2}`))
+	return sqlmock.NewRows(strings.Split(metadataColumns+",header,request_params,response_params", ",")).AddRow(1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "fingerprint", int64(90000), "success", []byte(`{"x-test":"header"}`), []byte(`{"input":1}`), []byte(`{"output":2}`))
+}
+
+func TestLoginRecoveryAuditRollsBackBothRecordsOnError(t *testing.T) {
+	m, mock := setup(t)
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO t_audit_event").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO t_audit_event").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectRollback()
+	err := m.RecordHTTP(t.Context(), auditctx.Event{Kind: "login", Operation: "login", AdditionalUserOperation: "recover_totp_recovery_code"})
+	if !errors.Is(err, sqlmock.ErrCancelled) {
+		t.Fatalf("expected recovery operation write error, got %v", err)
+	}
 }
 
 func TestRecordAndRead(t *testing.T) {
@@ -121,7 +133,7 @@ func TestRecordAndRead(t *testing.T) {
 }
 
 func TestReadProjectionCompatibility(t *testing.T) {
-	metadataSQL := "id, occurred_at, kind, COALESCE(user_id,0), username, module, method, path, ip, user_agent, trace_id, error_code, status, duration_ms, operation, resource_type, resource_id, step_up_fingerprint, COALESCE(step_up_verified_at,0)"
+	metadataSQL := "id, occurred_at, kind, COALESCE(user_id,0), username, module, method, path, ip, user_agent, trace_id, error_code, status, duration_ms, operation, resource_type, resource_id, step_up_fingerprint, COALESCE(step_up_verified_at,0), " + outcomeSQL
 	for _, operation := range []string{"list", "export", "get", "detail_default", "detail_all"} {
 		t.Run(operation, func(t *testing.T) {
 			m, mock := setup(t)
@@ -167,7 +179,7 @@ func TestReadProjectionCompatibility(t *testing.T) {
 				t.Fatal("metadata reads must preserve RawMessage null values")
 			}
 			want := map[string]any{}
-			if err := json.Unmarshal([]byte(`{"id":1,"occurred_at":100000,"kind":"login","user_id":1,"username":"alice","module":"auth","method":"POST","path":"/pub/login","ip":"127.0.0.1","user_agent":"agent","trace_id":"trace","error_code":"","status":200,"duration_ms":12,"operation":"login","resource_type":"session","resource_id":"","step_up_fingerprint":"fingerprint","step_up_verified_at":90000,"header":null,"request_params":null,"response_params":null}`), &want); err != nil {
+			if err := json.Unmarshal([]byte(`{"id":1,"occurred_at":100000,"kind":"login","user_id":1,"username":"alice","module":"auth","method":"POST","path":"/pub/login","ip":"127.0.0.1","user_agent":"agent","trace_id":"trace","error_code":"","status":200,"outcome":"success","duration_ms":12,"operation":"login","resource_type":"session","resource_id":"","step_up_fingerprint":"fingerprint","step_up_verified_at":90000,"header":null,"request_params":null,"response_params":null}`), &want); err != nil {
 				t.Fatal(err)
 			}
 			if detail {
@@ -224,17 +236,18 @@ func TestFilters(t *testing.T) {
 
 func TestInvestigationFilters(t *testing.T) {
 	day, hour := int32(0), int32(8)
-	f, err := normalize(Filter{Kind: "login", Weekday: &day, Hour: &hour, Timezone: "Asia/Shanghai", Username: "alice", IP: "127.0.0.1", Path: "/pub/login", Sort: "failure"}, config.DefaultAudit())
+	actorID := int64(17)
+	f, err := normalize(Filter{Kind: "login", UserID: &actorID, Weekday: &day, Hour: &hour, Timezone: "Asia/Shanghai", Username: "alice", IP: "127.0.0.1", Path: "/pub/login", Sort: "failure"}, config.DefaultAudit())
 	if err != nil {
 		t.Fatal(err)
 	}
 	clause, args := where(f)
-	for _, part := range []string{"username=$4", "ip=$5", "path=$6", "EXTRACT(ISODOW", "EXTRACT(HOUR"} {
+	for _, part := range []string{"username=$4", "ip=$5", "path=$6", "user_id=$7", "EXTRACT(ISODOW", "EXTRACT(HOUR"} {
 		if !strings.Contains(clause, part) {
 			t.Fatal(clause)
 		}
 	}
-	if len(args) != 9 || args[6] != "Asia/Shanghai" {
+	if len(args) != 10 || args[6] != actorID || args[7] != "Asia/Shanghai" {
 		t.Fatal(args)
 	}
 	if !strings.Contains(order(f), "status < 200") {
@@ -296,7 +309,7 @@ func TestConfiguredAuditWindowAndExportLimit(t *testing.T) {
 	for _, count := range []int{2, 3} {
 		rows := eventRows()
 		for i := 0; i < count; i++ {
-			rows.AddRow(i+1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "", 0)
+			rows.AddRow(i+1, int64(100000), "login", 1, "alice", "auth", "POST", "/pub/login", "127.0.0.1", "agent", "trace", "", 200, 12, "login", "session", "", "", 0, "success")
 		}
 		mock.ExpectQuery("SELECT .* LIMIT \\$4").WithArgs("login", from, to, 3).WillReturnRows(rows)
 		items, err := m.Export(t.Context(), f)

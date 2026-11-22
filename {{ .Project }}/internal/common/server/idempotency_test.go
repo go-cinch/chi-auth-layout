@@ -89,3 +89,7 @@ func TestValidIdempotencyKey(t *testing.T) {
 		}
 	}
 }
+
+func (s failingIdempotencyStore) AllowTransactional(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	return s.Claim(ctx, key, ttl)
+}

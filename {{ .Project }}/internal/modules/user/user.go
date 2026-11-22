@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -103,10 +102,8 @@ type CreateUserInput struct {
 type UpdateUserInput struct {
 	ActionBindings *[]actionmodule.ResourceBinding `json:"action_bindings,omitempty"`
 	Username       *string                         `json:"username,omitempty"`
-	Password       *string                         `json:"password,omitempty"`
 	RoleID         *int64                          `json:"role_id,omitempty"`
 	ActionCodes    *[]string                       `json:"action_codes,omitempty"`
-	Status         *int16                          `json:"status,omitempty"`
 	Metadata       *map[string]any                 `json:"metadata,omitempty"`
 }
 
@@ -176,12 +173,18 @@ func (m *Module) Get(ctx context.Context, id int64) (*User, error) {
 	if id <= 0 {
 		return nil, ErrInvalid
 	}
-	return m.lookup(ctx, m.store.SQL(ctx), id)
+	return m.lookup(ctx, m.store.SQL(ctx), id, true)
 }
 
-func (m *Module) lookup(ctx context.Context, executor db.SQLExecutor, id int64) (*User, error) {
-	const query = `SELECT id, created_at, updated_at, role_id, action, username, code, last_logged_in_at, status, metadata, wrong, login_count FROM t_user WHERE id = $1`
-	value, err := m.scan(executor.QueryRowContext(ctx, query, id))
+func (m *Module) lookup(ctx context.Context, executor db.SQLExecutor, id int64, effectiveStatus bool) (*User, error) {
+	args := []any{id}
+	now := ""
+	if effectiveStatus {
+		now = "$2"
+		args = append(args, time.Now().UnixMilli())
+	}
+	query := "SELECT " + userReadColumns(now) + " FROM t_user WHERE id = $1"
+	value, err := m.scan(executor.QueryRowContext(ctx, query, args...))
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +317,7 @@ func (m *Module) Create(ctx context.Context, input CreateUserInput) (*User, erro
 		if !inserted {
 			return errors.New("generate unique user code")
 		}
-		value, err = m.lookup(ctx, m.store.SQL(ctx), id)
+		value, err = m.lookup(ctx, m.store.SQL(ctx), id, false)
 		return err
 	})
 	if err != nil {
@@ -340,36 +343,22 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 		}
 		input.Username = &value
 	}
-	if input.Password != nil && !validPassword(*input.Password) {
-		return nil, ErrInvalid
-	}
-	if input.Status != nil && !validStatus(*input.Status) {
-		return nil, ErrInvalid
-	}
-	resetPasswordFailures := input.Password != nil
 	var metadata string
 	if input.Metadata != nil {
-		normalized, err := normalizeUpdateMetadata(*input.Metadata, input.Status)
+		for _, key := range userActionMetadataKeys {
+			if _, present := (*input.Metadata)[key]; present {
+				return nil, ErrInvalid
+			}
+		}
+		var err error
+		metadata, err = encodeMetadata(*input.Metadata)
 		if err != nil {
 			return nil, ErrInvalid
 		}
-		if input.Password != nil {
-			delete(normalized, authmodule.PasswordChangeFailuresMetadataKey)
-		}
-		if _, retained := normalized[authmodule.PasswordChangeFailuresMetadataKey]; !retained {
-			resetPasswordFailures = true
-		}
-		input.Metadata = &normalized
-		metadata, err = encodeMetadata(normalized)
-		if err != nil {
-			return nil, ErrInvalid
-		}
-	} else if input.Status != nil && *input.Status == StatusLocked {
-		return nil, ErrInvalid
 	}
 	var value *User
 	err := m.store.MutationTx(ctx, func(ctx context.Context) error {
-		if input.RoleID != nil || input.ActionCodes != nil || input.ActionBindings != nil || input.Status != nil {
+		if input.RoleID != nil || input.ActionCodes != nil || input.ActionBindings != nil {
 			actionmodule.MarkPermissionMutation(ctx)
 		}
 		if input.ActionBindings != nil {
@@ -383,15 +372,8 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 			input.ActionCodes = &codes
 		}
 
-		if input.RoleID != nil || input.ActionCodes != nil {
-			if err := authn.RequirePermissionOperation(ctx, m.administration, "user", "update"); err != nil {
-				return err
-			}
-		}
-		if input.Username != nil || input.Password != nil {
-			if err := authn.RequirePermissionOperation(ctx, m.administration, "user", "update"); err != nil {
-				return err
-			}
+		if err := m.requireEditControl(ctx, "edit"); err != nil {
+			return err
 		}
 		sets := make([]string, 0, 8)
 		args := make([]any, 0, 9)
@@ -401,14 +383,6 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 		}
 		if input.Username != nil {
 			add("username", *input.Username)
-		}
-		if input.Password != nil {
-			password, err := authmodule.HashPassword(*input.Password)
-			if err != nil {
-				return err
-			}
-			add("password", string(password))
-			sets = append(sets, "credential_version = credential_version + 1", "login_count = 0")
 		}
 		if input.RoleID != nil {
 			if err := m.validateRole(ctx, m.store.SQL(ctx), input.RoleID); err != nil {
@@ -426,28 +400,10 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 			}
 			add("action", strings.Join(codes, ","))
 		}
-		if input.Status != nil {
-			add("status", *input.Status)
-		}
 		if input.Metadata != nil {
-			if input.Status == nil {
-				args = append(args, metadata)
-				placeholder := "$" + strconv.Itoa(len(args))
-				sets = append(sets, "metadata = CASE WHEN metadata ? 'lock_expired_at' THEN "+placeholder+"::jsonb || jsonb_build_object('lock_expired_at', metadata -> 'lock_expired_at') ELSE "+placeholder+"::jsonb END")
-			} else {
-				add("metadata", metadata)
-			}
-		} else {
-			metadataExpression := "metadata"
-			if input.Password != nil {
-				metadataExpression += " - '" + authmodule.PasswordChangeFailuresMetadataKey + "'"
-			}
-			if input.Status != nil && *input.Status != StatusLocked {
-				metadataExpression += " - 'lock_expired_at'"
-			}
-			if metadataExpression != "metadata" {
-				sets = append(sets, "metadata = "+metadataExpression)
-			}
+			args = append(args, metadata, pq.Array(userActionMetadataKeys))
+			// Replace editable keys and preserve action-owned values from the current row.
+			sets = append(sets, fmt.Sprintf("metadata = $%d::jsonb || COALESCE((SELECT jsonb_object_agg(key, value) FROM jsonb_each(t_user.metadata) WHERE key = ANY($%d::text[])), '{}'::jsonb)", len(args)-1, len(args)))
 		}
 		add("updated_at", time.Now().UnixMilli())
 		args = append(args, id)
@@ -463,7 +419,7 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 		if count == 0 {
 			return ErrNotFound
 		}
-		value, err = m.lookup(ctx, m.store.SQL(ctx), id)
+		value, err = m.lookup(ctx, m.store.SQL(ctx), id, false)
 		return err
 	})
 	if err != nil {
@@ -471,11 +427,6 @@ func (m *Module) Update(ctx context.Context, id int64, input UpdateUserInput) (*
 			return nil, err
 		}
 		return nil, fmt.Errorf("update user: %w", err)
-	}
-	if resetPasswordFailures && m.passwordFailures != nil {
-		if err := m.passwordFailures.Clear(ctx, id); err != nil {
-			slog.WarnContext(ctx, "clear updated user "+strconv.FormatInt(id, 10)+" password failures failed: "+err.Error(), "operation", "clear_updated_user_password_failures", "outcome", "failure", "error", err, "user_id", id)
-		}
 	}
 	return value, nil
 }
@@ -554,8 +505,7 @@ func (m *Module) List(ctx context.Context, input ListUsersInput) (*ListUsersResu
 		return value, err
 	}
 	args = append(args, now)
-	expired := expiredLockSQL("$" + strconv.Itoa(len(args)))
-	columns := "id, created_at, updated_at, role_id, action, username, code, last_logged_in_at, CASE WHEN " + expired + " THEN 1 ELSE status END, CASE WHEN " + expired + " THEN metadata - 'lock_expired_at' ELSE metadata END, wrong, login_count"
+	columns := userReadColumns("$" + strconv.Itoa(len(args)))
 	args = append(args, size, offset)
 	query := "SELECT " + columns + " FROM t_user" + where + " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args)-1) + " OFFSET $" + strconv.Itoa(len(args))
 	rows, err := m.store.SQL(ctx).QueryContext(ctx, query, args...)
@@ -582,8 +532,22 @@ func (m *Module) List(ctx context.Context, input ListUsersInput) (*ListUsersResu
 	return value, nil
 }
 
-// Lists report effective status without writing. Authentication persists expiration
-// for the relevant user through auth.unlockExpiredUser.
+func userReadColumns(now string) string {
+	status, metadata := lockStatusColumns(now)
+	return "id, created_at, updated_at, role_id, action, username, code, last_logged_in_at, " + status + ", " + metadata + ", wrong, login_count"
+}
+
+func lockStatusColumns(now string) (string, string) {
+	if now == "" {
+		return "status", "metadata"
+	}
+	expired := expiredLockSQL(now)
+	return "CASE WHEN " + expired + " THEN 1 ELSE status END",
+		"CASE WHEN " + expired + " THEN metadata - 'lock_expired_at' ELSE metadata END"
+}
+
+// User reads report effective status without writing. Authentication persists
+// expiration for the relevant user through auth.unlockExpiredUser.
 func expiredLockSQL(nowPlaceholder string) string {
 	return "(status = 2 AND CASE WHEN metadata ->> 'lock_expired_at' ~ '^[0-9]+$' THEN (metadata ->> 'lock_expired_at')::numeric ELSE 0 END BETWEEN 1 AND " + nowPlaceholder + ")"
 }
@@ -789,7 +753,7 @@ func validPassword(value string) bool { return strings.TrimSpace(value) != "" }
 func validStatus(value int16) bool { return value >= StatusPending && value <= StatusLocked }
 
 func allNil(input UpdateUserInput) bool {
-	return input.Username == nil && input.Password == nil && input.RoleID == nil && input.ActionCodes == nil && input.ActionBindings == nil && input.Status == nil && input.Metadata == nil
+	return input.Username == nil && input.RoleID == nil && input.ActionCodes == nil && input.ActionBindings == nil && input.Metadata == nil
 }
 
 func withoutLockMetadata(value map[string]any) map[string]any {
@@ -800,38 +764,6 @@ func withoutLockMetadata(value map[string]any) map[string]any {
 		}
 	}
 	return result
-}
-
-func normalizeUpdateMetadata(value map[string]any, status *int16) (map[string]any, error) {
-	result := withoutLockMetadata(value)
-	if status == nil || *status != StatusLocked {
-		return result, nil
-	}
-	expiredAt, ok := integerMetadataValue(value["lock_expired_at"])
-	if !ok || (expiredAt > 0 && expiredAt <= time.Now().UnixMilli()) {
-		return nil, ErrInvalid
-	}
-	result["lock_expired_at"] = expiredAt
-	return result, nil
-}
-
-func integerMetadataValue(value any) (int64, bool) {
-	switch number := value.(type) {
-	case int:
-		return int64(number), number >= 0
-	case int32:
-		return int64(number), number >= 0
-	case int64:
-		return number, number >= 0
-	case float64:
-		converted := int64(number)
-		return converted, number >= 0 && number == float64(converted)
-	case json.Number:
-		converted, err := number.Int64()
-		return converted, err == nil && converted >= 0
-	default:
-		return 0, false
-	}
 }
 
 func encodeMetadata(value map[string]any) (string, error) {
@@ -955,6 +887,8 @@ func orderedActions(codes []string, byCode map[string]ActionView) []ActionView {
 }
 
 type PermissionAdministration interface {
+	RequireUserEditControl(context.Context, string) error
+	RequirePermissionEndpoint(context.Context, string, string) error
 	RequireAllPermissions(context.Context) error
 	RequirePermissionOperation(context.Context, string, string) error
 	LockPermissionMutation(context.Context) error

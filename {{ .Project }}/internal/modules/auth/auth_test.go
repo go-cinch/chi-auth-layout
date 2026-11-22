@@ -11,6 +11,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"golang.org/x/crypto/bcrypt"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/infra/db"
 )
 
@@ -237,8 +238,12 @@ func TestCurrentUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Logout(ctx, session.RefreshToken); err != nil {
+	auditCtx, state := auditctx.WithState(context.Background())
+	if err := m.Logout(auditCtx, session.RefreshToken); err != nil {
 		t.Fatal(err)
+	}
+	if event := state.Snapshot(); event.UserID != 3 || event.Username != "readonly" {
+		t.Fatal("logout did not attribute the verified session owner")
 	}
 	if err := m.sessions.ValidateSession(ctx, session.SessionID); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("session remained valid: %v", err)

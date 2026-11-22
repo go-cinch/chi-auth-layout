@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
-	"{{ .Computed.module_name_final }}/internal/common/report"
 )
 
 type TOTPStatus struct {
@@ -270,15 +270,17 @@ func (m *Module) ResetUserTOTP(ctx context.Context, userID int64) error {
 	if userID <= 0 {
 		return ErrInvalid
 	}
-	// Page access is checked explicitly, independent of the new route binding.
-	allowed, err := m.canResetTOTP(ctx)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return apperror.Forbidden
+	if _, ok := authn.FromContext(ctx); !ok {
+		return ErrUnauthorized
 	}
 	return m.store.MutationTx(ctx, func(txCtx context.Context) error {
+		path := m.httpPath + "/totp/reset/" + strconv.FormatInt(userID, 10)
+		if err := m.RequirePermissionEndpoint(txCtx, http.MethodPost, path); err != nil {
+			if errors.Is(err, authn.ErrPermissionGrantRequired) {
+				return apperror.Forbidden
+			}
+			return err
+		}
 		var id int64
 		err := m.store.SQL(txCtx).QueryRowContext(txCtx, `UPDATE t_user SET credential_version = credential_version + 1, totp_recovery_pending = FALSE, updated_at = $1 WHERE id = $2 RETURNING id`, time.Now().UnixMilli(), userID).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -293,26 +295,4 @@ func (m *Module) ResetUserTOTP(ctx context.Context, userID int64) error {
 		_, err = m.store.SQL(txCtx).ExecContext(txCtx, `DELETE FROM t_user_totp WHERE user_id = $1`, userID)
 		return err
 	})
-}
-
-// Reset authority follows the management page grant explicitly requested by the
-// product, rather than requiring permission to edit user assignments/passwords.
-func (m *Module) canResetTOTP(ctx context.Context) (bool, error) {
-	identity, ok := authn.FromContext(ctx)
-	if !ok {
-		return false, ErrUnauthorized
-	}
-	permissions, err := m.permissionsFor(ctx, identity.UserID, authn.PermissionScope(ctx), report.Fields{"menus"})
-	if err != nil {
-		return false, err
-	}
-	if permissions.PermissionScope == "*" {
-		return true, nil
-	}
-	for _, menu := range permissions.Menus {
-		if menu.MenuPath == "/system/user" {
-			return true, nil
-		}
-	}
-	return false, nil
 }

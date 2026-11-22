@@ -170,6 +170,7 @@ CREATE TABLE t_user (
     wrong BIGINT NOT NULL DEFAULT 0,
     credential_version BIGINT NOT NULL DEFAULT 1,
     login_count BIGINT NOT NULL DEFAULT 0,
+    admin_password_reset_pending BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT uk_user_username UNIQUE (username),
     CONSTRAINT uk_user_email UNIQUE (email),
     CONSTRAINT ck_user_email CHECK (email IS NULL OR (email = LOWER(TRIM(email)) AND email <> '')),
@@ -186,6 +187,7 @@ CREATE TABLE t_user (
     ),
     CONSTRAINT ck_user_credential_version CHECK (credential_version > 0),
     CONSTRAINT ck_user_login_count CHECK (login_count >= 0),
+    CONSTRAINT ck_user_admin_password_reset_pending CHECK (NOT admin_password_reset_pending OR login_count = 0),
     CONSTRAINT ck_user_wrong CHECK (wrong >= 0)
 );
 
@@ -223,7 +225,9 @@ COMMENT ON COLUMN t_user.wrong IS 'consecutive wrong-password count';
 
 COMMENT ON COLUMN t_user.credential_version IS 'Incremented atomically on password changes to invalidate all previously issued sessions';
 
-COMMENT ON COLUMN t_user.login_count IS 'Completed logins since the last administrator password reset; zero requires password reset before business access';
+COMMENT ON COLUMN t_user.login_count IS 'Completed logins since account creation or the last administrator password reset; zero selects the configured onboarding password policy';
+
+COMMENT ON COLUMN t_user.admin_password_reset_pending IS 'Whether the outstanding password step follows an administrator reset and uses the administrator-reset policy';
 
 CREATE INDEX idx_user_role_id ON t_user (role_id);
 
@@ -360,6 +364,49 @@ CREATE INDEX idx_msg_published_at ON t_msg (published_at DESC, id DESC);
 
 CREATE INDEX idx_msg_broadcast ON t_msg (published_at DESC, id DESC) WHERE scope = 'all';
 
+CREATE TABLE t_msg_send_receipt (
+    id BIGSERIAL PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    updated_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
+    sender_id BIGINT NOT NULL,
+    request_key VARCHAR(128) NOT NULL,
+    payload_hash BYTEA NOT NULL,
+    msg_id BIGINT NULL,
+    CONSTRAINT fk_msg_send_receipt_sender FOREIGN KEY (sender_id) REFERENCES t_user (id) ON DELETE CASCADE,
+    CONSTRAINT fk_msg_send_receipt_msg FOREIGN KEY (msg_id) REFERENCES t_msg (id) ON DELETE SET NULL,
+    CONSTRAINT uk_msg_send_receipt_sender_key UNIQUE (sender_id, request_key),
+    CONSTRAINT ck_msg_send_receipt_request_key CHECK (request_key COLLATE "C" ~ '^[A-Za-z0-9_.:-]+$'),
+    CONSTRAINT ck_msg_send_receipt_payload_hash CHECK (OCTET_LENGTH(payload_hash) = 32)
+);
+
+COMMENT ON TABLE t_msg_send_receipt IS 'Records the result of an idempotent message send, including after withdrawal';
+
+COMMENT ON COLUMN t_msg_send_receipt.created_at IS 'Time the sender claimed the request key in Unix milliseconds';
+
+COMMENT ON COLUMN t_msg_send_receipt.updated_at IS 'Last receipt change in Unix milliseconds, including withdrawal';
+
+COMMENT ON COLUMN t_msg_send_receipt.request_key IS 'Client-supplied X-Idempotent key scoped to the sender';
+
+COMMENT ON COLUMN t_msg_send_receipt.payload_hash IS 'SHA-256 digest of the normalized send request used to detect conflicting retries';
+
+COMMENT ON COLUMN t_msg_send_receipt.msg_id IS 'Set on publication and cleared on withdrawal so a retry cannot republish the message';
+
+CREATE INDEX idx_msg_send_receipt_msg ON t_msg_send_receipt (msg_id) WHERE msg_id IS NOT NULL;
+
+-- ON DELETE SET NULL also changes the receipt when the message is withdrawn.
+-- +migrate StatementBegin
+CREATE FUNCTION msg_send_receipt_withdrawn() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at := FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint;
+    RETURN NEW;
+END;
+$$;
+-- +migrate StatementEnd
+
+CREATE TRIGGER msg_send_receipt_withdrawn BEFORE UPDATE OF msg_id ON t_msg_send_receipt
+    FOR EACH ROW WHEN (OLD.msg_id IS NOT NULL AND NEW.msg_id IS NULL)
+    EXECUTE FUNCTION msg_send_receipt_withdrawn();
+
 CREATE TABLE t_msg_recipient (
     id BIGSERIAL PRIMARY KEY,
     created_at BIGINT NOT NULL DEFAULT (FLOOR(EXTRACT(EPOCH FROM statement_timestamp()) * 1000)::bigint),
@@ -444,6 +491,8 @@ CREATE TABLE t_audit_event (
     header JSONB NOT NULL DEFAULT 'null'::jsonb,
     step_up_fingerprint TEXT NOT NULL DEFAULT '',
     step_up_verified_at BIGINT NULL,
+    delivery_id TEXT NULL,
+    CONSTRAINT ck_audit_event_delivery_id CHECK (delivery_id <> ''),
     CONSTRAINT ck_audit_event_kind CHECK (kind IN ('login', 'operation')),
     CONSTRAINT ck_audit_event_user CHECK (user_id IS NULL OR user_id > 0),
     CONSTRAINT ck_audit_event_status CHECK (status BETWEEN 100 AND 599),
@@ -500,6 +549,10 @@ COMMENT ON COLUMN t_audit_event.header IS 'Request headers for login and operati
 COMMENT ON COLUMN t_audit_event.step_up_fingerprint IS 'Opaque identifier of the sensitive-operation verification reused by this session; never derived from a secret or OTP';
 
 COMMENT ON COLUMN t_audit_event.step_up_verified_at IS 'Unix milliseconds of the sensitive-operation verification, not login verification';
+
+COMMENT ON COLUMN t_audit_event.delivery_id IS 'Producer-generated Redis delivery identifier shared by events from one delivery, NULL for synchronous writes';
+
+CREATE UNIQUE INDEX uk_audit_event_delivery_kind ON t_audit_event (delivery_id, kind) WHERE delivery_id IS NOT NULL;
 
 CREATE INDEX idx_audit_event_kind_time ON t_audit_event (kind, occurred_at DESC, id DESC);
 
@@ -724,6 +777,10 @@ DROP TABLE t_audit_event;
 DROP TABLE t_user_msg_status;
 
 DROP TABLE t_msg_recipient;
+
+DROP TABLE t_msg_send_receipt;
+
+DROP FUNCTION msg_send_receipt_withdrawn();
 
 DROP TABLE t_msg;
 

@@ -38,6 +38,9 @@ on any resource key or action word, does not recreate removed features or specia
 capabilities, and does not add new nodes to the submitted catalog. Future
 directory changes do not expand these saved selections automatically. Catalog
 and action changes commit together, retaining action IDs, codes and assignments.
+Switching a resource from wildcard to configured permissions converts its existing
+`*` bindings to the operations and features in the submitted resource definition.
+An empty set of operations removes the affected grant.
 
 Business operations are exactly `read/create/update/delete`. Frontend button IDs
 such as `:edit` or `:send` remain control identifiers. Export is a selectable feature
@@ -68,6 +71,11 @@ Word changes move existing name keys, including translations omitted from the
 request. The action and name changes commit in one permission-locked transaction,
 then refresh the dictionary cache and localization snapshot. Seeded ordinary actions remain
 editable under the administrative grant rules and configured protection switch.
+
+Creating an action with the same normalized resource, operation and feature
+selections as an existing action in the same scope returns `ACTION_PERMISSION_CONFLICT`.
+Partial overlap is allowed. A wildcard is equivalent to any other wildcard in
+the same scope. Identifier conflicts still return `ACTION_CONFLICT`.
 
 `GET /action/catalog` supports `f=scopes,operations,resource_catalog,defined_actions`;
 omitted `f` returns only scopes and operations. Definition references are queried
@@ -122,3 +130,9 @@ preserved through explicit `frontend_visible` and `reference_operations` values.
 Default actions require explicit `resource_keys`; nonempty legacy default maps
 are rejected rather than silently changing authorization. Vben upgrades old
 browser drafts containing the empty map and legacy collection marker before save.
+
+## Business groups on the action page
+
+`PATCH /action/group` accepts `operation`, `word` and the fields for that operation. Creation uses localized `names`. Editing sends `original_word`, the changed names and the `expected_names` shown in the editor. Deletion sends the group's current word and expected names. The backend checks the selected create, edit or delete control inside the transaction. Renaming updates existing action memberships, and deleting an occupied group returns `ACTION_GROUP_NOT_EMPTY`.
+
+`PATCH /action/group/order` accepts the new `order` and the previous `expected_order`. The new order must include each registered group exactly once. A stale edit or order returns HTTP 409. Both routes update only group data in the shared catalog and refresh its snapshot after commit.

@@ -10,10 +10,11 @@ import (
 )
 
 type fakeSetNXClient struct {
-	err        error
-	expiration time.Duration
-	key        string
-	value      any
+	replayAllowed int64
+	err           error
+	expiration    time.Duration
+	key           string
+	value         any
 }
 
 func (f *fakeSetNXClient) SetNX(ctx context.Context, key string, value any, expiration time.Duration) *redis.BoolCmd {
@@ -55,5 +56,27 @@ func TestIdempotencyStoreValidation(t *testing.T) {
 	}
 	if _, err := store.Claim(t.Context(), "request-1", 0); err == nil {
 		t.Fatal("zero ttl was accepted")
+	}
+}
+
+func (f *fakeSetNXClient) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	f.key = keys[0]
+	f.value = args[0]
+	cmd := redis.NewCmd(ctx)
+	cmd.SetVal(f.replayAllowed)
+	cmd.SetErr(f.err)
+	return cmd
+}
+
+func TestAllowTransactional(t *testing.T) {
+	client := &fakeSetNXClient{replayAllowed: 1}
+	store := NewIdempotencyStore(client)
+	ok, err := store.AllowTransactional(t.Context(), "example", time.Minute)
+	if !ok || err != nil || client.key != idempotencyPrefix+"example" || client.value != int64(60000) {
+		t.Fatalf("transactional reservation: %v %v %s %v", ok, err, client.key, client.value)
+	}
+	client.replayAllowed = 0
+	if ok, err = store.AllowTransactional(t.Context(), "example", time.Minute); ok || err != nil {
+		t.Fatalf("legacy reservation: %v %v", ok, err)
 	}
 }

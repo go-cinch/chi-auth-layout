@@ -655,7 +655,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "peak": "Peak: {day} {hour}:00 · {count} events",
                     "actor": "Actor",
                     "empty": "No events in this range",
-                    "login": "Login logs",
+                    "login": "Login log",
                     "reset": "Reset",
                     "retry": "Retry",
                     "total": "Total events",
@@ -727,7 +727,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "localTime": "Selected timezone",
                     "noSources": "No source IPs recorded",
                     "openEvent": "Open event {id}",
-                    "operation": "Operation logs",
+                    "operation": "Operation log",
                     "sameActor": "Same actor",
                     "timeFirst": "Time first",
                     "trendView": "Trend",
@@ -828,19 +828,19 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 },
                 "groups": {
                     "admin:system:msg": "Message",
-                    "admin:audit:login": "Login audit",
+                    "admin:audit:login": "Login log",
                     "admin:system:role": "Role",
                     "admin:system:user": "User",
                     "admin:system:action": "Action",
                     "admin:system:default": "Default",
-                    "admin:audit:operation": "Operation audit",
+                    "admin:audit:operation": "Operation log",
                     "admin:system:developer": "Developer",
                     "admin:system:high-risk": "High risk",
                     "admin:system:dictionary": "Dictionary",
                     "admin:system:user-group": "User group",
                     "admin:dashboard:overview": "Overview",
                     "admin:dashboard:workspace": "Workspace",
-                    "admin:system:mail-template": "Email templates"
+                    "admin:system:mail-template": "Email template"
                 },
                 "scopes": {
                     "h5": "Mobile H5",
@@ -1103,13 +1103,15 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:btn:system:dictionary:refresh": "Refresh",
                     "admin:btn:system:user-group:refresh": "Refresh",
                     "admin:btn:system:action:create-group": "Create permission group",
+                    "admin:btn:system:action:edit-group": "Edit permission group",
                     "admin:btn:system:action:delete-group": "Delete permission group",
                     "admin:btn:system:msg:delete-selected": "Delete Selected",
                     "admin:btn:audit:operation:reset-query": "Reset",
                     "admin:btn:audit:operation:view-detail": "Details",
                     "admin:btn:system:role:delete-selected": "Delete Selected",
                     "admin:btn:system:user:delete-selected": "Delete Selected",
-                    "admin:btn:system:user:unlock-password": "Unlock Password Change",
+                    "admin:btn:system:user:reset-totp": "Reset authenticator",
+                    "admin:btn:system:user:reset-password": "Reset password",
                     "admin:btn:msg:inbox:mark-selected-read": "Mark as read",
                     "admin:btn:system:action:reorder-groups": "Reorder permission groups",
                     "admin:btn:audit:operation:export-report": "Export CSV",
@@ -1191,13 +1193,15 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:system:dictionary:refresh": "Refresh",
                     "admin:system:user-group:refresh": "Refresh",
                     "admin:system:action:create-group": "Create permission group",
+                    "admin:system:action:edit-group": "Edit permission group",
                     "admin:system:action:delete-group": "Delete permission group",
                     "admin:system:msg:delete-selected": "Delete Selected",
                     "admin:audit:operation:reset-query": "Reset",
                     "admin:audit:operation:view-detail": "Details",
                     "admin:system:role:delete-selected": "Delete Selected",
                     "admin:system:user:delete-selected": "Delete Selected",
-                    "admin:system:user:unlock-password": "Unlock Password Change",
+                    "admin:system:user:reset-totp": "Reset authenticator",
+                    "admin:system:user:reset-password": "Reset password",
                     "admin:system:action:reorder-groups": "Reorder permission groups",
                     "admin:audit:operation:export-report": "Export CSV",
                     "admin:system:action:delete-selected": "Delete Selected",
@@ -1211,7 +1215,15 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:system:developer:compare-online": "Compare with online",
                     "admin:system:user-group:remove-members": "Remove",
                     "admin:system:dictionary:delete-selected": "Delete Selected",
-                    "admin:system:user-group:delete-selected": "Delete Selected"
+                    "admin:system:user-group:delete-selected": "Delete Selected",
+                    "admin:system:mail-template:edit": "Edit",
+                    "admin:system:mail-template:query": "Search",
+                    "admin:system:mail-template:create": "Create",
+                    "admin:system:mail-template:delete": "Delete",
+                    "admin:system:mail-template:publish": "Publish",
+                    "admin:system:mail-template:refresh": "Refresh",
+                    "admin:system:mail-template:reset-query": "Reset",
+                    "admin:system:mail-template:view-detail": "Details"
                 },
                 "resources": {
                     "admin:audit": "Audit",
@@ -1221,13 +1233,13 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:high-risk": "High-risk permissions",
                     "admin:msg:inbox": "Inbox",
                     "admin:system:msg": "Message",
-                    "admin:audit:login": "Login audit",
+                    "admin:audit:login": "Login log",
                     "admin:system:role": "Role",
                     "admin:system:user": "User",
                     "admin:high-risk:all": "All permissions",
                     "admin:system:action": "Action",
                     "admin:account:profile": "Profile",
-                    "admin:audit:operation": "Operation audit",
+                    "admin:audit:operation": "Operation log",
                     "admin:default:session": "Session and account APIs",
                     "admin:system:developer": "Developer",
                     "admin:system:dictionary": "Dictionary",
@@ -1235,7 +1247,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:dashboard:overview": "Overview",
                     "admin:dashboard:workspace": "Workspace",
                     "admin:high-risk:permission-admin": "Manage permissions",
-                    "admin:system:mail-template": "Email templates"
+                    "admin:system:mail-template": "Email template"
                 },
                 "operations": {
                     "read": "View",
@@ -2831,13 +2843,15 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:btn:system:dictionary:refresh": "刷新",
                     "admin:btn:system:user-group:refresh": "刷新",
                     "admin:btn:system:action:create-group": "新增权限分组",
+                    "admin:btn:system:action:edit-group": "编辑权限分组",
                     "admin:btn:system:action:delete-group": "删除权限分组",
                     "admin:btn:system:msg:delete-selected": "批量删除",
                     "admin:btn:audit:operation:reset-query": "重置",
                     "admin:btn:audit:operation:view-detail": "详情",
                     "admin:btn:system:role:delete-selected": "批量删除",
                     "admin:btn:system:user:delete-selected": "批量删除",
-                    "admin:btn:system:user:unlock-password": "解锁密码修改",
+                    "admin:btn:system:user:reset-totp": "重置验证器",
+                    "admin:btn:system:user:reset-password": "重置密码",
                     "admin:btn:msg:inbox:mark-selected-read": "标记已读",
                     "admin:btn:system:action:reorder-groups": "调整分组顺序",
                     "admin:btn:audit:operation:export-report": "导出 CSV",
@@ -2919,13 +2933,15 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:system:dictionary:refresh": "刷新",
                     "admin:system:user-group:refresh": "刷新",
                     "admin:system:action:create-group": "新增权限分组",
+                    "admin:system:action:edit-group": "编辑权限分组",
                     "admin:system:action:delete-group": "删除权限分组",
                     "admin:system:msg:delete-selected": "批量删除",
                     "admin:audit:operation:reset-query": "重置",
                     "admin:audit:operation:view-detail": "详情",
                     "admin:system:role:delete-selected": "批量删除",
                     "admin:system:user:delete-selected": "批量删除",
-                    "admin:system:user:unlock-password": "解锁密码修改",
+                    "admin:system:user:reset-totp": "重置验证器",
+                    "admin:system:user:reset-password": "重置密码",
                     "admin:system:action:reorder-groups": "调整分组顺序",
                     "admin:audit:operation:export-report": "导出 CSV",
                     "admin:system:action:delete-selected": "批量删除",
@@ -2939,7 +2955,15 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     "admin:system:developer:compare-online": "对比线上",
                     "admin:system:user-group:remove-members": "移除",
                     "admin:system:dictionary:delete-selected": "批量删除",
-                    "admin:system:user-group:delete-selected": "批量删除"
+                    "admin:system:user-group:delete-selected": "批量删除",
+                    "admin:system:mail-template:edit": "编辑",
+                    "admin:system:mail-template:query": "查询",
+                    "admin:system:mail-template:create": "新建",
+                    "admin:system:mail-template:delete": "删除",
+                    "admin:system:mail-template:publish": "发布",
+                    "admin:system:mail-template:refresh": "刷新",
+                    "admin:system:mail-template:reset-query": "重置",
+                    "admin:system:mail-template:view-detail": "详情"
                 },
                 "resources": {
                     "admin:audit": "审计",
@@ -3509,7 +3533,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
         "admin:system:dictionary",
         "admin:system:msg",
         "admin:audit:login",
-        "admin:audit:operation"
+        "admin:audit:operation",
+        "admin:system:mail-template"
     ],
     "default_locale": "zh-CN",
     "group_defaults": {
@@ -3581,8 +3606,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "grpc": [],
                 "http": [
                     {
-                        "path": "/user/{id}",
-                        "method": "PATCH"
+                        "path": "/user/{id}/lock",
+                        "method": "POST"
                     }
                 ]
             },
@@ -3733,8 +3758,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "grpc": [],
                 "http": [
                     {
-                        "path": "/user/{id}",
-                        "method": "PATCH"
+                        "path": "/user/{id}/unlock",
+                        "method": "POST"
                     }
                 ]
             },
@@ -4214,7 +4239,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                         "method": "GET"
                     },
                     {
-                        "path": "/dictionary/{id}",
+                        "path": "/dictionary/catalog",
                         "method": "PATCH"
                     }
                 ]
@@ -4370,11 +4395,19 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "grpc": [],
                 "http": [
                     {
-                        "path": "/dictionary",
-                        "method": "GET"
-                    },
+                        "path": "/action/group",
+                        "method": "PATCH"
+                    }
+                ]
+            },
+            "admin:system:action:edit-group": {
+                "btn": [
+                    "admin:btn:system:action:edit-group"
+                ],
+                "grpc": [],
+                "http": [
                     {
-                        "path": "/dictionary/{id}",
+                        "path": "/action/group",
                         "method": "PATCH"
                     }
                 ]
@@ -4386,11 +4419,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "grpc": [],
                 "http": [
                     {
-                        "path": "/dictionary",
-                        "method": "GET"
-                    },
-                    {
-                        "path": "/dictionary/{id}",
+                        "path": "/action/group",
                         "method": "PATCH"
                     }
                 ]
@@ -4463,15 +4492,27 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                     }
                 ]
             },
-            "admin:system:user:unlock-password": {
+            "admin:system:user:reset-totp": {
                 "btn": [
-                    "admin:btn:system:user:unlock-password"
+                    "admin:btn:system:user:reset-totp"
                 ],
                 "grpc": [],
                 "http": [
                     {
-                        "path": "/user/{id}",
-                        "method": "PATCH"
+                        "path": "/auth/totp/reset/{id}",
+                        "method": "POST"
+                    }
+                ]
+            },
+            "admin:system:user:reset-password": {
+                "btn": [
+                    "admin:btn:system:user:reset-password"
+                ],
+                "grpc": [],
+                "http": [
+                    {
+                        "path": "/user/{id}/reset-password",
+                        "method": "POST"
                     }
                 ]
             },
@@ -4482,11 +4523,7 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                 "grpc": [],
                 "http": [
                     {
-                        "path": "/dictionary",
-                        "method": "GET"
-                    },
-                    {
-                        "path": "/dictionary/{id}",
+                        "path": "/action/group/order",
                         "method": "PATCH"
                     }
                 ]
@@ -5061,7 +5098,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                             "admin:system:user:approve",
                             "admin:system:user:lock",
                             "admin:system:user:unlock",
-                            "admin:system:user:unlock-password"
+                            "admin:system:user:reset-totp",
+                            "admin:system:user:reset-password"
                         ]
                     }
                 }
@@ -5113,7 +5151,8 @@ INSERT INTO t_dictionary (id, dictionary_key, name, value, description, enabled)
                         "entry_keys": [],
                         "button_keys": [
                             "admin:system:action:edit",
-                            "admin:system:action:reorder-groups"
+                            "admin:system:action:reorder-groups",
+                            "admin:system:action:edit-group"
                         ]
                     }
                 }

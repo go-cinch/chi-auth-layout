@@ -31,7 +31,10 @@ func TestDeleteFailureLogIncludesCount(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
+	mock.ExpectBegin()
+	expectCatalogTarget(mock, false, 42, 43)
 	mock.ExpectExec("DELETE FROM t_dictionary").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectRollback()
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/42,43", nil))
 	var entry map[string]any
@@ -95,10 +98,74 @@ func TestDictionaryHTTP(t *testing.T) {
 	if !strings.Contains(body, `"t":0`) {
 		t.Fatalf("list body: %s", body)
 	}
+	mock.ExpectBegin()
+	expectCatalogTarget(mock, false, 1)
 	mock.ExpectExec("DELETE FROM t_dictionary").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	request(http.MethodDelete, "/1", "", http.StatusOK)
+	mock.ExpectBegin()
+	expectCatalogTarget(mock, false, 99)
 	mock.ExpectExec("DELETE FROM t_dictionary").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
 	request(http.MethodDelete, "/99", "", http.StatusNotFound)
+}
+
+func TestDictionaryHTTPUpdateNull(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, current, value string
+		compareNull                bool
+		status                     int
+	}{
+		{"set null", `{"value":null}`, `[1]`, `null`, false, http.StatusOK},
+		{"match null", `{"value":[],"expected_value":null}`, `null`, `[]`, true, http.StatusOK},
+		{"reject mismatched null", `{"value":[],"expected_value":null}`, `[1]`, `[]`, true, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, mock := newTestModule(t)
+{{ if eq .Computed.http_router_final "gin" -}}
+			router := gin.New()
+			m.HTTP(router.Group(""))
+			handler := http.Handler(router)
+{{ else -}}
+			handler := m.HTTP()
+{{ end -}}
+			const id int64 = 3
+			mock.ExpectBegin()
+			expectCatalogTarget(mock, false, 3)
+			if tc.compareNull {
+				mock.ExpectQuery("SELECT value = .* FOR UPDATE").WithArgs(id, "null").
+					WillReturnRows(sqlmock.NewRows([]string{"matches"}).AddRow(tc.current == "null"))
+			}
+			if tc.status == http.StatusOK {
+				mock.ExpectExec("UPDATE t_dictionary SET value").WithArgs(tc.value, sqlmock.AnyArg(), id).
+					WillReturnResult(sqlmock.NewResult(0, 1))
+				expectDictionaryGet(mock, id, "TEST_VALUES", "Test", tc.value, true)
+				mock.ExpectCommit()
+			} else {
+				mock.ExpectRollback()
+			}
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/3", strings.NewReader(tc.body)))
+			if response.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", response.Code, tc.status, response.Body.String())
+			}
+			var payload struct {
+				Value     json.RawMessage `json:"value"`
+				ErrorCode string          `json:"error_code"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if tc.status == http.StatusOK {
+				if string(payload.Value) != tc.value {
+					t.Fatalf("value = %s, want %s", payload.Value, tc.value)
+				}
+			} else if payload.ErrorCode != "DICTIONARY_VERSION_CONFLICT" {
+				t.Fatalf("unexpected error code: %s", payload.ErrorCode)
+			}
+		})
+	}
 }
 
 func TestDictionaryHTTPVersionConflict(t *testing.T) {
@@ -111,7 +178,7 @@ func TestDictionaryHTTPVersionConflict(t *testing.T) {
 	handler := m.HTTP()
 {{ end -}}
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT dictionary_key, value FROM t_dictionary").WithArgs(int64(3)).WillReturnRows(sqlmock.NewRows([]string{"dictionary_key", "value"}).AddRow("TEST_VALUES", []byte(`{}`)))
+	expectCatalogTarget(mock, false, 3)
 	mock.ExpectQuery("SELECT value = .* FOR UPDATE").WithArgs(int64(3), "{}").WillReturnRows(sqlmock.NewRows([]string{"matches"}).AddRow(false))
 	mock.ExpectRollback()
 	recorder := httptest.NewRecorder()

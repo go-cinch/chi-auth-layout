@@ -151,6 +151,8 @@ features:
     globs:
       - "**/internal/infra/rds/**"
       - "**/conf/redis.yml"
+      - "**/internal/modules/audit/stream*.go"
+      - "**/internal/tests/audit_stream_test.go"
 
   - value: '{{ .Computed.enable_trace_final }}'
     globs:

@@ -1,4 +1,6 @@
 {
+  "ACTION_GROUP_CONFLICT": "The permission groups have changed. Refresh and try again.",
+  "ACTION_GROUP_NOT_EMPTY": "The permission group is not empty.",
   "ACTION_CONFLICT": "action code or word already exists",
   "ACTION_INVALID_IDS": "provide 1-100 positive action ids",
   "ACTION_INVALID": "invalid action",
@@ -22,6 +24,7 @@
   "AUTH_SESSION_NOT_FOUND": "authentication session not found",
   "AUTH_UNAUTHORIZED": "unauthorized",
   "AUTH_USERNAME_EXISTS": "username already exists",
+  "DICTIONARY_CATALOG_PROTECTED": "This content cannot be changed",
   "DICTIONARY_CONFLICT": "dictionary key already exists",
   "DICTIONARY_INVALID_IDS": "provide 1-100 positive dictionary ids",
   "DICTIONARY_INVALID": "invalid dictionary",

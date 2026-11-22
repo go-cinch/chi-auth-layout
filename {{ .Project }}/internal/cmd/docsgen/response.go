@@ -47,6 +47,13 @@ func (g *generator) describeRoute(route *route) {
 			return true
 		}
 		switch functionName(call.Fun) {
+		case "writeUserMutation":
+			g.ensureErrorResponse()
+			route.responses[http.StatusOK] = response{description: "Updated user", schema: g.typeSchema(route.pkg, ast.NewIdent("User"))}
+			addErrorResponse(route, http.StatusNotFound, "User or referenced record not found")
+			addErrorResponse(route, http.StatusBadRequest, "Invalid user action or state")
+			addErrorResponse(route, http.StatusForbidden, "Permission denied")
+			addErrorResponse(route, http.StatusInternalServerError, "Internal server error")
 		case "writeVerificationError":
 			g.describeVerificationErrors(route)
 		case "WriteHTTPSecurityError":

@@ -176,19 +176,46 @@ func TestTOTPErrorResponses(t *testing.T) {
     }
 }
 
-func TestTOTPResetPagePermissionAndCredentialInvalidation(t *testing.T) {
-    m,mock,ctx,_,_:=newVerificationTest(t)
-    mock.ExpectQuery("WITH assigned AS").WillReturnRows(permissionRows())
-    if err:=m.ResetUserTOTP(ctx,7);!errors.Is(err,apperror.Forbidden) {t.Fatal("missing page grant accepted",err)}
-    mock.ExpectQuery("WITH assigned AS").WillReturnRows(permissionRows().AddRow("admin:read:system:user",userReadPermissionConfig))
-    mock.ExpectBegin()
-    mock.ExpectQuery("UPDATE t_user SET credential_version").WithArgs(sqlmock.AnyArg(),int64(7)).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
-    mock.ExpectExec("DELETE FROM t_user_recovery_code").WithArgs(int64(7)).WillReturnResult(sqlmock.NewResult(0,10))
-    mock.ExpectExec("DELETE FROM t_user_totp").WithArgs(int64(7)).WillReturnResult(sqlmock.NewResult(0,1));mock.ExpectCommit()
-    if err:=m.ResetUserTOTP(ctx,7);err!=nil {t.Fatal(err)}
-    // The reset endpoint follows the same page permission even without user-edit authority.
-    mock.ExpectQuery("WITH assigned AS").WillReturnRows(permissionRows().AddRow("admin:read:system:user",userReadPermissionConfig))
-    if allowed,err:=m.AuthorizeHTTP(ctx,"POST","/totp/reset/7");err!=nil || !allowed {t.Fatal(allowed,err)}
+const resetTOTPGrant = `{"bindings":[{"resource_key":"admin:system:user","operation":"update","feature_keys":["admin:system:user:reset-totp"]}],"ui":[],"endpoints":[]}`
+
+func expectResetPermission(mock sqlmock.Sqlmock, rows *sqlmock.Rows) {
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("WITH assigned AS").WillReturnRows(rows)
+}
+
+func TestTOTPResetButtonPermissionAndCredentialInvalidation(t *testing.T) {
+	m, mock, ctx, _, _ := newVerificationTest(t)
+	for _, grant := range []struct{ word, config string }{
+		{"admin:read:system:user", userReadPermissionConfig},
+		{"admin:update:system:user", userEditPermissionConfig},
+	} {
+		mock.ExpectQuery("WITH assigned AS").WillReturnRows(permissionRows().AddRow(grant.word, grant.config))
+		if allowed, err := m.AuthorizeHTTP(ctx, "POST", "/totp/reset/7"); err != nil || allowed {
+			t.Fatal(grant.word, allowed, err)
+		}
+		expectResetPermission(mock, permissionRows().AddRow(grant.word, grant.config))
+		mock.ExpectRollback()
+		if err := m.ResetUserTOTP(ctx, 7); !errors.Is(err, apperror.Forbidden) {
+			t.Fatal(grant.word, err)
+		}
+	}
+
+	mock.ExpectQuery("WITH assigned AS").WillReturnRows(permissionRows().AddRow("admin:update:system:user", resetTOTPGrant))
+	if allowed, err := m.AuthorizeHTTP(ctx, "POST", "/totp/reset/7"); err != nil || !allowed {
+		t.Fatal(allowed, err)
+	}
+	expectResetPermission(mock, permissionRows().AddRow("admin:update:system:user", resetTOTPGrant))
+	mock.ExpectQuery("UPDATE t_user SET credential_version").WithArgs(sqlmock.AnyArg(), int64(7)).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
+	mock.ExpectExec("DELETE FROM t_user_recovery_code").WithArgs(int64(7)).WillReturnResult(sqlmock.NewResult(0, 10))
+	mock.ExpectExec("DELETE FROM t_user_totp").WithArgs(int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := m.ResetUserTOTP(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestTOTPSetupCredentialPurposeAndUserBinding(t *testing.T) {
@@ -200,8 +227,7 @@ func TestTOTPSetupCredentialPurposeAndUserBinding(t *testing.T) {
 
 func TestTOTPResetMissingUser(t *testing.T) {
     m,mock,ctx,_,_:=newVerificationTest(t)
-    mock.ExpectQuery("WITH assigned AS").WillReturnRows(permissionRows().AddRow("admin:read:system:user",userReadPermissionConfig))
-    mock.ExpectBegin()
+    expectResetPermission(mock, permissionRows().AddRow("admin:update:system:user", resetTOTPGrant))
     mock.ExpectQuery("UPDATE t_user SET credential_version").WillReturnError(sql.ErrNoRows)
     mock.ExpectRollback()
     if err:=m.ResetUserTOTP(ctx,999999);!errors.Is(err,ErrTOTPUserNotFound) {t.Fatal(err)}

@@ -575,11 +575,11 @@ func TestActionLocalizedCatalogPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := json.RawMessage(encoded)
-	var dictionaryID int64
-	if err := store.DB.QueryRowContext(t.Context(), `SELECT id FROM t_dictionary WHERE dictionary_key='I18N_CATALOG'`).Scan(&dictionaryID); err != nil {
+	var before json.RawMessage
+	if err := store.DB.QueryRowContext(t.Context(), `SELECT value FROM t_dictionary WHERE dictionary_key='I18N_CATALOG'`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dictionaries.Update(t.Context(), dictionaryID, dictionary.UpdateDictionaryInput{Value: &raw}); err != nil {
+	if _, err := dictionaries.PublishCatalog(t.Context(), dictionary.PublishCatalogInput{ExpectedValue: before, Value: raw}); err != nil {
 		t.Fatal(err)
 	}
 	// The committed dictionary update changes both the search predicate and labels without a build/restart.

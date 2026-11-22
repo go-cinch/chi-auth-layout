@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"time"
+	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/modules/action"
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
@@ -133,4 +136,58 @@ func (m *Module) refreshLocalizationAfterWrite(ctx context.Context) {
 	if err := m.RefreshLocalization(ctx); err != nil {
 		slog.ErrorContext(ctx, "dictionary saved but localization refresh failed: "+err.Error(), "operation", "refresh_localization", "outcome", "failure", "db_committed", true, "error", err)
 	}
+}
+
+type PublishCatalogInput struct {
+	Value           json.RawMessage   `json:"value"`
+	ExpectedValue   json.RawMessage   `json:"expected_value"`
+	GroupRenames    map[string]string `json:"group_renames,omitempty"`
+	ResourceRenames map[string]string `json:"resource_renames,omitempty"`
+	FeatureRenames  map[string]string `json:"feature_renames,omitempty"`
+}
+
+func (m *Module) PublishCatalog(ctx context.Context, input PublishCatalogInput) (*Dictionary, error) {
+	if !validValue(input.Value) || !validValue(input.ExpectedValue) {
+		return nil, ErrInvalid
+	}
+	var saved *Dictionary
+	err := m.store.MutationTx(ctx, func(ctx context.Context) error {
+		if err := authn.RequireCatalogAdministration(ctx, m.administration); err != nil {
+			return err
+		}
+		action.MarkPermissionMutation(ctx)
+		executor := m.store.SQL(ctx)
+		var id int64
+		var matches bool
+		err := executor.QueryRowContext(ctx, `SELECT id, value = $2::jsonb FROM t_dictionary WHERE dictionary_key = $1 FOR UPDATE`, LocalizationKey, string(input.ExpectedValue)).Scan(&id, &matches)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return ErrVersionConflict
+		}
+		catalog := &Dictionary{ID: id, Key: LocalizationKey, Value: input.Value}
+		if err = m.prepareLocalization(catalog); err != nil {
+			return err
+		}
+		if _, err = executor.ExecContext(ctx, `UPDATE t_dictionary SET value = $1::jsonb, updated_at = $2 WHERE id = $3`, string(catalog.Value), time.Now().UnixMilli(), id); err != nil {
+			return err
+		}
+		if err = m.migrateResourcePermissions(ctx, input.ExpectedValue, catalog, input.ResourceRenames, input.FeatureRenames); err != nil {
+			return err
+		}
+		if err = m.reconcilePermissionGroups(ctx, input.ExpectedValue, catalog, input.GroupRenames); err != nil {
+			return err
+		}
+		saved, err = get(ctx, executor, id)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	m.invalidate(ctx, "update", saved.ID)
+	return saved, nil
 }

@@ -58,7 +58,11 @@ func run(source, configDir, output, title string) error {
 			})
 			gen.ensureErrorResponse()
 			addErrorResponse(&routes[index], http.StatusBadRequest, "invalid idempotency key")
-			addErrorResponse(&routes[index], http.StatusConflict, "idempotency key has already been used")
+			if routes[index].path == "/msg" {
+				routes[index].requestBody.description = "The same sender and X-Idempotent key replay the original publication for matching content. A different payload conflicts. A withdrawn publication returns 404."
+			} else {
+				addErrorResponse(&routes[index], http.StatusConflict, "idempotency key has already been used")
+			}
 			addErrorResponse(&routes[index], http.StatusInternalServerError, "internal server error")
 		}
 

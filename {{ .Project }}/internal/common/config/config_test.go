@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +11,21 @@ import (
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) {
+	// Configuration tests own their YAML and environment overrides. Inherited
+	// service settings must not change fixtures or add unexpected override records.
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, envPrefix) {
+			if err := os.Unsetenv(name); err != nil {
+				fmt.Fprintf(os.Stderr, "clear inherited service configuration %s: %v\n", name, err)
+				os.Exit(1)
+			}
+		}
+	}
+	os.Exit(m.Run())
+}
 
 func TestEmailTemplateCamelCaseKeysAndEnvironment(t *testing.T) {
 	dir := t.TempDir()
@@ -266,7 +282,7 @@ func TestOnboardingRequirementConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defaults, _, err := LoadDir(dir)
-	if err != nil || !defaults.Auth.Password.Reset.Required || !defaults.Auth.TOTP.RequireBinding {
+	if err != nil || !defaults.Auth.Password.Reset.Required || !defaults.Auth.Password.Reset.RequiredAfterAdminReset || !defaults.Auth.TOTP.RequireBinding {
 		t.Fatal("omitted policies must preserve enforcement", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "auth.yml"), []byte("auth:\n  totp:\n    enabled: true\n    requireBinding: true\n  password:\n    reset:\n      required: true\n"), 0600); err != nil {
@@ -280,6 +296,36 @@ func TestOnboardingRequirementConfiguration(t *testing.T) {
 	}
 	if cfg.Auth.Password.Reset.Required || cfg.Auth.TOTP.RequireBinding || !cfg.Auth.TOTP.Enabled {
 		t.Fatal("independent onboarding overrides were not applied")
+	}
+}
+
+func TestPasswordResetPolicyAfterAdminReset(t *testing.T) {
+	for _, tc := range []struct {
+		name, setting string
+		want bool
+	}{
+		{"inherit existing optional first login", "", false},
+		{"require only after administrator reset", "      requiredAfterAdminReset: true\n", true},
+		{"explicitly optional", "      requiredAfterAdminReset: false\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			yaml := "auth:\n  password:\n    reset:\n      required: false\n" + tc.setting
+			if err := os.WriteFile(filepath.Join(dir, "auth.yml"), []byte(yaml), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _, err := LoadDir(dir)
+			if err != nil || cfg.Auth.Password.Reset.RequiredAfterAdminReset != tc.want || cfg.Auth.Password.Reset.Required {
+				t.Fatal("incorrect password reset policy", err)
+			}
+			if tc.setting != "" {
+				t.Setenv("SERVICE_AUTH_PASSWORD_RESET_REQUIREDAFTERADMINRESET", "true")
+				cfg, _, err = LoadDir(dir)
+				if err != nil || !cfg.Auth.Password.Reset.RequiredAfterAdminReset || cfg.Auth.Password.Reset.Required {
+					t.Fatal("incorrect independent environment override", err)
+				}
+			}
+		})
 	}
 }
 
@@ -313,7 +359,7 @@ func TestOnboardingVisibilityConfiguration(t *testing.T) {
 
 func TestEmailAndTOTPDebugEnvironmentOverrides(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "debug.yml"), []byte("email:\n  enabled: true\n  skipDelivery: false\nauth:\n  totp:\n    enabled: true\n  testing:\n    emailCode: false\n    totpCode: false\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "debug.yml"), []byte("email:\n  enabled: true\n  skipDelivery: false\n  authentication: auto\n  password: configured\nauth:\n  totp:\n    enabled: true\n  testing:\n    emailCode: false\n    totpCode: false\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := LoadDir(dir)
@@ -336,6 +382,54 @@ func TestEmailAndTOTPDebugEnvironmentOverrides(t *testing.T) {
 	cfg, _, err = LoadDir(dir)
 	if err != nil || !cfg.Email.SkipDelivery || !cfg.Auth.Testing.TOTPCode || !cfg.Email.Enabled || !cfg.Auth.TOTP.Enabled {
 		t.Fatal("debug overrides changed feature availability", err)
+	}
+}
+
+func TestEmailSkipDeliveryWithoutPassword(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		password       string
+		authentication string
+		skipDelivery   bool
+		disabled       bool
+		env            map[string]string
+		wantSkip       bool
+	}{
+		{name: "empty password", authentication: "auto", wantSkip: true},
+		{name: "whitespace password", authentication: "LOGIN", password: " \t\n", wantSkip: true},
+		{name: "omitted authentication", wantSkip: true},
+		{name: "configured password", authentication: "auto", password: "credential"},
+		{name: "environment supplies password", authentication: "auto", env: map[string]string{"SERVICE_EMAIL_PASSWORD": "credential"}},
+		{name: "environment clears password", authentication: "auto", password: "credential", env: map[string]string{"SERVICE_EMAIL_PASSWORD": ""}, wantSkip: true},
+		{name: "environment blanks password", authentication: "auto", password: "credential", env: map[string]string{"SERVICE_EMAIL_PASSWORD": " \t"}, wantSkip: true},
+		{name: "explicit false without password", authentication: "auto", env: map[string]string{"SERVICE_EMAIL_SKIPDELIVERY": "false"}, wantSkip: true},
+		{name: "explicit skip with password", authentication: "auto", password: "credential", skipDelivery: true, wantSkip: true},
+		{name: "environment skips with password", authentication: "auto", password: "credential", env: map[string]string{"SERVICE_EMAIL_SKIPDELIVERY": "true"}, wantSkip: true},
+		{name: "unauthenticated relay", authentication: "none"},
+		{name: "case insensitive unauthenticated relay", authentication: "NoNe"},
+		{name: "environment selects unauthenticated relay", authentication: "auto", env: map[string]string{"SERVICE_EMAIL_AUTHENTICATION": "none"}},
+		{name: "disabled email", authentication: "auto", disabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			content := fmt.Sprintf("email:\n  enabled: %t\n  skipDelivery: %t\n  authentication: %q\n  password: %q\nauth:\n  testing:\n    emailCode: false\n    totpCode: false\n", !tc.disabled, tc.skipDelivery, tc.authentication, tc.password)
+			if err := os.WriteFile(filepath.Join(dir, "email.yml"), []byte(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			cfg, _, err := LoadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Email.SkipDelivery != tc.wantSkip {
+				t.Fatalf("skipDelivery = %t, want %t", cfg.Email.SkipDelivery, tc.wantSkip)
+			}
+			if cfg.Email.Enabled == tc.disabled || cfg.Auth.Testing.EmailCode || cfg.Auth.Testing.TOTPCode {
+				t.Fatal("delivery fallback changed feature availability or enabled fixed verification codes")
+			}
+		})
 	}
 }
 

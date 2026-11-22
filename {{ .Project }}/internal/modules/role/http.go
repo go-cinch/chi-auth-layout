@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 
 {{- if eq .Computed.http_router_final "gin" }}
@@ -121,6 +122,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
+	auditctx.ResourceOperation(r.Context(), "create", strconv.FormatInt(value.ID, 10))
 	server.WriteOK(w, value)
 }
 

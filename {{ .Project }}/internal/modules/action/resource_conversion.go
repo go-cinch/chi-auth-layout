@@ -9,9 +9,8 @@ import (
 	"{{ .Computed.module_name_final }}/internal/modules/localization"
 )
 
-// MigrateConvertedResourceConfig replaces bindings to resources that became
-// directories with an explicit snapshot of their new children and references.
-// Catalog keys and action words have no special meaning in this conversion.
+// MigrateConvertedResourceConfig snapshots grants when a resource becomes a
+// directory or switches from wildcard authority to configured permissions.
 func MigrateConvertedResourceConfig(before, after localization.ResourceCatalog, raw json.RawMessage, resourceRenames, featureRenames map[string]string) (json.RawMessage, bool, error) {
 	var config map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &config); err != nil {
@@ -34,22 +33,24 @@ func MigrateConvertedResourceConfig(before, after localization.ResourceCatalog, 
 		}
 		bindings = []ResourceBinding{binding}
 	}
+	migrated := []ResourceBinding{}
 	for _, binding := range bindings {
-		changed = changed || converted(binding.ResourceKey)
+		target := migratedKey(resourceRenames, binding.ResourceKey)
+		next := after.Resources[target]
+		wildcardRemoved := binding.Operation == "*" && before.Resources[binding.ResourceKey].PermissionScope == "*" &&
+			next.Kind == "resource" && next.PermissionScope == ""
+		if converted(binding.ResourceKey) || wildcardRemoved {
+			migrated = append(migrated, snapshotResourceBindings(after, target, binding.Operation)...)
+			changed = true
+			continue
+		}
+		binding.ResourceKey = target
+		for i, feature := range binding.FeatureKeys {
+			binding.FeatureKeys[i] = migratedKey(featureRenames, feature)
+		}
+		migrated = append(migrated, binding)
 	}
 	if changed {
-		migrated := []ResourceBinding{}
-		for _, binding := range bindings {
-			if converted(binding.ResourceKey) {
-				migrated = append(migrated, directoryResourceBindings(after, migratedKey(resourceRenames, binding.ResourceKey), binding.Operation)...)
-				continue
-			}
-			binding.ResourceKey = migratedKey(resourceRenames, binding.ResourceKey)
-			for i, feature := range binding.FeatureKeys {
-				binding.FeatureKeys[i] = migratedKey(featureRenames, feature)
-			}
-			migrated = append(migrated, binding)
-		}
 		encoded, err := json.Marshal(mergeResourceBindings(migrated))
 		if err != nil {
 			return nil, false, err
@@ -81,7 +82,7 @@ func MigrateConvertedResourceConfig(before, after localization.ResourceCatalog, 
 			migrated := []ResourceBinding{}
 			for _, key := range keys {
 				if converted(key) {
-					migrated = append(migrated, directoryResourceBindings(after, migratedKey(resourceRenames, key), "read")...)
+					migrated = append(migrated, snapshotResourceBindings(after, migratedKey(resourceRenames, key), "read")...)
 					continue
 				}
 				target := migratedKey(resourceRenames, key)
@@ -110,7 +111,7 @@ func MigrateConvertedResourceConfig(before, after localization.ResourceCatalog, 
 	return result, true, err
 }
 
-func directoryResourceBindings(catalog localization.ResourceCatalog, owner, operation string) []ResourceBinding {
+func snapshotResourceBindings(catalog localization.ResourceCatalog, owner, operation string) []ResourceBinding {
 	result := []ResourceBinding{}
 	allowed := []string{operation}
 	if operation == "*" {

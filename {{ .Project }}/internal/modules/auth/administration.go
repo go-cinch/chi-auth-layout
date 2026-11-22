@@ -95,6 +95,52 @@ func (m *Module) RequirePermissionOperation(ctx context.Context, resource, opera
 	return authn.ErrPermissionGrantRequired
 }
 
+// Edit and registration review share a PATCH route. Check the selected control
+// and its update endpoint together, under the same permission mutation lock.
+func (m *Module) RequireUserEditControl(ctx context.Context, control string) error {
+	return m.requirePatchControl(ctx, "user", "update", control, "/user/{id}")
+}
+
+// Group creation, editing and deletion share a narrow endpoint. The selected
+// feature must grant both the corresponding button and the concrete route.
+func (m *Module) RequireActionGroupControl(ctx context.Context, control string) error {
+	operation, path := "", "/action/group"
+	switch control {
+	case "create-group":
+		operation = "create"
+	case "edit-group":
+		operation = "update"
+	case "delete-group":
+		operation = "delete"
+	case "reorder-groups":
+		operation, path = "update", "/action/group/order"
+	default:
+		return authn.ErrPermissionGrantRequired
+	}
+	return m.requirePatchControl(ctx, "action", operation, control, path)
+}
+
+func (m *Module) requirePatchControl(ctx context.Context, resource, operation, control, path string) error {
+	if err := m.LockPermissionMutation(ctx); err != nil {
+		return err
+	}
+	identity, _ := authn.FromContext(ctx)
+	scope := authn.PermissionScope(ctx)
+	catalog := m.catalogSource.Select(report.Fields{"resource_catalog"})
+	permission, err := m.permissionsFromCatalog(ctx, identity.UserID, scope, report.Fields{"http", "btn"}, catalog, operation)
+	if err != nil || permission.PermissionScope == "*" {
+		return err
+	}
+	if permission.buttonGrants[scope+":btn:system:"+resource+":"+control] {
+		for _, endpoint := range permission.endpoints {
+			if endpoint.Protocol == "http" && endpoint.Method == http.MethodPatch && canonicalRoute(endpoint.Path) == canonicalRoute(path) {
+				return nil
+			}
+		}
+	}
+	return authn.ErrPermissionGrantRequired
+}
+
 func permissionOperationTarget(resource, operation string) (string, string, bool) {
 	switch resource {
 	case "user", "role", "action", "user-group":

@@ -73,7 +73,7 @@ func TestDictionaryUpdateExpectedValue(t *testing.T) {
 			expected := json.RawMessage("{\"a\":1}")
 			next := json.RawMessage("{\"a\":2}")
 			mock.ExpectBegin()
-			mock.ExpectQuery("SELECT dictionary_key, value FROM t_dictionary").WithArgs(int64(3)).WillReturnRows(sqlmock.NewRows([]string{"dictionary_key", "value"}).AddRow("TEST_VALUES", []byte(expected)))
+			expectCatalogTarget(mock, false, 3)
 			query := mock.ExpectQuery("SELECT value = .* FOR UPDATE").WithArgs(int64(3), string(expected))
 			switch outcome {
 			case "missing":
@@ -94,7 +94,7 @@ func TestDictionaryUpdateExpectedValue(t *testing.T) {
 			} else {
 				mock.ExpectRollback()
 			}
-			value, err := m.Update(t.Context(), 3, UpdateDictionaryInput{Value: &next, ExpectedValue: &expected})
+			value, err := m.Update(t.Context(), 3, UpdateDictionaryInput{Value: next, ExpectedValue: expected})
 			switch outcome {
 			case "match":
 				if err != nil || value == nil || cache.invalidations != 1 {
@@ -118,10 +118,13 @@ func TestDictionaryUpdateExpectedValue(t *testing.T) {
 			}
 		})
 	}
-	m, _, _ := newTestModule(t)
+	m, _, mock := newTestModule(t)
+	mock.ExpectBegin()
+	expectCatalogTarget(mock, false, 3)
+	mock.ExpectRollback()
 	invalid := json.RawMessage("bad json")
 	valid := json.RawMessage("{}")
-	if _, err := m.Update(t.Context(), 3, UpdateDictionaryInput{Value: &valid, ExpectedValue: &invalid}); !errors.Is(err, ErrInvalid) {
+	if _, err := m.Update(t.Context(), 3, UpdateDictionaryInput{Value: valid, ExpectedValue: invalid}); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
 }
@@ -188,11 +191,17 @@ func TestDictionaryCRUD(t *testing.T) {
 	if err := m.Delete(ctx, -1); !errors.Is(err, ErrIDs) {
 		t.Fatalf("invalid delete = %v", err)
 	}
+	mock.ExpectBegin()
+	expectCatalogTarget(mock, false, 1, 2)
 	mock.ExpectExec("DELETE FROM t_dictionary").WithArgs(pq.Array([]int64{1, 2})).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
 	if err := m.Delete(ctx, 1, 2, 1); err != nil || cache.invalidations != 3 {
 		t.Fatalf("delete invalidations %d: %v", cache.invalidations, err)
 	}
+	mock.ExpectBegin()
+	expectCatalogTarget(mock, false, 99)
 	mock.ExpectExec("DELETE FROM t_dictionary").WithArgs(pq.Array([]int64{99})).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
 	if err := m.Delete(ctx, 99); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing delete = %v", err)
 	}
@@ -334,7 +343,10 @@ func TestCommittedWritesSurviveCacheFailure(t *testing.T) {
 					t.Fatalf("committed result lost: %#v", value)
 				}
 			case "delete":
+				mock.ExpectBegin()
+				expectCatalogTarget(mock, false, 3)
 				mock.ExpectExec("DELETE FROM t_dictionary").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
 				err = m.Delete(t.Context(), 3)
 			}
 			if err != nil || attempts != 3 {
@@ -430,7 +442,10 @@ func TestDatabaseFailureDoesNotInvalidate(t *testing.T) {
 				name := "Updated"
 				_, err = m.Update(t.Context(), 1, UpdateDictionaryInput{Name: &name})
 			case "delete":
+				mock.ExpectBegin()
+				expectCatalogTarget(mock, false, 1)
 				mock.ExpectExec("DELETE FROM t_dictionary").WillReturnError(errors.New("write failed"))
+				mock.ExpectRollback()
 				err = m.Delete(t.Context(), 1)
 			}
 			if err == nil || cache.invalidations != 0 {

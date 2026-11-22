@@ -114,19 +114,9 @@ func GroupForConfig(word string, config Config) string {
 }
 
 func validIdentity(word, group string) bool {
-	if !ValidWord(word) || len(group) > 128 {
-		return false
-	}
-	parts := strings.Split(group, ":")
-	if len(parts) < 3 || parts[0] != strings.Split(word, ":")[0] {
-		return false
-	}
-	for _, part := range parts {
-		if !segmentPattern.MatchString(part) {
-			return false
-		}
-	}
-	return true
+	wordScope, _, _ := strings.Cut(word, ":")
+	groupScope, _, _ := strings.Cut(group, ":")
+	return ValidWord(word) && validGroupWord(group) && wordScope == groupScope
 }
 
 func validUIKey(key, scope, kind string) bool {

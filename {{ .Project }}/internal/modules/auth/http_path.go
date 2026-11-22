@@ -19,7 +19,7 @@ func AuthHTTPPaths(prefix string) map[string]string {
 	} {
 		paths["/auth"+relative] = prefix + relative
 	}
-	paths["/auth/totp/reset/{id}"] = prefix + "/totp/reset/{{ if eq .Computed.http_router_final "gin" }}:id{{ else }}{id}{{ end }}"
+	paths["/auth/totp/reset/{id}"] = prefix + "/totp/reset/{id}"
 	return paths
 }
 

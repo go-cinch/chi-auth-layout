@@ -104,18 +104,49 @@ func (m *Module) InfoSelected(ctx context.Context, scope string, fields report.F
 		value.Role = &UserRole{ID: roleID.Int64, Name: roleName.String, Word: roleWord.String}
 	}
 	if fields.Has("permission") {
-		catalog := m.catalogSource.Select([]string{"resource_catalog"})
-		permission, err := m.permissionsFromCatalog(ctx, identity.UserID, scope, nil, catalog)
+		permission, err := m.userInfoPermission(ctx, identity.UserID, scope)
 		if err != nil {
 			return nil, err
 		}
-		permission.Navigation = permissionNavigation(catalog.ResourceCatalog, scope, permission.Menus)
 		value.Permission = permission
 	}
 	if fields.Has("email_binding_required") {
 		value.EmailBindingRequired = value.Email == "" && m.requiresEmailBinding()
 	}
 	return value, nil
+}
+
+// Project UI actions from the same scoped HTTP grants used when an action is submitted.
+func (m *Module) userInfoPermission(ctx context.Context, id int64, scope string) (Permission, error) {
+	catalog := m.catalogSource.Select(report.Fields{"resource_catalog"})
+	p, err := m.permissionsFromCatalog(ctx, id, scope, nil, catalog)
+	if err != nil {
+		return Permission{}, err
+	}
+	p.projectNavigation(catalog.ResourceCatalog, scope)
+	if scope == "admin" {
+		post := func(path string) bool {
+			return m.allowsTarget(p, PermissionTarget{Method: "POST", Path: m.httpPath + path}, scope, catalog.ResourceCatalog)
+		}
+		add := func(action string, allowed bool) {
+			if allowed {
+				p.ProfileActions = append(p.ProfileActions, action)
+			}
+		}
+		challenge := post("/challenge")
+		add("change_password", challenge && m.allowsTarget(p, PermissionTarget{Method: "PATCH", Path: m.httpPath + "/change/pwd"}, scope, catalog.ResourceCatalog))
+		add("bind_email", challenge && post("/email/code") && post("/email/bind"))
+		add("unlink_by_email", post("/email/unbind/request"))
+		add("unlink_by_factor", post("/email/unbind"))
+		add("unlink_by_password", challenge && post("/email/unbind"))
+		enroll := challenge && post("/totp/setup") && post("/totp/confirm")
+		add("enroll_totp", enroll)
+		add("test_totp", post("/totp/test"))
+		recover := enroll && post("/totp/recovery/confirm")
+		add("recover_totp", recover)
+		add("recover_totp_by_email", recover && post("/totp/recovery/email-code"))
+	}
+	return p, nil
 }
 
 func (m *Module) SkipEmailBinding(ctx context.Context) error {

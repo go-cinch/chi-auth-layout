@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/i18n"
 	"{{ .Computed.module_name_final }}/internal/common/report"
@@ -35,6 +36,7 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("/summary", m.summary)
 	r.GET("/:id", m.get)
 	r.POST("", m.create)
+	r.PATCH("/catalog", m.publishCatalog)
 	r.PATCH("/:id", m.update)
 	r.DELETE("/:id", m.delete)
 }
@@ -45,6 +47,7 @@ func (m *Module) HTTP() http.Handler {
 	r.Get("/summary", m.summary)
 	r.Get("/{id}", m.get)
 	r.Post("/", m.create)
+	r.Patch("/catalog", m.publishCatalog)
 	r.Patch("/{id}", m.update)
 	r.Delete("/{id}", m.delete)
 	return r
@@ -99,7 +102,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusForbidden, err)
 		return
 	}
-	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) || errors.Is(err, ErrGroupNotEmpty) {
+	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) || errors.Is(err, ErrCatalogProtected) {
 		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
 	}
@@ -108,6 +111,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
+	auditctx.ResourceOperation(r.Context(), "create", strconv.FormatInt(value.ID, 10))
 	server.WriteOK(w, value)
 }
 
@@ -137,7 +141,7 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusForbidden, err)
 		return
 	}
-	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) || errors.Is(err, ErrGroupNotEmpty) {
+	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) || errors.Is(err, ErrCatalogProtected) {
 		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
 	}
@@ -151,6 +155,36 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	server.WriteOK(w, value)
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) publishCatalog(c *gin.Context) {
+	w, r := c.Writer, c.Request
+{{ else -}}
+func (m *Module) publishCatalog(w http.ResponseWriter, r *http.Request) {
+{{ end }}
+	var input PublishCatalogInput
+	if err := server.DecodeJSON(w, r, &input, server.BodyDictionary); err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	value, err := m.PublishCatalog(r.Context(), input)
+	switch {
+	case err == nil:
+		auditctx.ResourceOperation(r.Context(), "update", strconv.FormatInt(value.ID, 10))
+		server.WriteOK(w, value)
+	case errors.Is(err, authn.ErrPermissionAdministrationRequired):
+		server.WriteError(w, r, http.StatusForbidden, err)
+	case errors.Is(err, ErrVersionConflict):
+		server.WriteError(w, r, http.StatusConflict, err)
+	case errors.Is(err, ErrInvalid), errors.Is(err, ErrGroupNotEmpty):
+		server.WriteError(w, r, http.StatusBadRequest, err)
+	case errors.Is(err, ErrNotFound):
+		server.WriteError(w, r, http.StatusNotFound, err)
+	default:
+		slog.ErrorContext(r.Context(), "publish catalog failed: "+err.Error(), "operation", "publish_catalog", "outcome", "failure", "error", err)
+		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
+	}
 }
 
 {{ if eq .Computed.http_router_final "gin" -}}
@@ -179,8 +213,8 @@ func (m *Module) delete(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusForbidden, err)
 		return
 	}
-	if errors.Is(err, ErrIDs) {
-		server.WriteError(w, r, http.StatusBadRequest, ErrIDs)
+	if errors.Is(err, ErrIDs) || errors.Is(err, ErrCatalogProtected) {
+		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
 	}
 	if errors.Is(err, ErrNotFound) {

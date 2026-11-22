@@ -40,6 +40,7 @@ type Message struct {
 }
 
 type CreateInput struct {
+	requestKey   string
 	Title        string  `json:"title"`
 	Content      string  `json:"content"`
 	Type         string  `json:"type"`
@@ -158,6 +159,17 @@ func (m *Module) Create(ctx context.Context, senderID int64, input CreateInput) 
 		users = nil
 	}
 	err := m.statusTx(ctx, users, func(ctx context.Context) error {
+		if input.requestKey != "" {
+			input.RecipientIDs = ids
+			originalID, err := m.claimSend(ctx, senderID, input)
+			if err != nil {
+				return err
+			}
+			if originalID != 0 {
+				value, err = m.GetSent(ctx, originalID)
+				return err
+			}
+		}
 		if err := m.refreshStatus(ctx, users, true); err != nil {
 			return err
 		}
@@ -188,6 +200,12 @@ func (m *Module) Create(ctx context.Context, senderID int64, input CreateInput) 
 		}
 		if err := m.addStatus(ctx, users, now, expiry); err != nil {
 			return err
+		}
+		if input.requestKey != "" {
+			_, err = executor.ExecContext(ctx, `UPDATE t_msg_send_receipt SET msg_id = $3, updated_at = `+messageTime+` WHERE sender_id = $1 AND request_key = $2`, senderID, input.requestKey, id)
+			if err != nil {
+				return err
+			}
 		}
 		value, err = m.GetSent(ctx, id)
 		return err

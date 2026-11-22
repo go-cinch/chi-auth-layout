@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 
 {{- if eq .Computed.http_router_final "gin" }}
@@ -37,6 +38,8 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 	r.GET("/effective", m.effective)
 	r.GET("/:id", m.get)
 	r.POST("", m.create)
+	r.PATCH("/group", m.updateGroup)
+	r.PATCH("/group/order", m.reorderGroups)
 	r.PATCH("/:id", m.update)
 	r.DELETE("/:id", m.delete)
 }
@@ -50,6 +53,8 @@ func (m *Module) HTTP() http.Handler {
 	r.Get("/effective", m.effective)
 	r.Get("/{id}", m.get)
 	r.Post("/", m.create)
+	r.Patch("/group", m.updateGroup)
+	r.Patch("/group/order", m.reorderGroups)
 	r.Patch("/{id}", m.update)
 	r.Delete("/{id}", m.delete)
 	return r
@@ -142,7 +147,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusForbidden, err)
 		return
 	}
-	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) || errors.Is(err, apperror.InvalidBody) {
+	if errors.Is(err, ErrInvalid) || errors.Is(err, ErrConflict) || errors.Is(err, ErrPermissionConflict) || errors.Is(err, apperror.InvalidBody) {
 		server.WriteError(w, r, http.StatusBadRequest, err)
 		return
 	}
@@ -151,6 +156,7 @@ func (m *Module) create(w http.ResponseWriter, r *http.Request) {
 		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return
 	}
+	auditctx.ResourceOperation(r.Context(), "create", strconv.FormatInt(value.ID, 10))
 	server.WriteOK(w, value)
 }
 
@@ -426,4 +432,48 @@ func (m *Module) effective(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	server.WriteOK(w, value)
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) updateGroup(c *gin.Context) {
+	w, r := c.Writer, c.Request
+{{ else -}}
+func (m *Module) updateGroup(w http.ResponseWriter, r *http.Request) {
+{{ end }}
+	var input GroupChange
+	if err := server.DecodeJSON(w, r, &input, server.BodyBusiness); err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	writeGroupResult(w, r, m.UpdateGroup(r.Context(), input))
+}
+
+{{ if eq .Computed.http_router_final "gin" -}}
+func (m *Module) reorderGroups(c *gin.Context) {
+	w, r := c.Writer, c.Request
+{{ else -}}
+func (m *Module) reorderGroups(w http.ResponseWriter, r *http.Request) {
+{{ end }}
+	var input GroupOrder
+	if err := server.DecodeJSON(w, r, &input, server.BodyBusiness); err != nil {
+		server.WriteError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	writeGroupResult(w, r, m.ReorderGroups(r.Context(), input))
+}
+
+func writeGroupResult(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case err == nil:
+		server.WriteOK(w)
+	case errors.Is(err, authn.ErrPermissionGrantRequired), errors.Is(err, authn.ErrPermissionAdministrationRequired):
+		server.WriteError(w, r, http.StatusForbidden, err)
+	case errors.Is(err, ErrGroupConflict):
+		server.WriteError(w, r, http.StatusConflict, err)
+	case errors.Is(err, ErrInvalid), errors.Is(err, ErrGroupNotEmpty):
+		server.WriteError(w, r, http.StatusBadRequest, err)
+	default:
+		slog.ErrorContext(r.Context(), "permission group mutation failed", "error", err)
+		server.WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
+	}
 }

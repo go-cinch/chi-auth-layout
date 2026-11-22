@@ -62,6 +62,7 @@ type SliderChallengeInput struct {
 
 // SystemProperties contains deployment settings that anonymous clients may display.
 type SystemProperties struct {
+	RegistrationEnabled bool `json:"registration_enabled"`
  UIPreferences map[string]dictionary.UIPreferences `json:"ui_preferences,omitempty"`
 	DefaultLocale string `json:"default_locale"`
 	Locales []localization.Language `json:"locales"`
@@ -92,6 +93,7 @@ func (m *Module) systemProperties(w http.ResponseWriter, r *http.Request) {
 		if locale.Enabled { locales = append(locales, locale) }
 	}
 	server.WriteOK(w, SystemProperties{
+		RegistrationEnabled: m.registrationEnabled,
  UIPreferences: ui,
 		DefaultLocale: catalog.DefaultLocale, Locales: locales,
 		EmailEnabled: m.emailCodes != nil && m.emailCodes.sender.Ready(),
@@ -287,6 +289,10 @@ func (m *Module) usernameAvailability(c *gin.Context) {
 {{ else -}}
 func (m *Module) usernameAvailability(w http.ResponseWriter, r *http.Request) {
 {{ end }}
+	if !m.registrationEnabled {
+		server.WriteError(w, r, http.StatusNotFound, apperror.NotFound)
+		return
+	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		server.WriteError(w, r, http.StatusBadRequest, apperror.InvalidQuery)
@@ -401,6 +407,10 @@ func (m *Module) register(c *gin.Context) {
 {{ else -}}
 func (m *Module) register(w http.ResponseWriter, r *http.Request) {
 {{ end }}
+	if !m.registrationEnabled {
+		server.WriteError(w, r, http.StatusNotFound, apperror.NotFound)
+		return
+	}
 	var encrypted EncryptedRegisterInput
 	if err := server.DecodeJSON(w, r, &encrypted, server.BodyAuth); err != nil {
 		server.WriteJSON(w, http.StatusBadRequest, PasswordChangeFailureResponse{ErrorCode: apperror.Code(err), Msg: server.ErrorMessage(r, err)})
@@ -779,6 +789,9 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
     ticket := strings.TrimSpace(r.Header.Get(authn.MFATicketHeader))
     recoveryHeaders := r.Header.Values(authn.RecoveryCodeHeader)
+	if len(recoveryHeaders) > 0 {
+		auditctx.AlsoRecordUserOperation(r.Context(), "recover_totp_recovery_code")
+	}
     if len(recoveryHeaders) > 0 && (len(recoveryHeaders) != 1 || ticket == "" || len(r.Header.Values(authn.MFATicketHeader)) != 1 || len(r.Header.Values(authn.TOTPCodeHeader)) > 0) {
         writeVerificationError(w, r, ErrVerificationInvalid)
         return

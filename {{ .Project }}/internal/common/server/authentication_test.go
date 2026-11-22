@@ -184,3 +184,7 @@ func TestAuthenticationGuardsPrecedeSideEffects(t *testing.T) {
 		})
 	}
 }
+
+func (s guardOrderStore) AllowTransactional(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	return s.Claim(ctx, key, ttl)
+}

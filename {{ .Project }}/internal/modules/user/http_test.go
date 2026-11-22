@@ -59,13 +59,13 @@ func TestUserHTTP(t *testing.T) {
 		return recorder.Body.String()
 	}
 	request(http.MethodGet, "/bad", "", http.StatusBadRequest)
-	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(1)).WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(1), sqlmock.AnyArg()).WillReturnError(sqlmock.ErrCancelled)
 	request(http.MethodGet, "/1", "", http.StatusInternalServerError)
-	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(99)).WillReturnRows(
+	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(99), sqlmock.AnyArg()).WillReturnRows(
 		sqlmock.NewRows([]string{"id", "created_at", "updated_at", "role_id", "action", "username", "code", "last_logged_in_at", "status", "metadata", "wrong", "login_count"}),
 	)
 	request(http.MethodGet, "/99", "", http.StatusNotFound)
-	expectUserGet(mock, 1, "super", "89HEK28Y")
+	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(1), sqlmock.AnyArg()).WillReturnRows(userRows(1, "super", "89HEK28Y"))
 	request(http.MethodGet, "/1", "", http.StatusOK)
 	request(http.MethodPost, "/", `{}`, http.StatusBadRequest)
 	request(http.MethodPost, "/", `{"username":"operator","password":"secret1"}`, http.StatusBadRequest)
@@ -85,14 +85,31 @@ func TestUserHTTP(t *testing.T) {
 	request(http.MethodPatch, "/1", `{}`, http.StatusBadRequest)
 	request(http.MethodPatch, "/1", `{"password":"secret2"}`, http.StatusBadRequest)
 	request(http.MethodPatch, "/1", `{"challenge_id":"challenge"}`, http.StatusBadRequest)
-	request(http.MethodPatch, "/1", `{"challenge_id":"challenge","credential":"server-error"}`, http.StatusInternalServerError)
+	request(http.MethodPost, "/1/reset-password", `{"challenge_id":"challenge","credential":"server-error"}`, http.StatusInternalServerError)
 	request(http.MethodPatch, "/1", `{"status":2,"lockExpire":0}`, http.StatusBadRequest)
 	request(http.MethodPatch, "/1", `{"status":2,"lock_expired_at":0}`, http.StatusBadRequest)
+	request(http.MethodPatch, "/1", `{"status":1}`, http.StatusBadRequest)
+	request(http.MethodPatch, "/1", `{"challenge_id":"challenge","credential":"encrypted"}`, http.StatusBadRequest)
+	request(http.MethodPatch, "/1", `{"metadata":{"lock_expired_at":0}}`, http.StatusBadRequest)
+	request(http.MethodPatch, "/1", `{"review_decision":"approve","username":"mix"}`, http.StatusBadRequest)
+	request(http.MethodPost, "/1/lock", `{}`, http.StatusBadRequest)
+	request(http.MethodPost, "/1/reset-password", `{"password":"secret"}`, http.StatusBadRequest)
+	for _, operation := range []struct{method, path, body string}{
+		{http.MethodPost, "/1/lock", `{"lock_expired_at":0}`},
+		{http.MethodPost, "/1/unlock", ""},
+		{http.MethodPatch, "/1", `{"review_decision":"approve"}`},
+	} {
+		mock.ExpectBegin()
+		mock.ExpectExec("UPDATE t_user SET status").WillReturnResult(sqlmock.NewResult(0, 1))
+		expectUserGet(mock, 1, "super", "89HEK28Y")
+		mock.ExpectCommit()
+		request(operation.method, operation.path, operation.body, http.StatusOK)
+	}
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE t_user SET password").WillReturnResult(sqlmock.NewResult(0, 1))
 	expectUserGet(mock, 1, "super", "89HEK28Y")
 	mock.ExpectCommit()
-	request(http.MethodPatch, "/1", `{"challenge_id":"challenge","credential":"encrypted"}`, http.StatusOK)
+	request(http.MethodPost, "/1/reset-password", `{"challenge_id":"challenge","credential":"encrypted"}`, http.StatusOK)
 	if credentials.input.ChallengeID != "challenge" || credentials.input.Credential != "encrypted" {
 		t.Fatalf("update credential input: %#v", credentials.input)
 	}
@@ -202,7 +219,7 @@ func TestUserHTTPFailureLogsAreQueryableWithoutCredentials(t *testing.T) {
 			name: "get", method: http.MethodGet, target: "/42?token=query-secret", operation: "get_user", userID: 42,
 			message: "get user 42 failed: query user: database unavailable", logError: "query user: database unavailable",
 			prepare: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(42)).WillReturnError(errors.New("database unavailable"))
+				mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(42), sqlmock.AnyArg()).WillReturnError(errors.New("database unavailable"))
 			},
 		},
 		{

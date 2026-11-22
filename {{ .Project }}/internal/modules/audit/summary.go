@@ -12,11 +12,15 @@ import (
 )
 
 type Bucket struct {
-	At      int64 `json:"at"`
-	Success int64 `json:"success"`
-	Failure int64 `json:"failure"`
+	MFAChallenge int64 `json:"mfa_challenge,omitempty"`
+	At           int64 `json:"at"`
+	EndedAt      int64 `json:"ended_at"`
+	Success      int64 `json:"success"`
+	Failure      int64 `json:"failure"`
 }
+
 type HeatCell struct {
+	MFAChallenge int64 `json:"mfa_challenge,omitempty"`
 	StartedAt int64 `json:"started_at"`
 	EndedAt   int64 `json:"ended_at"`
 	Weekday   int   `json:"weekday"`
@@ -145,49 +149,66 @@ func (m *Module) summaryChartFilter(ctx context.Context, f Filter, clause string
 }
 
 func (m *Module) loadSummaryMetrics(ctx context.Context, clause string, args []any, result *Summary) error {
-	err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER (WHERE status >= 200 AND status < 400),COUNT(DISTINCT NULLIF(username,'')),COUNT(DISTINCT NULLIF(ip,'')),COALESCE(AVG(duration_ms),0),COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms),0) FROM t_audit_event`+clause, args...).Scan(&result.Total, &result.Success, &result.UniqueUsers, &result.UniqueIPs, &result.AverageMS, &result.P95MS)
+	err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER (WHERE `+successSQL+`),COUNT(*) FILTER (WHERE `+failureSQL+`),COUNT(DISTINCT NULLIF(username,'')),COUNT(DISTINCT NULLIF(ip,'')),COALESCE(AVG(duration_ms),0),COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms),0) FROM t_audit_event`+clause, args...).Scan(&result.Total, &result.Success, &result.Failed, &result.UniqueUsers, &result.UniqueIPs, &result.AverageMS, &result.P95MS)
 	if err != nil {
 		return err
 	}
-	result.Failed = result.Total - result.Success
-	if result.Total > 0 {
-		result.SuccessRate = float64(result.Success) * 100 / float64(result.Total)
+	if completed := result.Success + result.Failed; completed > 0 {
+		result.SuccessRate = float64(result.Success) * 100 / float64(completed)
 	}
 	return nil
 }
 
 func (m *Module) loadSummaryTrend(ctx context.Context, f Filter, clause string, args []any, result *Summary) error {
-	// UTC buckets are fixed durations. Client renders their instants in its selected timezone.
-	seconds := int64(86400)
-	if *f.To-*f.From <= int64(24*time.Hour/time.Millisecond) {
-		seconds = 3600
+	// Keep hourly bins epoch-aligned. Longer ranges follow the same local
+	// calendar boundaries as the heatmap, including 23- and 25-hour days.
+	hour := time.Hour.Milliseconds()
+	daily := *f.To-*f.From > 24*hour
+	at := *f.From
+	result.BucketMS = hour
+	if daily {
+		result.BucketMS = 24 * hour // nominal granularity, not the interval length
+	} else {
+		at = (at / hour) * hour
 	}
-	bucketArgs := append(append([]any{}, args...), seconds)
-	rows, err := m.store.SQL(ctx).QueryContext(ctx, fmt.Sprintf(`SELECT (occurred_at / ($%d::bigint * 1000)) * $%d * 1000,COUNT(*) FILTER (WHERE status >= 200 AND status < 400),COUNT(*) FILTER (WHERE status < 200 OR status >= 400) FROM t_audit_event`, len(bucketArgs), len(bucketArgs))+clause+" GROUP BY 1 ORDER BY 1", bucketArgs...)
+	location, err := time.LoadLocation(f.Timezone)
+	if err != nil {
+		return err
+	}
+	var starts []int64
+	for at < *f.To {
+		end := at + hour
+		if daily {
+			end = nextCalendarDay(time.UnixMilli(at).In(location)).UnixMilli()
+		}
+		end = min(end, *f.To)
+		starts = append(starts, at)
+		result.Trend = append(result.Trend, Bucket{At: at, EndedAt: end})
+		at = end
+	}
+
+	// A one-sided filter may gain newer rows after we read its matching extents.
+	// Use the exclusive end as a sentinel so those rows cannot enter the last bin.
+	starts = append(starts, *f.To)
+	bucketArgs := append(append([]any{}, args...), pq.Array(starts))
+	query := fmt.Sprintf(`SELECT width_bucket(occurred_at,$%d::bigint[]),COUNT(*) FILTER (WHERE `+successSQL+`),COUNT(*) FILTER (WHERE `+failureSQL+`),COUNT(*) FILTER (WHERE `+challengeSQL+`) FROM t_audit_event`, len(bucketArgs))
+	rows, err := m.store.SQL(ctx).QueryContext(ctx, query+clause+" GROUP BY 1", bucketArgs...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	buckets := map[int64]Bucket{}
 	for rows.Next() {
-		var b Bucket
-		if err := rows.Scan(&b.At, &b.Success, &b.Failure); err != nil {
+		var index int
+		var counts Bucket
+		if err := rows.Scan(&index, &counts.Success, &counts.Failure, &counts.MFAChallenge); err != nil {
 			return err
 		}
-		buckets[b.At] = b
+		if index > 0 && index <= len(result.Trend) {
+			bucket := &result.Trend[index-1]
+			bucket.Success, bucket.Failure, bucket.MFAChallenge = counts.Success, counts.Failure, counts.MFAChallenge
+		}
 	}
-	err = rows.Err()
-	if err != nil {
-		return err
-	}
-	step := seconds * 1000
-	result.BucketMS = step
-	for at := (*f.From / step) * step; at < *f.To; at += step {
-		b := buckets[at]
-		b.At = at
-		result.Trend = append(result.Trend, b)
-	}
-	return nil
+	return rows.Err()
 }
 
 func (m *Module) loadSummaryHeatmap(ctx context.Context, f Filter, clause string, args []any, result *Summary) error {
@@ -197,20 +218,21 @@ func (m *Module) loadSummaryHeatmap(ctx context.Context, f Filter, clause string
 		thresholds[i] = cell.StartedAt
 	}
 	heatArgs := append(append([]any{}, args...), pq.Array(thresholds))
-	rows, err := m.store.SQL(ctx).QueryContext(ctx, fmt.Sprintf("SELECT width_bucket(occurred_at,$%d::bigint[]),COUNT(*),COUNT(*) FILTER (WHERE status < 200 OR status >= 400) FROM t_audit_event", len(heatArgs))+clause+" GROUP BY 1", heatArgs...)
+	rows, err := m.store.SQL(ctx).QueryContext(ctx, fmt.Sprintf("SELECT width_bucket(occurred_at,$%d::bigint[]),COUNT(*),COUNT(*) FILTER (WHERE "+failureSQL+"),COUNT(*) FILTER (WHERE "+challengeSQL+") FROM t_audit_event", len(heatArgs))+clause+" GROUP BY 1", heatArgs...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var index int
-		var count, failed int64
-		if err := rows.Scan(&index, &count, &failed); err != nil {
+		var count, failed, challenges int64
+		if err := rows.Scan(&index, &count, &failed, &challenges); err != nil {
 			return err
 		}
 		if index > 0 && index <= len(result.Heatmap) {
 			result.Heatmap[index-1].Count = count
 			result.Heatmap[index-1].Failed = failed
+			result.Heatmap[index-1].MFAChallenge = challenges
 		}
 	}
 	return rows.Err()
@@ -224,13 +246,13 @@ func (m *Module) breakdown(ctx context.Context, clause string, args []any, field
 	extra := ""
 	if minimum > 0 {
 		args = append(append([]any{}, args...), minimum)
-		extra = fmt.Sprintf(" HAVING COUNT(*) FILTER (WHERE status < 200 OR status >= 400) >= $%d", len(args))
+		extra = fmt.Sprintf(" HAVING COUNT(*) FILTER (WHERE "+failureSQL+") >= $%d", len(args))
 	}
 	ranking := "2 DESC,3 DESC,1"
 	if field == "username" {
 		ranking = "3 DESC,2 DESC,1"
 	}
-	rows, err := m.store.SQL(ctx).QueryContext(ctx, "SELECT "+field+",COUNT(*),COUNT(*) FILTER (WHERE status < 200 OR status >= 400) FROM t_audit_event"+clause+" GROUP BY "+field+extra+" ORDER BY "+ranking+" LIMIT 10", args...)
+	rows, err := m.store.SQL(ctx).QueryContext(ctx, "SELECT "+field+",COUNT(*),COUNT(*) FILTER (WHERE "+failureSQL+") FROM t_audit_event"+clause+" GROUP BY "+field+extra+" ORDER BY "+ranking+" LIMIT 10", args...)
 	if err != nil {
 		return nil, err
 	}

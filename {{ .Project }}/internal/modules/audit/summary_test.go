@@ -47,10 +47,10 @@ func TestSummaryChartsShareOptionalBounds(t *testing.T) {
 			// Both charts share one extent lookup and retain the original SQL bounds.
 			mock.ExpectQuery(regexp.QuoteMeta("SELECT MIN(occurred_at), MAX(occurred_at) FROM t_audit_event"+clause)).WithArgs("login", *bound).
 				WillReturnRows(sqlmock.NewRows([]string{"first", "last"}).AddRow(test.first, test.last)).RowsWillBeClosed()
-			mock.ExpectQuery("SELECT .*occurred_at /.*"+regexp.QuoteMeta(clause+" GROUP BY 1 ORDER BY 1")).WithArgs("login", *bound, int64(3600)).
-				WillReturnRows(sqlmock.NewRows([]string{"at", "success", "failure"})).RowsWillBeClosed()
 			mock.ExpectQuery("SELECT width_bucket.*"+regexp.QuoteMeta(clause+" GROUP BY 1")).WithArgs("login", *bound, sqlmock.AnyArg()).
-				WillReturnRows(sqlmock.NewRows([]string{"index", "count", "failed"})).RowsWillBeClosed()
+				WillReturnRows(sqlmock.NewRows([]string{"index", "success", "failure", "mfa_challenge"})).RowsWillBeClosed()
+			mock.ExpectQuery("SELECT width_bucket.*"+regexp.QuoteMeta(clause+" GROUP BY 1")).WithArgs("login", *bound, sqlmock.AnyArg()).
+				WillReturnRows(sqlmock.NewRows([]string{"index", "count", "failed", "mfa_challenge"})).RowsWillBeClosed()
 			value, err := m.Summary(t.Context(), Filter{Kind: "login", From: test.from, To: test.to}, "trend", "heatmap")
 			if err != nil {
 				t.Fatal(err)
@@ -58,7 +58,7 @@ func TestSummaryChartsShareOptionalBounds(t *testing.T) {
 			if value.From != test.from || value.To != test.to {
 				t.Fatal("chart allocation changed public bounds")
 			}
-			if len(value.Trend) != 1 || value.Trend[0].At != test.start/3600000*3600000 || value.BucketMS != 3600000 {
+			if len(value.Trend) != 1 || value.Trend[0].At != test.start/3600000*3600000 || value.Trend[0].EndedAt != test.end || value.BucketMS != 3600000 {
 				t.Fatalf("trend: %+v", value)
 			}
 			if len(value.Heatmap) != 1 || value.Heatmap[0].StartedAt != test.start || value.Heatmap[0].EndedAt != test.end {
@@ -73,11 +73,11 @@ func TestSummaryChartReadErrors(t *testing.T) {
 		for _, failure := range []string{"scan", "iteration"} {
 			t.Run(field+"/"+failure, func(t *testing.T) {
 				m, mock := setup(t)
-				rows := sqlmock.NewRows([]string{"bucket", "success", "failure"})
+				rows := sqlmock.NewRows([]string{"bucket", "success", "failure", "mfa_challenge"})
 				if failure == "scan" {
-					rows.AddRow("invalid integer", 1, 0)
+					rows.AddRow("invalid integer", 1, 0, 0)
 				} else {
-					rows.AddRow(0, 1, 0).RowError(0, sqlmock.ErrCancelled)
+					rows.AddRow(0, 1, 0, 0).RowError(0, sqlmock.ErrCancelled)
 				}
 				mock.ExpectQuery("SELECT").WillReturnRows(rows).RowsWillBeClosed()
 				_, err := m.Summary(t.Context(), Filter{Kind: "login", From: auditTime(1), To: auditTime(3600000)}, field)
@@ -93,11 +93,11 @@ func TestSummaryChartReadErrors(t *testing.T) {
 }
 
 func expectSummary(mock sqlmock.Sqlmock, fail int) {
-	queries := []string{"SELECT COUNT", "SELECT .*occurred_at /", "SELECT width_bucket", "SELECT module", "SELECT username", "SELECT username", "SELECT ip"}
+	queries := []string{"SELECT COUNT", "SELECT width_bucket", "SELECT width_bucket", "SELECT module", "SELECT username", "SELECT username", "SELECT ip"}
 	rows := []*sqlmock.Rows{
-		sqlmock.NewRows([]string{"total", "success", "users", "ips", "average", "p95"}).AddRow(10, 7, 2, 3, 20.5, 40.0),
-		sqlmock.NewRows([]string{"at", "success", "failure"}).AddRow(0, 7, 3),
-		sqlmock.NewRows([]string{"index", "count", "failed"}).AddRow(1, 10, 3),
+		sqlmock.NewRows([]string{"total", "success", "failed", "users", "ips", "average", "p95"}).AddRow(11, 7, 3, 2, 3, 20.5, 40.0),
+		sqlmock.NewRows([]string{"index", "success", "failure", "mfa_challenge"}).AddRow(1, 7, 3, 1),
+		sqlmock.NewRows([]string{"index", "count", "failed", "mfa_challenge"}).AddRow(1, 11, 3, 1),
 		sqlmock.NewRows([]string{"name", "total", "failed"}).AddRow("auth", 10, 3),
 		sqlmock.NewRows([]string{"name", "total", "failed"}).AddRow("alice", 7, 5),
 		sqlmock.NewRows([]string{"name", "total", "failed"}).AddRow("alice", 7, 5),
@@ -118,7 +118,7 @@ func TestSummary(t *testing.T) {
 		m, mock := setup(t)
 		expectSummary(mock, -1)
 		s, err := m.Summary(t.Context(), Filter{Kind: "login", From: auditTime(1), To: auditTime(span), Timezone: "Asia/Shanghai"})
-		if err != nil || s.Total != 10 || s.Failed != 3 || s.SuccessRate != 70 || len(s.Heatmap) == 0 || s.Heatmap[0].StartedAt != 1 || s.Heatmap[len(s.Heatmap)-1].EndedAt != span || s.Heatmap[0].Count != 10 || len(s.Modules) != 1 || len(s.RepeatedFailures) != 1 {
+		if err != nil || s.Total != 11 || s.Failed != 3 || s.SuccessRate != 70 || len(s.Heatmap) == 0 || s.Heatmap[0].StartedAt != 1 || s.Heatmap[len(s.Heatmap)-1].EndedAt != span || s.Heatmap[0].Count != 11 || s.Heatmap[0].MFAChallenge != 1 || s.Trend[0].MFAChallenge != 1 || len(s.Modules) != 1 || len(s.RepeatedFailures) != 1 {
 			t.Fatal(s, err)
 		}
 	}
@@ -145,13 +145,13 @@ func TestSummarySelectionSkipsUnrequestedQueries(t *testing.T) {
 			m, mock := setup(t)
 			has := func(field string) bool { return slices.Contains(fields, field) }
 			if has("metrics") {
-				mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total", "success", "users", "ips", "avg", "p95"}).AddRow(0, 0, 0, 0, 0, 0))
+				mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"total", "success", "failed", "users", "ips", "avg", "p95"}).AddRow(0, 0, 0, 0, 0, 0, 0))
 			}
 			if has("trend") {
-				mock.ExpectQuery("SELECT .*occurred_at /").WillReturnRows(sqlmock.NewRows([]string{"at", "success", "failure"}))
+				mock.ExpectQuery("SELECT width_bucket").WillReturnRows(sqlmock.NewRows([]string{"index", "success", "failure", "mfa_challenge"}))
 			}
 			if has("heatmap") {
-				mock.ExpectQuery("SELECT width_bucket").WillReturnRows(sqlmock.NewRows([]string{"index", "count", "failed"}))
+				mock.ExpectQuery("SELECT width_bucket").WillReturnRows(sqlmock.NewRows([]string{"index", "count", "failed", "mfa_challenge"}))
 			}
 			for _, item := range []struct{ field, column string }{
 				{"modules", "module"}, {"repeated_failures", "username"}, {"accounts", "username"}, {"sources", "ip"}} {
@@ -196,5 +196,65 @@ func TestSummarySelectionSkipsUnrequestedQueries(t *testing.T) {
 	m, _ := setup(t)
 	if _, err := m.Summary(t.Context(), Filter{Kind: "login"}, "unknown"); err == nil {
 		t.Fatal("accepted unknown field")
+	}
+}
+
+func TestLoginAccountRankingLimitAndTies(t *testing.T) {
+	m, mock := setup(t)
+	mock.ExpectQuery(regexp.QuoteMeta("GROUP BY username ORDER BY 3 DESC,2 DESC,1 LIMIT 10")).
+		WithArgs("login", int64(1), int64(1000)).
+		WillReturnRows(sqlmock.NewRows([]string{"username", "total", "failed"}).
+			AddRow("most-failures", 3, 3).
+			AddRow("larger-total", 6, 2).
+			AddRow("alpha", 3, 2).
+			AddRow("bravo", 3, 2)).
+		RowsWillBeClosed()
+	result, err := m.Summary(t.Context(), Filter{Kind: "login", From: auditTime(1), To: auditTime(1000)}, "accounts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Breakdown{
+		{Name: "most-failures", Total: 3, Failed: 3},
+		{Name: "larger-total", Total: 6, Failed: 2},
+		{Name: "alpha", Total: 3, Failed: 2},
+		{Name: "bravo", Total: 3, Failed: 2},
+	}
+	if !slices.Equal(result.Accounts, want) {
+		t.Fatalf("ranked accounts = %+v, want %+v", result.Accounts, want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDailyTrendUsesActualDayLength(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		month      time.Month
+		day, hours int
+	}{
+		{time.March, 8, 23},
+		{time.November, 1, 25},
+	} {
+		start := time.Date(2026, tc.month, tc.day, 0, 0, 0, 0, location)
+		end := start.AddDate(0, 0, 1)
+		from, to := start.Add(-time.Hour).UnixMilli(), end.Add(time.Hour).UnixMilli()
+		m, mock := setup(t)
+		mock.ExpectQuery("SELECT width_bucket").WillReturnRows(sqlmock.NewRows([]string{"index", "success", "failure", "mfa_challenge"}))
+		s, err := m.Summary(t.Context(), Filter{Kind: "login", Timezone: location.String(), From: &from, To: &to}, "trend")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []Bucket{
+			{At: from, EndedAt: start.UnixMilli()},
+			{At: start.UnixMilli(), EndedAt: start.Add(time.Duration(tc.hours) * time.Hour).UnixMilli()},
+			{At: end.UnixMilli(), EndedAt: to},
+		}
+		if !slices.Equal(s.Trend, want) {
+			t.Fatalf("%s daily intervals = %+v, want %+v", start, s.Trend, want)
+		}
 	}
 }

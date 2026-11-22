@@ -49,6 +49,75 @@ func resourceMoveCatalog(key string) localization.Catalog {
 	}}
 }
 
+func TestCatalogPublishNarrowsExistingWildcardBinding(t *testing.T) {
+	const key = "admin:system:user"
+	const word = "admin:all:assigned:ptest"
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"bindings", `{"bindings":[{"resource_key":"admin:system:user","operation":"*","feature_keys":[]}]}`},
+		{"legacy", `{"resource_key":"admin:system:user","operation":"*","feature_keys":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := resourceMoveCatalog(key)
+			current := before.ResourceCatalog.Resources[key]
+			current.PermissionScope = "*"
+			before.ResourceCatalog.Resources[key] = current
+			after := resourceMoveCatalog(key)
+
+			var stored map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(tc.raw), &stored); err != nil {
+				t.Fatal(err)
+			}
+			stored["permission_scope"] = json.RawMessage(`"*"`)
+			stored["ui"], stored["endpoints"] = json.RawMessage(`[]`), json.RawMessage(`[]`)
+			raw, err := json.Marshal(stored)
+			if err != nil {
+				t.Fatal(err)
+			}
+			migrate := func() Config {
+				t.Helper()
+				got, changed, err := migrateResourceConfig(before.ResourceCatalog, after, word, raw, nil, nil)
+				if err != nil || !changed {
+					t.Fatalf("publish: changed=%t err=%v", changed, err)
+				}
+				var config Config
+				if err := json.Unmarshal(got, &config); err != nil {
+					t.Fatal(err)
+				}
+				if config.PermissionScope != "" || config.Bindings == nil {
+					t.Fatalf("unexpected migrated config: %s", got)
+				}
+				_, changed, err = migrateResourceConfig(after.ResourceCatalog, after, word, got, nil, nil)
+				if err != nil || changed {
+					t.Fatalf("repeat publication: changed=%t err=%v", changed, err)
+				}
+				return config
+			}
+			config := migrate()
+			want := []ResourceBinding{ {ResourceKey: key, Operation: "read", FeatureKeys: []string{key + ":query"}} }
+			if !reflect.DeepEqual(*config.Bindings, want) || len(config.Endpoints) != 1 || config.Endpoints[0].Method != "GET" || config.Endpoints[0].Path != "/user" {
+				t.Fatalf("expected only configured read access: %+v", config)
+			}
+
+			update := key + ":edit"
+			after.ResourceCatalog.Resources[key].Operations["update"] = localization.ResourceOperation{ButtonKeys: []string{update}}
+			after.ResourceCatalog.Buttons[update] = localization.Feature{HTTP: []localization.HTTPPath{ {Method: "PATCH", Path: "/user/{id}"}}}
+			config = migrate()
+			want = append(want, ResourceBinding{ResourceKey: key, Operation: "update", FeatureKeys: []string{update}})
+			if !reflect.DeepEqual(*config.Bindings, want) || len(config.Endpoints) != 2 {
+				t.Fatalf("expected exactly the two configured operations: %+v", config)
+			}
+			clear(after.ResourceCatalog.Resources[key].Operations)
+			config = migrate()
+			if len(*config.Bindings) != 0 || len(config.Endpoints) != 0 || len(config.UI) != 0 {
+				t.Fatalf("expected no grant without configured operations: %+v", config)
+			}
+		})
+	}
+}
+
 func TestResourceMovePreservesActionIdentityAndMigratesExplicitSelections(t *testing.T) {
 	m, mock := newTestModule(t)
 	const oldKey = "admin:system:user"

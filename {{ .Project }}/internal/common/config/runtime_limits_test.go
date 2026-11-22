@@ -19,7 +19,7 @@ func TestRuntimeLimitsDefaultsAndOverrides(t *testing.T) {
 	for key, value := range map[string]string{
 		"SERVICE_DICTIONARY_CACHETTL": "43s", "SERVICE_AUTH_MFA_LOGINTICKETTTL": "37s",
 		"SERVICE_AUDIT_DEFAULTWINDOW": "24h", "SERVICE_AUDIT_MAXWINDOW": "48h", "SERVICE_AUDIT_EXPORTMAXROWS": "3",
-		"SERVICE_AUDIT_RECORDTIMEOUT": "120ms", "SERVICE_AUDIT_PAYLOADLIMIT": "512",
+		"SERVICE_AUDIT_STREAM": "audit:custom", "SERVICE_AUDIT_RECORDTIMEOUT": "120ms", "SERVICE_AUDIT_PAYLOADLIMIT": "512",
 		"SERVICE_HTTP_BODYLIMITS_AUTHCHALLENGE": "101", "SERVICE_HTTP_BODYLIMITS_SLIDERCHALLENGE": "202", "SERVICE_HTTP_BODYLIMITS_AUTHVERIFICATION": "303",
 		"SERVICE_HTTP_BODYLIMITS_AUTH": "404", "SERVICE_HTTP_BODYLIMITS_BUSINESS": "505", "SERVICE_HTTP_BODYLIMITS_DICTIONARY": "606",
 	} {
@@ -29,7 +29,7 @@ func TestRuntimeLimitsDefaultsAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Dictionary.CacheTTL != 43*time.Second || cfg.Auth.MFA.LoginTicketTTL != 37*time.Second || cfg.Audit.DefaultWindow != 24*time.Hour || cfg.Audit.MaxWindow != 48*time.Hour || cfg.Audit.ExportMaxRows != 3 || cfg.Audit.RecordTimeout != 120*time.Millisecond || cfg.Audit.PayloadLimit != 512 {
+	if cfg.Dictionary.CacheTTL != 43*time.Second || cfg.Auth.MFA.LoginTicketTTL != 37*time.Second || cfg.Audit.DefaultWindow != 24*time.Hour || cfg.Audit.MaxWindow != 48*time.Hour || cfg.Audit.ExportMaxRows != 3 || cfg.Audit.Stream != "audit:custom" || cfg.Audit.RecordTimeout != 120*time.Millisecond || cfg.Audit.PayloadLimit != 512 {
 		t.Fatal("runtime overrides lost")
 	}
 	want := HTTPBodyLimitsConfig{AuthChallenge: 101, SliderChallenge: 202, AuthVerification: 303, Auth: 404, Business: 505, Dictionary: 606}

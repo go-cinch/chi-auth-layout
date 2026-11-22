@@ -33,7 +33,7 @@ func TestConvertedDirectoryKeepsExplicitDescendantGrants(t *testing.T) {
 			t.Fatal(string(encoded))
 		}
 	}
-	all := directoryResourceBindings(after, "admin:system:parent", "*")
+	all := snapshotResourceBindings(after, "admin:system:parent", "*")
 	if len(all) != 3 {
 		t.Fatal("reference operation restrictions lost", all)
 	}

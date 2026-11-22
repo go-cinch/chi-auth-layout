@@ -3,6 +3,7 @@ package auth
 import (
 	"database/sql"
 	"encoding/json"
+	"slices"
 	"github.com/DATA-DOG/go-sqlmock"
 	"testing"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
@@ -117,4 +118,28 @@ func TestSelfTimezonePreference(t *testing.T) {
     if err:=m.UpdateTimezone(ctx,"UTC");err!=ErrUnauthorized {t.Fatal(err)}
     mock.ExpectExec("UPDATE t_user").WillReturnError(sql.ErrConnDone)
     if err:=m.UpdateTimezone(ctx,"UTC");err==nil {t.Fatal("database failure ignored")}
+}
+
+func TestProfileActionsFollowScopedTransportGrants(t *testing.T) {
+	m, manager, mock := newAuthTestModule(t)
+	ctx := authenticatedContext(t, manager, m.sessions)
+	for _, granted := range []bool{false, true} {
+		rows := permissionRows()
+		if granted {
+			config := permissionConfig(m.catalogSource.(*localization.Module), "POST", "/totp/test")
+			rows.AddRow("admin:read:system:user", config)
+		}
+		mock.ExpectQuery("WITH assigned AS").WithArgs(int64(3), "admin").WillReturnRows(rows)
+		p, err := m.userInfoPermission(ctx, 3, "admin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var want []string
+		if granted {
+			want = []string{"test_totp"}
+		}
+		if !slices.Equal(p.ProfileActions, want) {
+			t.Fatalf("granted=%v: got %v, want %v", granted, p.ProfileActions, want)
+		}
+	}
 }

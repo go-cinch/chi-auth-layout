@@ -30,7 +30,7 @@ func TestDictionaryConditionalUpdatePostgres(t *testing.T) {
 	// JSONB comparison must ignore key ordering and numeric formatting.
 	reordered := json.RawMessage("{\"b\":2, \"a\":1.0}")
 	next := json.RawMessage("{\"a\":2,\"b\":2}")
-	if _, err := module.Update(t.Context(), value.ID, dictionary.UpdateDictionaryInput{Value: &next, ExpectedValue: &reordered}); err != nil {
+	if _, err := module.Update(t.Context(), value.ID, dictionary.UpdateDictionaryInput{Value: next, ExpectedValue: reordered}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -40,7 +40,7 @@ func TestDictionaryConditionalUpdatePostgres(t *testing.T) {
 		go func() {
 			<-start
 			candidate := json.RawMessage(fmt.Sprintf("{\"winner\":%d}", i))
-			_, err := module.Update(t.Context(), value.ID, dictionary.UpdateDictionaryInput{Value: &candidate, ExpectedValue: &next})
+			_, err := module.Update(t.Context(), value.ID, dictionary.UpdateDictionaryInput{Value: candidate, ExpectedValue: next})
 			results <- err
 		}()
 	}
@@ -70,5 +70,20 @@ func TestDictionaryConditionalUpdatePostgres(t *testing.T) {
 	}
 	if number, ok := winner["winner"]; !ok || number < 0 || number > 1 {
 		t.Fatalf("unexpected winner: %s", saved.Value)
+	}
+
+	nullValue := json.RawMessage("null")
+	if _, err := module.Update(t.Context(), value.ID, dictionary.UpdateDictionaryInput{Value: nullValue, ExpectedValue: nullValue}); !errors.Is(err, dictionary.ErrVersionConflict) {
+		t.Fatalf("comparing against JSON null: got %v, want version conflict", err)
+	}
+	updated, err := module.Update(t.Context(), value.ID, dictionary.UpdateDictionaryInput{Value: nullValue, ExpectedValue: saved.Value})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updated.Value) != "null" {
+		t.Fatalf("stored value = %s, want JSON null", updated.Value)
+	}
+	if _, err := module.Update(t.Context(), value.ID, dictionary.UpdateDictionaryInput{Value: next, ExpectedValue: nullValue}); err != nil {
+		t.Fatalf("conditional update from JSON null: %v", err)
 	}
 }

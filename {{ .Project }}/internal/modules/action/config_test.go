@@ -77,6 +77,52 @@ func TestConfigSelectedFeaturesDetermineEndpoints(t *testing.T) {
 	}
 }
 
+func TestConfigDeduplicatesButtonsSharedByReadFeatures(t *testing.T) {
+	catalog := actionCatalogFixture()
+	const resourceKey = "admin:system:user"
+	const featureKey = resourceKey + ":view-list"
+	const queryButton = "admin:btn:system:user:query"
+	resource := catalog.ResourceCatalog.Resources[resourceKey]
+	read := resource.Operations["read"]
+	read.ButtonKeys = append(read.ButtonKeys, featureKey)
+	resource.Operations["read"] = read
+	catalog.ResourceCatalog.Buttons[featureKey] = localization.Feature{
+		Btn: []string{queryButton},
+		HTTP: []localization.HTTPPath{
+			{Method: "GET", Path: "/user/summary"},
+		},
+		GRPC: []string{},
+	}
+
+	for _, test := range []struct {
+		word    string
+		config  Config
+		buttons []string
+	}{
+		{"admin:read:system:user", Config{ResourceKey: resourceKey, Operation: "read"}, []string{queryButton, "admin:btn:system:user:view-detail"}},
+		{"admin:all:system:all", Config{Builtin: "all"}, []string{queryButton, "admin:btn:system:user:view-detail", "admin:btn:system:user:edit"}},
+	} {
+		t.Run(test.word, func(t *testing.T) {
+			resolved, err := ResolveConfig(catalog, test.word, test.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := resolved.Validate(test.word); err != nil {
+				t.Fatalf("resolved permission is invalid: %v (UI: %+v)", err, resolved.UI)
+			}
+			if len(resolved.UI) != 1 || !reflect.DeepEqual(resolved.UI[0].ButtonKeys, test.buttons) {
+				t.Fatalf("unexpected UI: %+v", resolved.UI)
+			}
+			for _, endpoint := range resolved.Endpoints {
+				if endpoint == (Endpoint{Protocol: "http", Method: "GET", Path: "/user/summary"}) {
+					return
+				}
+			}
+			t.Fatal("missing endpoint from the feature sharing the button")
+		})
+	}
+}
+
 func TestConfigIgnoresCallerTransportMappings(t *testing.T) {
 	localizer := localization.New()
 	installActionCatalog(t, localizer)

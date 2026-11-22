@@ -27,6 +27,7 @@ var (
 	ErrIDs      = apperror.New("ACTION_INVALID_IDS", "provide 1-100 positive action ids")
 	ErrInvalid  = apperror.New("ACTION_INVALID", "invalid action")
 	ErrConflict = apperror.New("ACTION_CONFLICT", "action code or word already exists")
+	ErrPermissionConflict = apperror.New("ACTION_PERMISSION_CONFLICT", "an action with these permissions already exists")
 )
 
 const AllPermissionsActionID int64 = 1
@@ -96,6 +97,7 @@ type Module struct {
 	definitions      DefinitionCatalog
 	catalogSource    CatalogSource
 	nameLocalization NameLocalization
+	groupStorage GroupStorage
 	administration   PermissionAdministration
 	store            *db.Store
 	limits           pagination.Limits
@@ -150,6 +152,9 @@ func (m *Module) Create(ctx context.Context, input CreateActionInput) (*Action, 
 		if err := authn.RequirePermissionOperation(ctx, m.administration, "action", "create"); err != nil {
 			return err
 		}
+		if _, err := m.store.SQL(ctx).ExecContext(ctx, permissionMutationLockSQL); err != nil {
+			return err
+		}
 		catalog, err := m.requireRegisteredDefinition(ctx, input.Word, input.Group, input.Config)
 		if err != nil {
 			return err
@@ -161,6 +166,9 @@ func (m *Module) Create(ctx context.Context, input CreateActionInput) (*Action, 
 			if err := authn.RequireCatalogAdministration(ctx, m.administration); err != nil {
 				return err
 			}
+		}
+		if err := m.checkNewDefinition(ctx, catalog, input.Word, input.Config); err != nil {
+			return err
 		}
 
 		encoded, err := json.Marshal(input.Config)

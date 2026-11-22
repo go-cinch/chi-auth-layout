@@ -19,6 +19,13 @@ Untrusted spreadsheet cell prefixes are neutralized.
 account (attempted account on failed login), HTTP outcome, method/path, resolved client IP,
 user agent, trace ID, safe error code and duration.
 
+Submitting an email binding records `bind_email` with the authenticated account,
+target user ID and HTTP outcome. Its request and response payloads are omitted.
+Authenticator reset confirmations record the entry point (profile or sign-in),
+proof method (email or recovery code), HTTP outcome and known account. Sending
+a verification email alone does not create a reset event. A recovery-code
+confirmation on the login endpoint writes its login and operation records in
+one transaction. Confirmation events omit both request and response bodies.
 Email unlink auditing distinguishes a request to send mail, authenticated
 unlinking, confirmation by email link, and reopening a confirmed link. A
 successful link resolves the affected user into `resource_id` after commit.
@@ -51,20 +58,47 @@ custom keys are hidden. Files are represented by `file`; unstructured, invalid o
 oversized bodies are explicitly omitted. Each captured side is limited to 64 KiB.
 Login request and response bodies are never captured.
 
-Success means HTTP 200–399. Login records include restricted first-login sessions
+Login events expose an outcome of `success`, `failure` or `mfa_challenge`. A login 403 with `AUTH_LOGIN_MFA_REQUIRED` counts as an event and is excluded from both failures and the success-rate denominator. Other HTTP 200–399 responses are successes. Login CSV appends the outcome after the trace ID. Login records include restricted first-login sessions
 and failed credentials/challenges submitted to the final login endpoint. Setup
 challenges, captcha refresh, token refresh and audit reads are excluded.
 Operations include HTTP writes in user/role/action/user-group/dictionary/
 msg and registration/password changes/authenticated logout. RPC calls are not
 captured by this HTTP observer. There is no user-facing edit/delete endpoint.
 
-The HTTP middleware persists after handling the request with a detached one-second
-budget. Persistence failures emit an error without replacing the business response;
-there is no durable retry queue. Retention/archival is not automated in this version.
+The HTTP middleware captures and redacts the event after handling the request.
+{{ if .Computed.enable_redis_final -}}
+With Redis enabled it waits for admission to the dedicated `audit.stream` (default
+`audit:events`, override `SERVICE_AUDIT_STREAM`). The Redis client adds the
+`<environment>:<service>:` prefix. Admission uses `audit.recordTimeout` (default
+one second). An admission error is logged, preserves the business response and
+does not fall back to SQL. Redis persistence and eviction settings determine the
+durability of accepted entries.
 
-Summary, heatmap, options, table and CSV reuse identical filters. Trends use fixed
-epoch-aligned hourly buckets for <=24h, otherwise daily buckets; the UI formats bucket instants
-in its selected timezone. Heatmap cells expose independent `started_at`/`ended_at` intervals instead of
+The `audit-writers` consumer group starts with the service and uses Redis 6.2+ pending-entry reclaim. Each delivery is
+written in a PostgreSQL transaction with the same timeout per attempt. Failed
+transactions are retried three times with backoff. Commit precedes acknowledgement
+and deletion. Idle pending deliveries are reclaimed from stopped consumers.
+A producer-generated delivery ID prevents duplicate rows on replay, including
+paired login and operation records. Malformed messages and exhausted transactions
+are moved atomically to `<stream>:failed`. To replay after correcting the cause,
+copy the original fields, including `delivery_id`, back to the input stream.
+Keep both streams dedicated to this pipeline. When changing the stream name,
+drain the old queue including pending entries before switching all replicas.
+{{ else -}}
+Without Redis the middleware writes to PostgreSQL synchronously with a detached
+`audit.recordTimeout` budget (default one second). An error is logged and the
+business response is preserved.
+{{ end -}}
+Audit record retention and archival are managed separately.
+
+Summary, heatmap, options, table and CSV reuse identical filters. Trends use
+epoch-aligned hours for ranges up to 24 hours. Longer ranges group events by local
+calendar date in `time_zone`. Each trend bucket exposes its start (`at`) and
+exclusive end (`ended_at`). Daily intervals follow local midnight across clock
+changes and are clipped to the query range. Drilldown uses these bounds.
+`bucket_ms` identifies the nominal granularity.
+
+Heatmap cells expose independent `started_at`/`ended_at` intervals instead of
 combining recurring weekdays. Ranges up to 24 hours use consecutive hourly bins;
 shorter calendar ranges use local date/hour bins, and ranges above eight days
 use local calendar days. `heatmap_granularity` identifies hour/day mode. All cells
@@ -87,7 +121,7 @@ Ant Design Vue cards/statistics/table/drawer and existing {{ (fromJSON .Computed
 They select every matching local wall-clock hour in `time_zone` within the original
 `from`/`to` bounds, including both occurrences of a repeated DST hour. Heatmap,
 selected-scope summary, records and CSV use the same filter implementation.
-`username`, `ip` and `path` are exact filters for related-event investigation.
+`user_id` selects a verified actor by positive ID across renames and deletion. Rows retain their recorded username. `username`, `ip` and `path` are exact filters for related-event investigation.
 `sort` accepts `newest`, `failure` (failed requests first), and `duration` (slowest
 first), with occurrence time and ID as deterministic ties. CSV uses the same order.
 Summary includes `bucket_ms`, per-cell `failed`, and ranked `accounts`/`sources`.

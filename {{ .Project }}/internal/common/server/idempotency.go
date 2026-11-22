@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
@@ -16,10 +17,10 @@ import (
 
 const IdempotencyHeader = "X-Idempotent"
 
-func Idempotency(store idempotency.Store, ttl time.Duration) func(http.Handler) http.Handler {
+func Idempotency(store idempotency.Store, ttl time.Duration, transactionalPaths ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !claimIdempotency(w, r, store, ttl) {
+			if !claimIdempotency(w, r, store, ttl, transactionalPaths...) {
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -28,9 +29,9 @@ func Idempotency(store idempotency.Store, ttl time.Duration) func(http.Handler) 
 }
 
 {{ if eq .Computed.http_router_final "gin" -}}
-func GinIdempotency(store idempotency.Store, ttl time.Duration) gin.HandlerFunc {
+func GinIdempotency(store idempotency.Store, ttl time.Duration, transactionalPaths ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !claimIdempotency(c.Writer, c.Request, store, ttl) {
+		if !claimIdempotency(c.Writer, c.Request, store, ttl, transactionalPaths...) {
 			c.Abort()
 			return
 		}
@@ -39,7 +40,7 @@ func GinIdempotency(store idempotency.Store, ttl time.Duration) gin.HandlerFunc 
 }
 
 {{ end -}}
-func claimIdempotency(w http.ResponseWriter, r *http.Request, store idempotency.Store, ttl time.Duration) bool {
+func claimIdempotency(w http.ResponseWriter, r *http.Request, store idempotency.Store, ttl time.Duration, transactionalPaths ...string) bool {
 	if r.Method != http.MethodPost {
 		return true
 	}
@@ -57,7 +58,11 @@ func claimIdempotency(w http.ResponseWriter, r *http.Request, store idempotency.
 		WriteError(w, r, http.StatusInternalServerError, apperror.Internal)
 		return false
 	}
-	claimed, err := store.Claim(r.Context(), key, ttl)
+	claim := store.Claim
+	if slices.Contains(transactionalPaths, strings.TrimSuffix(r.URL.Path, "/")) {
+		claim = store.AllowTransactional
+	}
+	claimed, err := claim(r.Context(), key, ttl)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "claim idempotency key failed: "+err.Error(),
 			"operation", "claim_idempotency_key", "outcome", "failure", "error", err)

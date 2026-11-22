@@ -7,6 +7,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"{{ .Computed.module_name_final }}/internal/common/report"
@@ -41,6 +42,22 @@ func TestDetailSelectionSkipsAssociations(t *testing.T) {
 	mock.ExpectQuery("SELECT id FROM t_user WHERE id").WillReturnError(sqlmock.ErrCancelled)
 	if _, err := m.GetSelected(t.Context(), 7, report.Fields{"id"}); err == nil || errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
+	}
+}
+
+func TestUserDetailProjectsEffectiveLockStatus(t *testing.T) {
+	m, mock := newTestModule(t)
+	status, metadata := lockStatusColumns("$2")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT " + status + ", " + metadata + " FROM t_user WHERE id = $1")).
+		WithArgs(int64(7), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "metadata"}).AddRow(StatusActive, []byte(`{"language":"zh-CN"}`)))
+
+	detail, err := m.GetSelected(t.Context(), 7, report.Fields{"status", "metadata"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Status != StatusActive || len(detail.Metadata) != 1 || detail.Metadata["language"] != "zh-CN" {
+		t.Fatalf("unexpected effective detail: %#v", detail)
 	}
 }
 

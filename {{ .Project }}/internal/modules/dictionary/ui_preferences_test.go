@@ -32,6 +32,7 @@ func TestPreferenceContract(t *testing.T) {
 	}
 	for _, raw := range []string{
 		`{"theme":{"mode":"auto","radius":"0","font_size":15,"color_primary":"#abcdef","builtin_type":"custom"}}`,
+		`{"theme":{"font_size":22},"sidebar":{"width":160},"tabbar":{"max_count":30},"custom":{"default_table_size":10}}`,
 		`{"app":{"watermark_content":"","watermark":false},"sidebar":{"width":320},"tabbar":{"max_count":0}}`,
 		`{"copyright":{"company_site_link":"https://example.com","icp_link":""},"custom":{"default_table_size":200,"report_title":"report","enable_form_fullscreen":false}}`,
 		`{"theme":null}`, `{"theme":{"mode":null}}`, `{}`,
@@ -43,6 +44,8 @@ func TestPreferenceContract(t *testing.T) {
 	for _, raw := range []string{
 		`null`, `{"app":{"locale":"en-US"}}`, `{"app":{"access_mode":"backend"}}`, `{"theme":true}`,
 		`{"theme":{"mode":"unknown"}}`, `{"theme":{"radius":0.5}}`, `{"theme":{"font_size":23}}`, `{"theme":{"font_size":16.5}}`, `{"theme":{"font_size":"16"}}`,
+		`{"theme":{"font_size":14}}`, `{"sidebar":{"width":159}}`, `{"sidebar":{"width":321}}`, `{"tabbar":{"max_count":-1}}`,
+		`{"custom":{"default_table_size":9}}`, `{"custom":{"default_table_size":201}}`,
 		`{"app":{"watermark":"false"}}`, `{"app":{"timezone":"wrong/timezone"}}`, `{"sidebar":{"width":0}}`, `{"tabbar":{"max_count":31}}`,
 		`{"custom":{"default_table_size":25}}`, `{"copyright":{"company_site_link":"javascript:alert(1)"}}`, `{"copyright":{"icp_link":"https://user:pass@example.com"}}`,
 		`{"theme":{"color_primary":"url(https://example.com)"}}`, `{"widget":{"order":[]}}`, `{"widget":{"fullscreen_button_position":"fixed"}}`,

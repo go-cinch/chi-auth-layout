@@ -39,6 +39,13 @@ type IdempotentHTTPModule interface {
 	Idempotent() bool
 }
 
+// TransactionalPOSTModule handles validated idempotency keys within the
+// business transaction for these mounted POST paths.
+type TransactionalPOSTModule interface {
+	HTTPModule
+	TransactionalPOSTPaths() []string
+}
+
 // PublicHTTPModule marks infrastructure modules that are public in their
 // entirety. Business modules remain authenticated by default and expose any
 // unauthenticated handlers below their module-local /pub prefix.

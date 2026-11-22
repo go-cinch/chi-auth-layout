@@ -129,9 +129,11 @@ type CatalogSource interface {
 }
 
 type Module struct {
+	registrationEnabled    bool
 	uiPreferenceSource     UIPreferenceSource
 	timezoneSource         TimezoneSource
 	passwordResetOptional  bool
+	adminPasswordResetOptional bool
 	onboardingVisibility   OnboardingVisibility
 	emailCodes             *EmailCodes
 	verification                    *Verification
@@ -469,13 +471,11 @@ func (m *Module) Info(ctx context.Context, scopes ...string) (*UserInfo, error) 
 	if roleID.Valid {
 		value.Role = &UserRole{ID: roleID.Int64, Name: roleName.String, Word: roleWord.String}
 	}
-	catalog := m.catalogSource.Select([]string{"resource_catalog"})
-	permission, err := m.permissionsFromCatalog(ctx, value.ID, scope, nil, catalog)
+	permission, err := m.userInfoPermission(ctx, value.ID, scope)
 	if err != nil {
 		return nil, err
 	}
 	value.Scope = scope
-	permission.Navigation = permissionNavigation(catalog.ResourceCatalog, scope, permission.Menus)
 	value.Permission = permission
 	if err := m.populateEmailInfo(ctx, &value); err != nil {
 		return nil, err
@@ -492,6 +492,11 @@ func (m *Module) Logout(ctx context.Context, refreshToken string) error {
 	}
 	if err != nil {
 		return err
+	}
+	// Attribute the public endpoint from the signed session record before deletion.
+	// A missing record on a repeated logout must not prevent cleanup.
+	if record, readErr := m.sessions.read(ctx, sessionID); readErr == nil {
+		auditctx.Identity(ctx, record.UserID, record.Username)
 	}
 	// Revoke first so no new request can use this grant. Attempt both operations
 	// even when one fails; a retry with the same signed token can finish either.

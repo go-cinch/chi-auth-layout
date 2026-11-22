@@ -66,16 +66,16 @@ func TestUserCRUD(t *testing.T) {
 	if _, err := m.Get(ctx, 0); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(99)).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(99), sqlmock.AnyArg()).WillReturnError(sql.ErrNoRows)
 	if _, err := m.Get(ctx, 99); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
-	expectUserGet(mock, 1, "super", "89HEK28Y")
+	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(1), sqlmock.AnyArg()).WillReturnRows(userRows(1, "super", "89HEK28Y"))
 	value, err := m.Get(ctx, 1)
 	if err != nil || value.Username != "super" || value.CreatedAt != userTestTime {
 		t.Fatalf("get: %#v %v", value, err)
 	}
-	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(2)).WillReturnRows(
+	mock.ExpectQuery("SELECT .* FROM t_user WHERE id").WithArgs(int64(2), sqlmock.AnyArg()).WillReturnRows(
 		sqlmock.NewRows([]string{"id", "created_at", "updated_at", "role_id", "action", "username", "code", "last_logged_in_at", "status", "metadata", "wrong", "login_count"}).
 			AddRow(2, userTestTime, userTestTime, nil, "", "broken", "00000002", nil, StatusActive, []byte(`{`), int64(0), int64(1)),
 	)
@@ -105,13 +105,12 @@ func TestUserCRUD(t *testing.T) {
 	if _, err := m.Update(ctx, 1, UpdateUserInput{}); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
-	locked := StatusLocked
 	past := time.Now().Add(-time.Minute).UnixMilli()
 	pastMetadata := map[string]any{"lock_expired_at": past}
-	if _, err := m.Update(ctx, 1, UpdateUserInput{Status: &locked, Metadata: &pastMetadata}); !errors.Is(err, ErrInvalid) {
+	if _, err := m.Update(ctx, 1, UpdateUserInput{Metadata: &pastMetadata}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("past lock expiration: %v", err)
 	}
-	if _, err := m.Update(ctx, 1, UpdateUserInput{Status: &locked}); !errors.Is(err, ErrInvalid) {
+	if _, err := m.Lock(ctx, 1, past); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("missing lock metadata: %v", err)
 	}
 	mock.ExpectBegin()
@@ -127,10 +126,10 @@ func TestUserCRUD(t *testing.T) {
 	m.passwordFailures = clearer
 	metadata := map[string]any{"source": "admin"}
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE t_user SET metadata").WithArgs(`{"source":"admin"}`, sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE t_user SET metadata").WithArgs(`{"source":"admin"}`, pq.Array(userActionMetadataKeys), sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
 	expectUserGet(mock, 1, "updated", "89HEK28Y")
 	mock.ExpectCommit()
-	if _, err := m.Update(ctx, 1, UpdateUserInput{Metadata: &metadata}); err != nil || len(clearer.ids) != 1 || clearer.ids[0] != 1 {
+	if _, err := m.Update(ctx, 1, UpdateUserInput{Metadata: &metadata}); err != nil || len(clearer.ids) != 0 {
 		t.Fatalf("clear password failures: %#v, %v", clearer.ids, err)
 	}
 
@@ -237,20 +236,7 @@ func TestUserHelpers(t *testing.T) {
 	if encoded, err := encodeMetadata(map[string]any{"login_policy": map[string]any{"lock_expired_at": 0}}); err != nil || encoded != `{"login_policy":{"lock_expired_at":0}}` {
 		t.Fatalf("snake-case metadata: %s %v", encoded, err)
 	}
-	active := StatusActive
-	normalized, err := normalizeUpdateMetadata(map[string]any{"lock_expired_at": int64(100), "source": "admin"}, &active)
-	if err != nil || normalized["source"] != "admin" {
-		t.Fatalf("normalize active metadata: %#v %v", normalized, err)
-	}
-	if _, exists := normalized["lock_expired_at"]; exists {
-		t.Fatal("active metadata retained lock_expired_at")
-	}
-	locked := StatusLocked
-	future := time.Now().Add(time.Minute).UnixMilli()
-	normalized, err = normalizeUpdateMetadata(map[string]any{"lock_expired_at": float64(future)}, &locked)
-	if err != nil || normalized["lock_expired_at"] != future {
-		t.Fatalf("normalize locked metadata: %#v %v", normalized, err)
-	}
+
 }
 
 func TestUserRelationsAndFullUpdate(t *testing.T) {
@@ -282,15 +268,14 @@ func TestUserRelationsAndFullUpdate(t *testing.T) {
 		t.Fatalf("create relations: %#v %v", value, err)
 	}
 
-	password, status := "secret2", StatusActive
-	metadata := map[string]any{"reject_register_reason": "duplicate request"}
+	metadata := map[string]any{"source": "staff"}
 	zeroRole := int64(0)
 	emptyCodes := []string{}
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE t_user SET password").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE t_user SET role_id").WillReturnResult(sqlmock.NewResult(0, 1))
 	expectUserGet(mock, 1, "super", "89HEK28Y")
 	mock.ExpectCommit()
-	value, err = m.Update(ctx, 1, UpdateUserInput{Password: &password, RoleID: &zeroRole, ActionCodes: &emptyCodes, Status: &status, Metadata: &metadata})
+	value, err = m.Update(ctx, 1, UpdateUserInput{RoleID: &zeroRole, ActionCodes: &emptyCodes, Metadata: &metadata})
 	if err != nil || value.Username != "super" {
 		t.Fatalf("full update: %#v %v", value, err)
 	}
@@ -423,6 +408,8 @@ func TestLastLoggedInTimeRanges(t *testing.T) {
 
 type userPermissionPolicy struct{}
 
+func (userPermissionPolicy) RequireUserEditControl(context.Context, string) error { return authn.ErrPermissionGrantRequired }
+
 func (userPermissionPolicy) RequireAllPermissions(context.Context) error {
 	return authn.ErrPermissionAdministrationRequired
 }
@@ -449,7 +436,7 @@ func TestUserAssignmentAndCredentialPolicies(t *testing.T) {
 		}, authn.ErrPermissionGrantRequired},
 		{func() error { _, err := m.Update(t.Context(), 2, UpdateUserInput{ActionCodes: &codes}); return err }, authn.ErrPermissionGrantRequired},
 		{func() error { _, err := m.Update(t.Context(), 2, UpdateUserInput{Username: &username}); return err }, authn.ErrPermissionGrantRequired},
-		{func() error { _, err := m.Update(t.Context(), 2, UpdateUserInput{Password: &password}); return err }, authn.ErrPermissionGrantRequired},
+		{func() error { _, err := m.ResetPassword(t.Context(), 2, password); return err }, authn.ErrPermissionGrantRequired},
 	}
 	for _, operation := range operations {
 		mock.ExpectBegin()

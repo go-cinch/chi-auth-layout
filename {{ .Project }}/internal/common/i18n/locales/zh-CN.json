@@ -1,4 +1,6 @@
 {
+  "ACTION_GROUP_CONFLICT": "权限分组已变更，请刷新后重试",
+  "ACTION_GROUP_NOT_EMPTY": "该权限分组下仍有行为，无法删除",
   "ACTION_CONFLICT": "权限编码或标识已存在",
   "ACTION_INVALID_IDS": "请提供 1 至 100 个有效的权限 ID",
   "ACTION_INVALID": "权限参数无效",
@@ -22,6 +24,7 @@
   "AUTH_SESSION_NOT_FOUND": "登录会话不存在或已过期",
   "AUTH_UNAUTHORIZED": "登录状态无效或已过期，请重新登录",
   "AUTH_USERNAME_EXISTS": "用户名已存在",
+  "DICTIONARY_CATALOG_PROTECTED": "无法更改该内容",
   "DICTIONARY_CONFLICT": "数据字典键已存在",
   "DICTIONARY_INVALID_IDS": "请提供 1 至 100 个有效的数据字典 ID",
   "DICTIONARY_INVALID": "数据字典参数无效",

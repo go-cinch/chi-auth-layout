@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/lib/pq"
+	"strconv"
 	"strings"
 	"{{ .Computed.module_name_final }}/internal/common/apperror"
+	"{{ .Computed.module_name_final }}/internal/common/auditctx"
 	"{{ .Computed.module_name_final }}/internal/common/code"
 )
 
@@ -25,6 +27,10 @@ type UsernameAvailability struct {
 	Available bool `json:"available"`
 }
 
+func (m *Module) SetRegistrationEnabled(enabled bool) {
+	m.registrationEnabled = enabled
+}
+
 func (m *Module) Register(ctx context.Context, input RegisterInput) error {
 	username := strings.TrimSpace(input.Username)
 	if username == "" || strings.TrimSpace(input.Password) == "" {
@@ -38,12 +44,12 @@ func (m *Module) Register(ctx context.Context, input RegisterInput) error {
 	if m.defaultUserPermissions == nil {
 		return errors.New("default user permission provider is unavailable")
 	}
-	return m.store.Tx(ctx, func(ctx context.Context) error {
+	var id int64
+	err = m.store.Tx(ctx, func(ctx context.Context) error {
 		codes, err := m.defaultUserPermissions.DefaultUserCodes(ctx, nil)
 		if err != nil {
 			return err
 		}
-		var id int64
 		if err := m.store.SQL(ctx).QueryRowContext(ctx, `SELECT nextval('t_user_id_seq')`).Scan(&id); err != nil {
 			return fmt.Errorf("allocate registered user id: %w", err)
 		}
@@ -72,6 +78,10 @@ func (m *Module) Register(ctx context.Context, input RegisterInput) error {
 		}
 		return errors.New("create registered user: generate unique code")
 	})
+	if err == nil {
+		auditctx.ResourceOperation(ctx, "register", strconv.FormatInt(id, 10))
+	}
+	return err
 }
 
 func (m *Module) UsernameAvailability(ctx context.Context, username string) (*UsernameAvailability, error) {

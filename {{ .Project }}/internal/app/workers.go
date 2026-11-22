@@ -18,6 +18,17 @@ func (a *Application) startWorkers(ctx context.Context) (func(), error) {
 		}
 		stops = append(stops, stop)
 	}
+{{- if .Computed.enable_redis_final }}
+	if a.auditModule != nil && a.rds != nil {
+		workerCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			a.auditModule.ConsumeStream(workerCtx)
+		}()
+		stops = append(stops, func() { cancel(); <-done })
+	}
+{{- end }}
 	if a.msgModule != nil {
 		workerCtx, stopWorker := context.WithCancel(ctx)
 		workerDone := make(chan struct{})

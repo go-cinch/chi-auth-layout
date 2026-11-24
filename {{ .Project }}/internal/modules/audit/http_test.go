@@ -58,11 +58,11 @@ func TestHTTP(t *testing.T) {
 	call("/audit/login/detail/abc", 400)
 	call("/audit/login/detail/0", 400)
 	call("/audit/login/missing", 404)
-	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT .* WHERE .*kind=").WillReturnError(sql.ErrNoRows)
 	call("/audit/login/detail/1", 404)
-	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnRows(detailRow())
+	mock.ExpectQuery("SELECT .* WHERE .*kind=").WillReturnRows(detailRow())
 	call("/audit/login/detail/1", 200)
-	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectQuery("SELECT .* WHERE .*kind=").WillReturnError(sqlmock.ErrCancelled)
 	call("/audit/login/detail/1", 500)
 	mock.ExpectQuery("SELECT COUNT").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("SELECT .* ORDER BY").WillReturnRows(row())
@@ -102,8 +102,8 @@ func TestAuditTargets(t *testing.T) {
 		{"POST", "/pub/register", "operation", "register", ""},
 		{"PATCH", "/change/pwd", "operation", "change_password", ""},
 		{"PATCH", "/reset/pwd", "operation", "reset_password", ""},
-		{"POST", "/logout", "operation", "logout", ""},
-		{"POST", "/pub/logout", "operation", "logout", ""},
+		{"POST", "/logout", "login", "logout", ""},
+		{"POST", "/pub/logout", "login", "logout", ""},
 		{"PATCH", "/pub/logout", "", "", ""},
 		{"POST", "/pub/challenge", "", "", ""},
 		{"POST", "/email/bind", "operation", "bind_email", ""},

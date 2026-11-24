@@ -82,6 +82,41 @@ func TestAuditAggregationsAndIsolation(t *testing.T) {
 	}
 }
 
+func TestHistoricalLogoutBelongsToLoginLog(t *testing.T) {
+	store := permissionDatabase(t)
+	limits, _ := pagination.New(100, 100)
+	m := audit.New(store, limits, config.DefaultAudit())
+	ctx := t.Context()
+	at := time.Now().UnixMilli()
+	e := auditctx.Event{OccurredAt: at, Kind: "operation", Module: "auth", Method: "POST", Path: "/custom/pub/logout", Operation: "logout", Username: "historical_logout", Status: 200}
+	if err := m.RecordHTTP(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"login", "operation"} {
+		filter := audit.Filter{Kind: kind, Username: e.Username, From: auditTime(at), To: auditTime(at + 1)}
+		events, err := m.Export(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind == "operation" {
+			if len(events) != 0 {
+				t.Fatal("logout leaked into operation export", events)
+			}
+			continue
+		}
+		if len(events) != 1 || events[0].Kind != "login" || events[0].Operation != "logout" {
+			t.Fatal("missing historical logout", events)
+		}
+		id := events[0].ID
+		if detail, err := m.Get(ctx, "login", id); err != nil || detail.Kind != "login" || detail.Path != e.Path {
+			t.Fatal("login detail", detail, err)
+		}
+		if _, err := m.Get(ctx, "operation", id); !errors.Is(err, audit.ErrNotFound) {
+			t.Fatal("operation detail", err)
+		}
+	}
+}
+
 func TestAuditSelectedCellAndSort(t *testing.T) {
 	store := permissionDatabase(t)
 	localizer := testLocalization(t, store)

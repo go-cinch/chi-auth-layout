@@ -18,7 +18,7 @@ func (m *Module) GetSelected(ctx context.Context, kind string, id int64, fields 
 	}
 	var value Event
 	projection := detailProjection(&value, fields)
-	err := m.store.SQL(ctx).QueryRowContext(ctx, projection.SQL("t_audit_event")+" WHERE kind=$1 AND id=$2", kind, id).Scan(projection.Targets...)
+	err := m.store.SQL(ctx).QueryRowContext(ctx, projection.SQL("t_audit_event")+kindWhere(kind)+" AND id=$2", kind, id).Scan(projection.Targets...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

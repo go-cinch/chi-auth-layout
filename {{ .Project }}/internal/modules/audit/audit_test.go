@@ -73,16 +73,16 @@ func TestRecordAndRead(t *testing.T) {
 	if clean(" \nabc\t ", 2) != "ab" {
 		t.Fatal("clean")
 	}
-	mock.ExpectQuery("SELECT .* WHERE kind=\\$1 AND id=\\$2").WithArgs("login", int64(1)).WillReturnRows(detailRow())
+	mock.ExpectQuery("SELECT .* WHERE .* AND id=\\$2").WithArgs("login", int64(1)).WillReturnRows(detailRow())
 	e, err := m.Get(ctx, "login", 1)
 	if err != nil || e.Username != "alice" || e.OccurredAt != 100000 {
 		t.Fatal(e, err)
 	}
-	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT .* WHERE .*kind=").WillReturnError(sql.ErrNoRows)
 	if _, err := m.Get(ctx, "operation", 2); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery("SELECT .* WHERE kind=").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectQuery("SELECT .* WHERE .*kind=").WillReturnError(sqlmock.ErrCancelled)
 	if _, err := m.Get(ctx, "login", 2); err == nil {
 		t.Fatal("missing failure")
 	}
@@ -133,7 +133,7 @@ func TestRecordAndRead(t *testing.T) {
 }
 
 func TestReadProjectionCompatibility(t *testing.T) {
-	metadataSQL := "id, occurred_at, kind, COALESCE(user_id,0), username, module, method, path, ip, user_agent, trace_id, error_code, status, duration_ms, operation, resource_type, resource_id, step_up_fingerprint, COALESCE(step_up_verified_at,0), " + outcomeSQL
+	metadataSQL := "id, occurred_at, $1::text, COALESCE(user_id,0), username, module, method, path, ip, user_agent, trace_id, error_code, status, duration_ms, operation, resource_type, resource_id, step_up_fingerprint, COALESCE(step_up_verified_at,0), " + outcomeSQL
 	for _, operation := range []string{"list", "export", "get", "detail_default", "detail_all"} {
 		t.Run(operation, func(t *testing.T) {
 			m, mock := setup(t)

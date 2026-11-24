@@ -38,10 +38,10 @@ func TestSummaryChartsShareOptionalBounds(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			m, mock := setup(t)
-			clause := " WHERE kind=$1 AND occurred_at >= $2"
+			clause := kindWhere("login") + " AND occurred_at >= $2"
 			bound := test.from
 			if bound == nil {
-				clause = " WHERE kind=$1 AND occurred_at < $2"
+				clause = kindWhere("login") + " AND occurred_at < $2"
 				bound = test.to
 			}
 			// Both charts share one extent lookup and retain the original SQL bounds.

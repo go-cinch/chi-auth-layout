@@ -61,8 +61,9 @@ Login request and response bodies are never captured.
 Login events expose an outcome of `success`, `failure` or `mfa_challenge`. A login 403 with `AUTH_LOGIN_MFA_REQUIRED` counts as an event and is excluded from both failures and the success-rate denominator. Other HTTP 200–399 responses are successes. Login CSV appends the outcome after the trace ID. Login records include restricted first-login sessions
 and failed credentials/challenges submitted to the final login endpoint. Setup
 challenges, captcha refresh, token refresh and audit reads are excluded.
+Login history also includes logout requests. Historical auth logout operations are read in the login log with their original event IDs. Login-log summaries count both login and logout requests.
 Operations include HTTP writes in user/role/action/user-group/dictionary/
-msg and registration/password changes/authenticated logout. RPC calls are not
+msg and registration/password changes. RPC calls are not
 captured by this HTTP observer. There is no user-facing edit/delete endpoint.
 
 The HTTP middleware captures and redacts the event after handling the request.

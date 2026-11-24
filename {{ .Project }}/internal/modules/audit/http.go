@@ -338,7 +338,7 @@ func (m *Module) AuditTarget(method, path string) auditctx.Target {
             if method != http.MethodPost {
                 return target
             }
-			target = auditctx.Target{Kind: "operation", Module: "auth", Operation: "logout", ResourceType: "session", OmitPayload: true}
+			target = auditctx.Target{Kind: "login", Module: "auth", Operation: "logout", ResourceType: "session", OmitPayload: true}
 		}
 	}
     if authEndpoint && strings.HasPrefix(path, "/auth/totp/reset/") {

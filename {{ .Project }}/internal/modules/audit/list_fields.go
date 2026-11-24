@@ -19,7 +19,8 @@ func listProjection(value *Event, fields report.Fields) report.Projection {
 	p := report.Projection{Fields: fields}
 	p.Add("id", "id", &value.ID)
 	p.Add("occurred_at", "occurred_at", &value.OccurredAt)
-	p.Add("kind", "kind", &value.Kind)
+	// All rows in this projection belong to the requested audit log, including historical logouts.
+	p.Add("kind", "$1::text", &value.Kind)
 	p.Add("user_id", "COALESCE(user_id,0)", &value.UserID)
 	p.Add("username", "username", &value.Username)
 	p.Add("module", "module", &value.Module)

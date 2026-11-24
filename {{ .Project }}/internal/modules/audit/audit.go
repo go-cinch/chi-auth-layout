@@ -223,9 +223,18 @@ func normalize(f Filter, settings config.AuditConfig) (Filter, error) {
 	return f, nil
 }
 
+// Older logout records (including queued deliveries) retain their original stored kind.
+func kindWhere(kind string) string {
+	const oldLogout = "kind='operation' AND module='auth' AND operation='logout'"
+	if kind == "login" {
+		return " WHERE (kind=$1 OR (" + oldLogout + "))"
+	}
+	return " WHERE kind=$1 AND NOT (" + oldLogout + ")"
+}
+
 func where(f Filter) (string, []any) {
 	args := []any{f.Kind}
-	s := " WHERE kind=$1"
+	s := kindWhere(f.Kind)
 	if f.From != nil {
 		args = append(args, *f.From)
 		s += fmt.Sprintf(" AND occurred_at >= $%d", len(args))

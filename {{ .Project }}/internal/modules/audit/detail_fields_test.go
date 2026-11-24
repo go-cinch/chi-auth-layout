@@ -11,7 +11,7 @@ import (
 
 func TestDetailPayloadSelection(t *testing.T) {
 	m, mock := setup(t)
-	mock.ExpectQuery("SELECT id, header FROM t_audit_event WHERE kind").WithArgs("login", int64(7)).WillReturnRows(sqlmock.NewRows([]string{"id", "header"}).AddRow(7, []byte(`{"user_agent":"test"}`)))
+	mock.ExpectQuery("SELECT id, header FROM t_audit_event WHERE .*kind").WithArgs("login", int64(7)).WillReturnRows(sqlmock.NewRows([]string{"id", "header"}).AddRow(7, []byte(`{"user_agent":"test"}`)))
 	value, err := m.GetSelected(t.Context(), "login", 7, report.Fields{"header", "id"})
 	if err != nil {
 		t.Fatal(err)

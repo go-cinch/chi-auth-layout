@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ func TestEmailWorkerSMTPOutcomes(t *testing.T) {
 			smtp := &retrySMTP{failures: failures}
 			codes.sender = smtp
 			codes.config.SendLimit = limit
+			codes.sentQueue = newSentEmailQueue("test-token")
 			expires := time.Now().Add(time.Minute).UnixMilli()
 			n := min(failures+1, limit)
 			for attempt := 1; attempt <= n; attempt++ {
@@ -45,7 +47,7 @@ func TestEmailWorkerSMTPOutcomes(t *testing.T) {
 				accepted := attempt > failures
 				mock.ExpectExec("UPDATE t_auth_email_code SET").WithArgs("ticket", attempt, accepted, !accepted && attempt == limit, sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 			}
-			if err := codes.handleEmail(t.Context(), "ticket"); err != nil {
+			if err := codes.handleEmail(t.Context(), "ticket", "auth_email_interactive"); err != nil {
 				t.Fatal(err)
 			}
 			if len(smtp.bodies) != n {
@@ -56,6 +58,14 @@ func TestEmailWorkerSMTPOutcomes(t *testing.T) {
 					t.Fatal("OTP changed during retry")
 				}
 			}
+			items := codes.sentQueue.list("to@example.test", "ticket")
+			if failures == limit {
+				if len(items) != 0 {
+					t.Fatal("failed delivery appeared in sent queue")
+				}
+			} else if len(items) != 1 || items[0].Queue != "auth_email_interactive" || items[0].Purpose != "login" || items[0].Code != codes.verificationCode("ticket") || !strings.Contains(smtp.bodies[0], items[0].Code) || items[0].SentAt == 0 {
+				t.Fatal("sent queue should contain exactly one copy of the successful delivery")
+			}
 		})
 	}
 }
@@ -65,7 +75,7 @@ func TestEmailWorkerSkipsStaleOrAlreadyDelivered(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery("AND NOT delivered AND NOT consumed AND expired_at >").WillReturnRows(sqlmock.NewRows([]string{"recipient", "expired_at", "delivery_attempts", "delivery_after", "purpose", "created_at", "notice_detail", "account", "language", "user_id", "delivery_mac", "timezone"}))
 	mock.ExpectCommit()
-	if err := codes.handleEmail(t.Context(), "stale"); err != nil || smtp.body != "" {
+	if err := codes.handleEmail(t.Context(), "stale", "auth_email_interactive"); err != nil || smtp.body != "" {
 		t.Fatal("stale job was sent or retained")
 	}
 }
@@ -95,7 +105,7 @@ func TestEmailWorkerHonorsReducedSendLimit(t *testing.T) {
 	mock.ExpectQuery("SELECT recipient, expired_at").WillReturnRows(sqlmock.NewRows([]string{"recipient", "expired_at", "delivery_attempts", "delivery_after", "purpose", "created_at", "notice_detail", "account", "language", "user_id", "delivery_mac", "timezone"}).AddRow("to@example.test", expires, 3, 0, "login", 0, "", "t***", "en-US", 0, codes.deliveryMAC("ticket", emailAttempt{recipient: "to@example.test", expires: expires, purpose: "login", account: "t***", language: "en-US"}), "Asia/Tokyo"))
 	mock.ExpectExec("UPDATE t_auth_email_code SET consumed = TRUE").WithArgs("ticket", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	if err := codes.handleEmail(t.Context(), "ticket"); err != nil || smtp.body != "" {
+	if err := codes.handleEmail(t.Context(), "ticket", "auth_email_interactive"); err != nil || smtp.body != "" {
 		t.Fatal("sent beyond lowered limit", err)
 	}
 }

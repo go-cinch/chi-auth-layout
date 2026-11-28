@@ -67,7 +67,7 @@ func TestEmailIdentityAndSharedBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captcha, err := auth.NewPointCaptcha(auth.NewMemoryPointCaptchaStore(), dictionaries, 5, time.Minute, 300, 180, 22, nil)
+	captcha, err := auth.NewPointCaptcha(auth.NewMemoryPointCaptchaStore(), dictionaries, 5, time.Minute, 300, 180, 22, false)
 	if err != nil {
 		t.Fatal(err)
 	}

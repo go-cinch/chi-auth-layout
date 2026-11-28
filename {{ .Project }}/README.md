@@ -34,6 +34,42 @@ This completes queued deliveries without SMTP. Set `SERVICE_EMAIL_ENABLED=false`
 instead to disable email. Configure `auth.email.unlinkURL` and
 `auth.email.auditURL` with the actual frontend URLs for email action links.
 
+### Sent email for end-to-end tests
+
+With `server.env: dev` and `email.enabled: true`, enable
+`auth.testing.emailQueueEndpoint`. An empty `auth.testing.emailQueueToken`
+allows anonymous access to verification codes. Use this mode in isolated test
+environments.
+
+For a local run with anonymous access and simulated SMTP delivery:
+
+```bash
+SERVICE_AUTH_TESTING_EMAILQUEUETOKEN='' \
+  SERVICE_AUTH_TESTING_EMAILQUEUEENDPOINT=true SERVICE_EMAIL_SKIPDELIVERY=true make run
+```
+
+Call `GET /pub/testing/email-queue` from the test runner and prepend `auth.path`
+when set.
+
+```bash
+curl --get 'http://127.0.0.1:{{ or .Scaffold.http_port "8080" }}/pub/testing/email-queue' \
+  --data-urlencode "verification_id=$verification_id"
+```
+
+To require authentication, set `SERVICE_AUTH_TESTING_EMAILQUEUETOKEN` to a
+dedicated token of at least 32 bytes and send it as `Authorization: Bearer <token>`.
+Use HTTPS when calling across a network.
+
+Poll using the `verification_id` returned by the code request or filter by
+`recipient`. The `items` array contains successful deliveries that match the
+filters, with the recipient, queue, and sent time in Unix milliseconds. For
+verification emails, `code` is the six-digit string used in the email. Each
+instance keeps its last 25 successful
+deliveries in memory, newest first. In multi-instance tests, poll the instance
+that runs the worker.
+With `email.skipDelivery: true`, successful auth mail appears after simulated
+delivery. With SMTP enabled, it appears after relay acceptance.
+
 ## Authentication endpoint path
 
 `conf/auth.yml` controls only the authentication module's mount:

@@ -41,6 +41,8 @@ type EmailConfig struct {
 	Templates            EmailTemplateIDs
 	AuditURL             string
 	Debug                bool
+	TestingQueueEndpoint bool
+	TestingQueueToken    string
 	UnlinkURL            string
 	RequireBinding       bool
 	CodeTTL              time.Duration
@@ -57,6 +59,7 @@ type EmailCodes struct {
 	templates EmailTemplateRenderer
 	config    EmailConfig
 	key       []byte
+	sentQueue *sentEmailQueue
 }
 
 type EmailCodeStatus struct {
@@ -86,7 +89,12 @@ func NewEmailCodes(store *db.Store, sender EmailSender, cfg EmailConfig, key str
 	if err := validateAlertTiers(cfg.AlertTiers); err != nil {
 		return nil, err
 	}
-	result := &EmailCodes{store: store, sender: sender, config: cfg, key: []byte(key)}
+	var sentQueue *sentEmailQueue
+	if cfg.TestingQueueEndpoint && sender.Ready() {
+		sentQueue = newSentEmailQueue(cfg.TestingQueueToken)
+	}
+	cfg.TestingQueueToken = ""
+	result := &EmailCodes{store: store, sender: sender, config: cfg, key: []byte(key), sentQueue: sentQueue}
 	return result, nil
 }
 

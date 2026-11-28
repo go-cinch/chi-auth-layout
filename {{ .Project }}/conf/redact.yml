@@ -2,6 +2,7 @@ redact:
   keys:
     - customerNumber
     - auth.session.jwt.key
+    - auth.testing.emailQueueToken
     - secret
     - secret_ciphertext
     - uri

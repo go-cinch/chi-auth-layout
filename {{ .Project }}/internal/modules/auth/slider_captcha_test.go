@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-func newSliderCaptchaTestManager(t *testing.T, enableE2ETest bool) *SliderCaptcha {
+func newSliderCaptchaTestManager(t *testing.T, skipDuration bool) *SliderCaptcha {
 	t.Helper()
 	manager, err := NewSliderCaptcha(NewMemoryPointCaptchaStore(), SliderCaptchaConfig{
-		TTL: time.Minute, MinimumDuration: 100 * time.Millisecond, EnableE2ETest: func() bool { return enableE2ETest },
+		TTL: time.Minute, MinimumDuration: 100 * time.Millisecond, SkipDuration: skipDuration,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,38 +83,62 @@ func TestSliderCaptchaRejectsSyntheticOrReplayedChallenges(t *testing.T) {
 	}
 }
 
-func TestSliderCaptchaE2ETestSkipsOnlyTheAnswer(t *testing.T) {
+func TestSliderCaptchaSkipDuration(t *testing.T) {
 	manager := newSliderCaptchaTestManager(t, true)
-	challenge, err := manager.IssueSliderChallenge(t.Context(), sliderCaptchaPurposeLogin, "readonly")
+	issue := func(t *testing.T) SliderCaptchaVerification {
+		t.Helper()
+		challenge, err := manager.IssueSliderChallenge(t.Context(), sliderCaptchaPurposeLogin, "readonly")
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := validSliderVerification(challenge.CaptchaID, sliderCaptchaPurposeLogin, "readonly")
+		input.Duration = 2
+		input.Tracks[1].T = 1
+		input.Tracks[2].T = 2
+		return input
+	}
+	for _, duration := range []int{2, 61000} {
+		input := issue(t)
+		input.Duration = duration
+		result, err := manager.VerifySlider(t.Context(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.ConsumeProof(t.Context(), input.Purpose, input.Username, result.Proof); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for name, invalidate := range map[string]func(*SliderCaptchaVerification){
+		"subject":                 func(v *SliderCaptchaVerification) { v.Username = "other-user" },
+		"width":                   func(v *SliderCaptchaVerification) { v.Width = 0 },
+		"distance":                func(v *SliderCaptchaVerification) { v.Distance = 1 },
+		"missing tracks":          func(v *SliderCaptchaVerification) { v.Tracks = nil },
+		"end position":            func(v *SliderCaptchaVerification) { v.Tracks[2].X = 50 },
+		"reversed timestamps":     func(v *SliderCaptchaVerification) { v.Tracks[2].T = 0 },
+		"inconsistent timestamps": func(v *SliderCaptchaVerification) { v.Tracks[2].T = 1000 },
+		"negative duration":       func(v *SliderCaptchaVerification) { v.Duration = -1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := issue(t)
+			invalidate(&input)
+			if _, err := manager.VerifySlider(t.Context(), input); !errors.Is(err, ErrSliderCaptchaRequired) {
+				t.Fatalf("invalid verification accepted or unexpected error: %v", err)
+			}
+		})
+	}
+
+	input := issue(t)
+	result, err := manager.VerifySlider(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.VerifySlider(t.Context(), SliderCaptchaVerification{
-		CaptchaID: challenge.CaptchaID, Purpose: sliderCaptchaPurposeLogin, Username: "readonly",
-	})
-	if err != nil || result.Proof == "" {
-		t.Fatalf("e2e verify = %#v, %v", result, err)
-	}
-	if err := manager.ConsumeProof(t.Context(), sliderCaptchaPurposeLogin, "readonly", result.Proof); err != nil {
-		t.Fatal(err)
-	}
-	challenge, _ = manager.IssueSliderChallenge(t.Context(), sliderCaptchaPurposeLogin, "readonly")
-	result, err = manager.VerifySlider(t.Context(), SliderCaptchaVerification{
-		CaptchaID: challenge.CaptchaID, Purpose: sliderCaptchaPurposeLogin, Username: "readonly",
-	})
+	strictManager, err := NewSliderCaptcha(manager.store, SliderCaptchaConfig{TTL: time.Minute, MinimumDuration: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.enableE2ETest = func() bool { return false }
-	if err := manager.ConsumeProof(t.Context(), sliderCaptchaPurposeLogin, "readonly", result.Proof); !errors.Is(err, ErrSliderCaptchaRequired) {
-		t.Fatalf("disabled e2e proof = %v", err)
-	}
-	manager.enableE2ETest = func() bool { return true }
-	challenge, _ = manager.IssueSliderChallenge(t.Context(), sliderCaptchaPurposeLogin, "readonly")
-	if _, err := manager.VerifySlider(t.Context(), SliderCaptchaVerification{
-		CaptchaID: challenge.CaptchaID, Purpose: sliderCaptchaPurposeLogin, Username: "other-user",
-	}); !errors.Is(err, ErrSliderCaptchaRequired) {
-		t.Fatalf("wrong subject bypass = %v", err)
+	if err := strictManager.ConsumeProof(t.Context(), input.Purpose, input.Username, result.Proof); !errors.Is(err, ErrSliderCaptchaRequired) {
+		t.Fatalf("strict manager consumed a test proof: %v", err)
 	}
 }
 

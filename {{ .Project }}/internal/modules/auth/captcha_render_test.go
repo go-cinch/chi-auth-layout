@@ -177,7 +177,7 @@ func TestPointCaptchaGlyphsSupportBidirectionalTilt(t *testing.T) {
 }
 
 func TestPointCaptchaChineseGlyphSizeFitsMinimumCanvas(t *testing.T) {
-	manager, err := NewPointCaptcha(NewMemoryPointCaptchaStore(), newPointCaptchaTestDictionary(), 1, time.Minute, 240, 140, 20, nil)
+	manager, err := NewPointCaptcha(NewMemoryPointCaptchaStore(), newPointCaptchaTestDictionary(), 1, time.Minute, 240, 140, 20, false)
 	if err != nil {
 		t.Fatal(err)
 	}

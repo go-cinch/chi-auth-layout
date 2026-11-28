@@ -2,13 +2,20 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/lib/pq"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
-"sync/atomic"
-"github.com/lib/pq"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"{{ .Computed.module_name_final }}/internal/common/authn"
+	"{{ .Computed.module_name_final }}/internal/common/config"
+	"{{ .Computed.module_name_final }}/internal/common/server"
 	"{{ .Computed.module_name_final }}/internal/modules/auth"
 	"{{ .Computed.module_name_final }}/internal/modules/email"
 )
@@ -89,6 +96,7 @@ func TestRiverEmailDebugAdmissionDeliveryAndConsumption(t *testing.T) {
 	}
 	codes, err := newTemplateEmailCodes(store, sender, auth.EmailConfig{
 		Debug: true, CodeTTL: time.Minute, ResendInterval: time.Minute, SendLimit: 3, MaxAttempts: 3,
+		TestingQueueEndpoint: true,
 	}, strings.Repeat("k", 64))
 	if err != nil {
 		t.Fatal(err)
@@ -111,6 +119,38 @@ func TestRiverEmailDebugAdmissionDeliveryAndConsumption(t *testing.T) {
 	ticket, err := send()
 	if err != nil {
 		t.Fatal(err)
+	}
+	manager, err := authn.New("test", strings.Repeat("k", 64), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := auth.New(store, manager, nil, nil, nil, nil, nil, nil, nil, &auth.Verification{})
+	module.SetEmailCodes(codes)
+	router, err := server.NewRouter(&config.Config{}, manager, nil, module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type delivery struct {
+		VerificationID string `json:"verification_id"`
+		Queue          string `json:"queue"`
+		Code           string `json:"code"`
+	}
+	poll := func() []delivery {
+		t.Helper()
+		path := "/pub/testing/email-queue?verification_id=" + url.QueryEscape(ticket.VerificationID)
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		var result struct {
+			Items []delivery `json:"items"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("sent queue status=%d, decode=%v, body=%s", response.Code, err, response.Body)
+		}
+		return result.Items
+	}
+	if len(poll()) != 0 {
+		t.Fatal("undelivered ticket appeared in the sent queue")
 	}
 	if _, err := send(); !errors.Is(err, auth.ErrEmailCooldown) {
 		t.Fatal("debug skipped send cooldown", err)
@@ -147,7 +187,7 @@ func TestRiverEmailDebugAdmissionDeliveryAndConsumption(t *testing.T) {
 		if err := store.DB.QueryRowContext(ctx, `SELECT delivered, delivery_attempts FROM t_auth_email_code WHERE verification_id=$1`, ticket.VerificationID).Scan(&delivered, &attempts); err != nil {
 			t.Fatal(err)
 		}
-		if delivered {
+		if delivered && len(poll()) > 0 {
 			if attempts != 1 {
 				t.Fatal("debug delivery retried", attempts)
 			}
@@ -159,13 +199,17 @@ func TestRiverEmailDebugAdmissionDeliveryAndConsumption(t *testing.T) {
 	if !completed {
 		t.Fatal("debug worker did not finalize delivery")
 	}
+	items := poll()
+	if len(items) != 1 || items[0].VerificationID != ticket.VerificationID || items[0].Queue != "auth_email_interactive" || items[0].Code != "000000" {
+		t.Fatal("sent queue did not return the delivered verification code")
+	}
 	if consume("missing-ticket", "000000") {
 		t.Fatal("debug bypassed ticket lookup")
 	}
 	if consume(ticket.VerificationID, "999999") {
 		t.Fatal("Verification code accepted as email code")
 	}
-	if !consume(ticket.VerificationID, "000000") {
+	if !consume(ticket.VerificationID, items[0].Code) {
 		t.Fatal("fixed email code rejected after delivery")
 	}
 	if consume(ticket.VerificationID, "000000") {

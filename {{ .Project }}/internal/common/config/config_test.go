@@ -104,26 +104,24 @@ func TestLoadDirAndEnvironmentOverride(t *testing.T) {
 	}
 }
 
-func TestAuthSwitchEnvironmentOverrides(t *testing.T) {
+func TestCaptchaTestingEnvironmentOverrides(t *testing.T) {
 	dir := t.TempDir()
-	content := []byte("auth:\n  testing:\n    enableE2ETest: false\n    enableE2ETestFile: ''\n")
+	content := []byte("auth:\n  testing:\n    skipPointCaptchaAnswer: false\n    skipSliderCaptchaDuration: false\n")
 	if err := os.WriteFile(filepath.Join(dir, "auth.yml"), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SERVICE_AUTH_TESTING_ENABLEE2ETEST", "true")
-	t.Setenv("SERVICE_AUTH_TESTING_ENABLEE2ETESTFILE", "/etc/podinfo/e2e-enabled")
-	cfg, overrides, err := LoadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.Auth.Testing.EnableE2ETest {
-		t.Fatalf("auth switches = %#v", cfg.Auth.Testing)
-	}
-	if cfg.Auth.Testing.EnableE2ETestFile != "/etc/podinfo/e2e-enabled" {
-		t.Fatalf("e2e file override = %q", cfg.Auth.Testing.EnableE2ETestFile)
-	}
-	if len(overrides) != 2 {
-		t.Fatalf("auth switch overrides = %#v", overrides)
+	for _, key := range []string{"SERVICE_AUTH_TESTING_SKIPPOINTCAPTCHAANSWER", "SERVICE_AUTH_TESTING_SKIPSLIDERCAPTCHADURATION"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "true")
+			cfg, _, err := LoadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Auth.Testing.SkipPointCaptchaAnswer != (key == "SERVICE_AUTH_TESTING_SKIPPOINTCAPTCHAANSWER") ||
+				cfg.Auth.Testing.SkipSliderCaptchaDuration != (key == "SERVICE_AUTH_TESTING_SKIPSLIDERCAPTCHADURATION") {
+				t.Fatalf("unexpected captcha switches for %s: %+v", key, cfg.Auth.Testing)
+			}
+		})
 	}
 }
 

@@ -25,8 +25,7 @@ var ErrSliderCaptchaRequired = apperror.New("AUTH_SLIDER_CAPTCHA_REQUIRED", "sli
 type SliderCaptchaConfig struct {
 	TTL             time.Duration
 	MinimumDuration time.Duration
-	// EnableE2ETest is evaluated per validation. Nil disables E2E.
-	EnableE2ETest func() bool
+	SkipDuration    bool
 }
 
 type SliderCaptchaChallenge struct {
@@ -64,7 +63,7 @@ type SliderCaptcha struct {
 	store           PointCaptchaStore
 	ttl             time.Duration
 	minimumDuration time.Duration
-	enableE2ETest   func() bool
+	skipDuration    bool
 }
 
 func NewSliderCaptcha(store PointCaptchaStore, cfg SliderCaptchaConfig) (*SliderCaptcha, error) {
@@ -77,14 +76,11 @@ func NewSliderCaptcha(store PointCaptchaStore, cfg SliderCaptchaConfig) (*Slider
 	if cfg.MinimumDuration < 100*time.Millisecond || cfg.MinimumDuration > 5*time.Second {
 		return nil, errors.New("slider captcha minimum duration must be between 100ms and 5s")
 	}
-	if cfg.EnableE2ETest == nil {
-		cfg.EnableE2ETest = func() bool { return false }
-	}
 	return &SliderCaptcha{
 		store:           store,
 		ttl:             cfg.TTL,
 		minimumDuration: cfg.MinimumDuration,
-		enableE2ETest:   cfg.EnableE2ETest,
+		skipDuration:    cfg.SkipDuration,
 	}, nil
 }
 
@@ -124,15 +120,14 @@ func (c *SliderCaptcha) VerifySlider(ctx context.Context, input SliderCaptchaVer
 		subtle.ConstantTimeCompare([]byte(record.SubjectDigest), []byte(usernameDigest(username))) != 1 {
 		return nil, ErrSliderCaptchaRequired
 	}
-	e2eEnabled := c.enableE2ETest()
-	if !e2eEnabled && !c.validDrag(input) {
+	if !c.validDrag(input) {
 		return nil, ErrSliderCaptchaRequired
 	}
 	proof, err := newSliderCaptchaID("slider-proof")
 	if err != nil {
 		return nil, err
 	}
-	record = sliderCaptchaRecord{Kind: "proof", Purpose: purpose, SubjectDigest: usernameDigest(username), E2EOnly: e2eEnabled}
+	record = sliderCaptchaRecord{Kind: "proof", Purpose: purpose, SubjectDigest: usernameDigest(username), E2EOnly: c.skipDuration}
 	encoded, err := json.Marshal(record)
 	if err != nil {
 		return nil, fmt.Errorf("encode slider captcha proof: %w", err)
@@ -160,7 +155,7 @@ func (c *SliderCaptcha) ConsumeProof(ctx context.Context, purpose, username, pro
 		subtle.ConstantTimeCompare([]byte(record.SubjectDigest), []byte(usernameDigest(username))) != 1 {
 		return ErrSliderCaptchaRequired
 	}
-	if record.E2EOnly && !c.enableE2ETest() {
+	if record.E2EOnly && !c.skipDuration {
 		return ErrSliderCaptchaRequired
 	}
 	return nil
@@ -168,7 +163,10 @@ func (c *SliderCaptcha) ConsumeProof(ctx context.Context, purpose, username, pro
 
 func (c *SliderCaptcha) validDrag(input SliderCaptchaVerification) bool {
 	minimumMilliseconds := int(c.minimumDuration / time.Millisecond)
-	if input.Duration < minimumMilliseconds || input.Duration > int(c.ttl/time.Millisecond) || input.Width < 160 || input.Width > 2000 ||
+	if !c.skipDuration && (input.Duration < minimumMilliseconds || input.Duration > int(c.ttl/time.Millisecond)) {
+		return false
+	}
+	if input.Duration < 0 || input.Width < 160 || input.Width > 2000 ||
 		input.Distance*100 < input.Width*90 || input.Distance > input.Width || len(input.Tracks) < 3 || len(input.Tracks) > maxSliderCaptchaTracks {
 		return false
 	}
@@ -178,7 +176,7 @@ func (c *SliderCaptcha) validDrag(input SliderCaptchaVerification) bool {
 	}
 	changed := 0
 	for _, current := range input.Tracks[1:] {
-		if current.T < previous.T || current.T > input.Duration+250 || current.X < 0 || current.X > input.Width {
+		if current.T < previous.T || current.T-250 > input.Duration || current.X < 0 || current.X > input.Width {
 			return false
 		}
 		if current.X != previous.X {
@@ -186,7 +184,7 @@ func (c *SliderCaptcha) validDrag(input SliderCaptchaVerification) bool {
 		}
 		previous = current
 	}
-	return changed >= 2 && previous.X*100 >= input.Width*90 && previous.T >= minimumMilliseconds
+	return changed >= 2 && previous.X*100 >= input.Width*90 && (c.skipDuration || previous.T >= minimumMilliseconds)
 }
 
 func normalizeSliderCaptchaSubject(purpose, username string) (string, string, bool) {

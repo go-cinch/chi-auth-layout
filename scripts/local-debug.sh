@@ -16,6 +16,8 @@ Options (all cleanup switches default to false):
   --clean-sql[=true|false]          Replace generated SQL with the latest template SQL.
   --clean-credentials[=true|false]  Replace backend authentication credentials/key files.
   --clean-auth[=true|false]         Drop/recreate ONLY the local pg container's auth database.
+  --login-animation-duration-ms MS  Override Vben's login animation duration in milliseconds.
+                                    Omit to use the Vben default. Use 0 to disable the animation.
   --skip-tests                     Skip the backend generation hook's Go tests.
   --dry-run                       Print the plan without stopping or changing anything.
   -h, --help                      Show this help.
@@ -24,6 +26,7 @@ Aliases: --delete-old-sql, --delete-old-credentials, --reset-auth-db.
 
 Examples:
   ./local-debug.sh
+  ./local-debug.sh --login-animation-duration-ms 0
   ./local-debug.sh --stop-auth
   ./local-debug.sh --pause-endpoint 'GET /api/auth/action/catalog'
   ./local-debug.sh --resume-endpoint 'GET /api/auth/action/catalog'
@@ -46,6 +49,7 @@ fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 clean_sql=false
 clean_credentials=false
 clean_auth=false
+login_animation_duration_ms=
 skip_tests=false
 dry_run=false
 stop_auth=false
@@ -62,6 +66,19 @@ while [ "$#" -gt 0 ]; do
     --clean-sql=*|--delete-old-sql=*) clean_sql=${arg#*=} ;;
     --clean-credentials=*|--delete-old-credentials=*) clean_credentials=${arg#*=} ;;
     --clean-auth=*|--reset-auth-db=*) clean_auth=${arg#*=} ;;
+    --login-animation-duration-ms|--login-animation-duration-ms=*)
+      if [[ "$arg" == *=* ]]; then
+        login_animation_duration_ms=${arg#*=}
+      else
+        [ "$#" -gt 0 ] || fail "$arg requires a duration in milliseconds"
+        login_animation_duration_ms=$1
+        shift
+      fi
+      if ! [[ "$login_animation_duration_ms" =~ ^(0|[1-9][0-9]{0,9})$ ]] || \
+          (( login_animation_duration_ms > 2147483647 )); then
+        fail '--login-animation-duration-ms must be an integer between 0 and 2147483647'
+      fi
+      ;;
     --stop-auth) stop_auth=true ;;
     --pause-endpoint|--resume-endpoint)
       [ -z "$endpoint_action" ] || fail 'Specify exactly one endpoint control'
@@ -90,8 +107,8 @@ AUTH_FAULTS_DIR="$LOCAL_DEBUG_DIR/faults"
 
 if [ -n "$endpoint_action" ]; then
   if [ "$stop_auth" = true ] || [ "$clean_sql" = true ] || [ "$clean_credentials" = true ] || \
-      [ "$clean_auth" = true ] || [ "$skip_tests" = true ]; then
-    fail 'Endpoint controls cannot be combined with service or cleanup options'
+      [ "$clean_auth" = true ] || [ "$skip_tests" = true ] || [ -n "$login_animation_duration_ms" ]; then
+    fail 'Endpoint controls cannot be combined with service, cleanup or generation options'
   fi
   endpoint_pattern='^[A-Z]+ /api/auth/[^[:space:]?#]+$'
   [[ "$endpoint" =~ $endpoint_pattern ]] || fail "Expected 'METHOD /api/auth/path' without a query string"
@@ -154,11 +171,17 @@ fi
 printf 'Backend template: %s\nFrontend template: %s\n' "$BACKEND_TEMPLATE" "$FRONTEND_TEMPLATE"
 printf 'Replace SQL: %s | Replace backend credentials: %s | Reset auth DB: %s\n' \
   "$clean_sql" "$clean_credentials" "$clean_auth"
+frontend_make=(make -C "$FRONTEND_TEMPLATE" local DEMO=vben-antd-vue3 UI=vben-antd-vue3)
+if [ -n "$login_animation_duration_ms" ]; then
+  frontend_make+=("LOGIN_ANIMATION_DURATION_MS=$login_animation_duration_ms")
+fi
 if [ "$dry_run" = true ]; then
   printf '1. Stop only Auth/Vben listeners in the corresponding demos (8081/5666).\n'
   printf '2. SCAFFOLD_SKIP_TESTS=%s make -C "%s" local DELETE_OLD_SQL=%s DELETE_OLD_CREDENTIALS=%s\n' \
     "$skip_tests" "$BACKEND_TEMPLATE" "$clean_sql" "$clean_credentials"
-  printf '3. make -C "%s" local DEMO=vben-antd-vue3 UI=vben-antd-vue3\n' "$FRONTEND_TEMPLATE"
+  printf '3.'
+  printf ' %q' "${frontend_make[@]}"
+  printf '\n'
   printf '4. pnpm install --frozen-lockfile in %s\n' "$VBEN_DIR"
   if [ "$clean_auth" = true ]; then
     printf '5. Verify loopback auth DSN; docker exec pg dropdb -U root --force --if-exists auth\n'
@@ -230,7 +253,7 @@ run_step 'Regenerating Auth' "$LOG_DIR/auth-generate.log" \
   env SCAFFOLD_SKIP_TESTS="$skip_tests" make -C "$BACKEND_TEMPLATE" local \
   DELETE_OLD_SQL="$clean_sql" DELETE_OLD_CREDENTIALS="$clean_credentials"
 run_step 'Regenerating Vben PC' "$LOG_DIR/vben-generate.log" \
-  make -C "$FRONTEND_TEMPLATE" local DEMO=vben-antd-vue3 UI=vben-antd-vue3
+  "${frontend_make[@]}"
 
 # Preserve all other ignored environment settings, updating only local routing.
 python3 - "$VBEN_DIR/apps/web-antd/.env.development.local" <<'PY'

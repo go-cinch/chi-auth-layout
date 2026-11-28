@@ -66,7 +66,7 @@ func TestTOTPRealDatabaseRedisLifecycle(t *testing.T) {
     limits,_:=pagination.New(100,100)
     dictionaries,err:=dictionary.New(store,dictionary.NewMemoryValueCache(),dictionary.CacheTTL,limits,localizer)
     if err!=nil {t.Fatal(err)}
-    captcha,err:=auth.NewPointCaptcha(auth.NewMemoryPointCaptchaStore(),dictionaries,5,time.Minute,300,180,22,nil)
+    captcha,err:=auth.NewPointCaptcha(auth.NewMemoryPointCaptchaStore(),dictionaries,5,time.Minute,300,180,22,false)
     if err!=nil {t.Fatal(err)}
     slider,err:=auth.NewSliderCaptcha(auth.NewMemoryPointCaptchaStore(),auth.SliderCaptchaConfig{TTL:time.Minute,MinimumDuration:100*time.Millisecond})
     if err!=nil {t.Fatal(err)}

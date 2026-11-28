@@ -35,7 +35,7 @@ func (e *EmailCodes) StartWorkers(ctx context.Context) (func(), error) {
 	}))
 	river.AddWorker(workers, river.WorkFunc(e.sendTestEmail))
 	river.AddWorker(workers, river.WorkFunc(func(ctx context.Context, job *river.Job[emailDelivery]) error {
-		return e.handleEmail(ctx, job.Args.TicketID)
+		return e.handleEmail(ctx, job.Args.TicketID, job.Queue)
 	}))
 	river.AddWorker(workers, river.WorkFunc(func(ctx context.Context, _ *river.Job[sensitiveActivityScan]) error {
 		return e.ScanSensitiveOperations(ctx)

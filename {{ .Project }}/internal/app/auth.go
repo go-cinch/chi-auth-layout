@@ -6,6 +6,7 @@ import (
 {{- if not .Computed.enable_redis_final }}
 	"log/slog"
 {{- end }}
+	"strings"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/common/config"
 	"{{ .Computed.module_name_final }}/internal/common/idempotency"
@@ -72,7 +73,7 @@ func (a *Application) initializeAuth(ctx context.Context, cfg *config.Config) er
 		cfg.Auth.Captcha.Point.Width,
 		cfg.Auth.Captcha.Point.Height,
 		cfg.Auth.Captcha.Point.Tolerance,
-		e2eTestEnabledFromConfig(cfg),
+		cfg.Auth.Testing.SkipPointCaptchaAnswer,
 	)
 	if err != nil {
 		return fmt.Errorf("initialize point captcha: %w", err)
@@ -151,6 +152,14 @@ func (a *Application) initializeEmail(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("initialize email delivery: %w", err)
 	}
+	queueEnabled := cfg.Server.Env == "dev" && cfg.Email.Enabled && cfg.Auth.Testing.EmailQueueEndpoint
+	var queueToken string
+	if queueEnabled {
+		queueToken = cfg.Auth.Testing.EmailQueueToken
+		if queueToken != "" && (len(queueToken) < 32 || strings.ContainsAny(queueToken, " \t\r\n")) {
+			return fmt.Errorf("auth.testing.emailQueueToken must be empty or at least 32 bytes with no whitespace")
+		}
+	}
 	var tiers []authmodule.AlertTier
 	for _, tier := range cfg.Auth.Email.AlertTiers {
 		tiers = append(tiers, authmodule.AlertTier{Window: tier.Window, Count: tier.Count})
@@ -165,6 +174,8 @@ func (a *Application) initializeEmail(cfg *config.Config) error {
 			AuthenticatorLinked: cfg.Auth.Email.Templates.AuthenticatorLinked, AuthenticatorRelinked: cfg.Auth.Email.Templates.AuthenticatorRelinked,
 			SensitiveOperationNotification: cfg.Auth.Email.Templates.SensitiveOperationNotification,
 		}, AuditURL: cfg.Auth.Email.AuditURL,
+		TestingQueueEndpoint: queueEnabled,
+		TestingQueueToken:    queueToken,
 		Debug: cfg.Auth.Testing.EmailCode, AlertTiers: tiers, SensitiveLifetime: cfg.Auth.Verification.SensitiveLifetime,
 		RequireBinding: cfg.Auth.Email.RequireBinding, CodeTTL: cfg.Auth.Email.CodeTTL,
 		ResendInterval: cfg.Auth.Email.ResendInterval, MaxAttempts: cfg.Auth.Email.MaxAttempts,
@@ -183,6 +194,6 @@ func sliderCaptchaFromConfig(cfg *config.Config, store authmodule.PointCaptchaSt
 	return authmodule.NewSliderCaptcha(store, authmodule.SliderCaptchaConfig{
 		TTL:             cfg.Auth.Captcha.Slider.TTL,
 		MinimumDuration: cfg.Auth.Captcha.Slider.MinimumDuration,
-		EnableE2ETest:   e2eTestEnabledFromConfig(cfg),
+		SkipDuration:    cfg.Auth.Testing.SkipSliderCaptchaDuration,
 	})
 }

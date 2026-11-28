@@ -144,6 +144,9 @@ func (m *Module) AllowAnonymousHTTP(r *http.Request) bool {
 
 {{ if eq .Computed.http_router_final "gin" -}}
 func (m *Module) HTTP(r *gin.RouterGroup) {
+	if m.emailCodes != nil && m.emailCodes.sentQueue != nil {
+		r.GET("/pub/testing/email-queue", m.sentEmails)
+	}
 	r.GET("/pub/i18n", m.localization)
 	r.GET("/pub/opt", m.systemProperties)
  r.GET("/pub/timezones", m.timezoneOptions)
@@ -193,6 +196,9 @@ func (m *Module) HTTP(r *gin.RouterGroup) {
 {{ else -}}
 func (m *Module) HTTP() http.Handler {
 	r := chi.NewRouter()
+	if m.emailCodes != nil && m.emailCodes.sentQueue != nil {
+		r.Get("/pub/testing/email-queue", m.sentEmails)
+	}
 	r.Get("/pub/i18n", m.localization)
 	r.Get("/pub/opt", m.systemProperties)
  r.Get("/pub/timezones", m.timezoneOptions)

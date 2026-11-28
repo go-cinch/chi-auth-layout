@@ -59,10 +59,11 @@ func (e *EmailCodes) deliveryMessage(ctx context.Context, id string, job emailAt
 	default:
 		return "", "", "", errors.New("unsupported email delivery purpose")
 	}
-	switch job.purpose {
-	case "login", "bind", "sensitive", "totp_reset":
-		values["code"] = e.verificationCode(id)
+	if code := e.deliveryCode(id, job.purpose); code != "" {
+		values["code"] = code
 		values["expires_at"] = time.UnixMilli(job.expires).In(emailTimeZone(job.timezone)).Format(time.RFC3339)
+	}
+	switch job.purpose {
 	case "unlink_notice", "email_linked", "totp_bound", "totp_rebound", "sensitive_notice":
 		link, err := emailAuditURL(e.config.AuditURL)
 		if err != nil {

@@ -49,10 +49,14 @@ auth:
     emailCode: false
     # Local debugging only: accept reusable authenticator code 999999.
     totpCode: false
-    enableE2ETest: false
-    # Optional live switch file. Only trimmed "true" enables E2E; read errors disable it.
-    # When set, the file overrides enableE2ETest on every captcha validation.
-    enableE2ETestFile: ""
+    # Serve recently sent mail in the dev environment for end-to-end tests.
+    emailQueueEndpoint: false
+    # Empty allows anonymous access. Set SERVICE_AUTH_TESTING_EMAILQUEUETOKEN to require a Bearer token.
+    emailQueueToken: ""
+    # Skip point count and coordinate matching for a valid, bound challenge.
+    skipPointCaptchaAnswer: false
+    # Skip slider drag duration limits. Distance and movement trace checks still apply.
+    skipSliderCaptchaDuration: false
   password:
     reset:
       # False allows explicitly skipping the first-login password reset.

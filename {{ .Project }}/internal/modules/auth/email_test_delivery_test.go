@@ -50,12 +50,13 @@ func TestTestEmailRejectsTampering(t *testing.T) {
 	e, _, _ := newEmailCodeTest(t)
 	sender := &queuedTestSender{}
 	e.sender = sender
+	e.sentQueue = newSentEmailQueue("test-token")
 	original := testEmailPayload{"owner@example.test", "subject", "plain", "<p>actual</p>", time.Now().Add(time.Minute).UnixMilli()}
 	for _, field := range []string{"recipient", "subject", "plain", "html", "expiry", "signature", "job_id", "valid", "smtp_failure"} {
 		t.Run(field, func(t *testing.T) {
 			sender.body = ""
 			sender.err = nil
-			job := &river.Job[testEmailDelivery]{JobRow: &rivertype.JobRow{ID: 42}, Args: testEmailDelivery{Payload: original, Signature: e.testDeliveryMAC(42, original)}}
+			job := &river.Job[testEmailDelivery]{JobRow: &rivertype.JobRow{ID: 42, Queue: "mail_template_test"}, Args: testEmailDelivery{Payload: original, Signature: e.testDeliveryMAC(42, original)}}
 			switch field {
 			case "recipient":
 				job.Args.Payload.Recipient = "attacker@example.test"
@@ -78,6 +79,10 @@ func TestTestEmailRejectsTampering(t *testing.T) {
 			if field == "valid" {
 				if err != nil || sender.body != "plain" {
 					t.Fatal(err)
+				}
+				items := e.sentQueue.list("owner@example.test", "")
+				if len(items) != 1 || items[0].Queue != job.Queue || items[0].Code != "" {
+					t.Fatal("editor test mail should be captured without a verification code")
 				}
 				return
 			}

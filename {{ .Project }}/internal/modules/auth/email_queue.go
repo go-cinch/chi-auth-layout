@@ -22,6 +22,15 @@ func (e *EmailCodes) verificationCode(id string) string {
 	return fmt.Sprintf("%06d", binary.BigEndian.Uint64(digest[:8])%1_000_000)
 }
 
+func (e *EmailCodes) deliveryCode(id, purpose string) string {
+	switch purpose {
+	case "login", "bind", "sensitive", "totp_reset":
+		return e.verificationCode(id)
+	default:
+		return ""
+	}
+}
+
 type emailAttempt struct {
 	userID    int64
 	signature string
@@ -88,7 +97,7 @@ func waitEmail(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-func (e *EmailCodes) handleEmail(ctx context.Context, id string) error {
+func (e *EmailCodes) handleEmail(ctx context.Context, id, queue string) error {
 	for ctx.Err() == nil {
 		job, err := e.claimEmail(ctx, id)
 		if err != nil {
@@ -111,6 +120,15 @@ func (e *EmailCodes) handleEmail(ctx context.Context, id string) error {
 		}
 		accepted := e.sendAttempt(ctx, id, job)
 		if e.finishEmail(ctx, id, job.number, accepted) {
+			if accepted && e.sentQueue != nil {
+				e.sentQueue.record(sentEmail{
+					Queue:          queue,
+					VerificationID: id,
+					Recipient:      job.recipient,
+					Purpose:        job.purpose,
+					Code:           e.deliveryCode(id, job.purpose),
+				})
+			}
 			return nil
 		}
 	}

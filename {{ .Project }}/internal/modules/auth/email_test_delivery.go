@@ -93,5 +93,11 @@ func (e *EmailCodes) sendTestEmail(ctx context.Context, job *river.Job[testEmail
 		// Do not persist SMTP errors that may contain recipient or message content.
 		return errors.New("test email transport failed")
 	}
+	if e.sentQueue != nil {
+		e.sentQueue.record(sentEmail{
+			Queue:     job.Queue,
+			Recipient: payload.Recipient,
+		})
+	}
 	return nil
 }

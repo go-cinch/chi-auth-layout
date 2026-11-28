@@ -65,7 +65,7 @@ func newAuthTestModuleWithVerification(t *testing.T, createVerification func(*db
 		t.Fatal(err)
 	}
 	credentials := newCredentialTestManager(t, time.Minute)
-	captcha, captchaErr := NewPointCaptcha(NewMemoryPointCaptchaStore(), newPointCaptchaTestDictionary(), 5, 2*time.Minute, 300, 180, 22, nil)
+	captcha, captchaErr := NewPointCaptcha(NewMemoryPointCaptchaStore(), newPointCaptchaTestDictionary(), 5, 2*time.Minute, 300, 180, 22, false)
 	if captchaErr != nil {
 		t.Fatal(captchaErr)
 	}

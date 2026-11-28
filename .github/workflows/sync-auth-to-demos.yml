@@ -31,7 +31,7 @@ on:
           - "true"
           - "false"
       only_super:
-        description: ONLY_SUPER (default seeds only the super user and role)
+        description: ONLY_SUPER (default is false to include demo users, roles and groups)
         type: choice
         default: default
         options:
@@ -104,6 +104,7 @@ jobs:
         shell: bash
         env:
           DELETE_OLD_SQL: ${{ vars.DELETE_OLD_SQL || 'false' }}
+          ONLY_SUPER: "false"
           INPUT_DELETE_OLD_SQL: ${{ inputs.delete_old_sql }}
           INPUT_HTTP_ROUTER: ${{ inputs.http_router }}
           INPUT_ENABLE_GRPC: ${{ inputs.enable_grpc }}

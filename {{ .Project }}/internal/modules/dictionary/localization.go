@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"strings"
 	"time"
 	"{{ .Computed.module_name_final }}/internal/common/authn"
 	"{{ .Computed.module_name_final }}/internal/modules/action"
@@ -75,6 +76,19 @@ func (m *Module) prepareLocalization(value *Dictionary) error {
 	catalog, err := localization.Parse(value.Value)
 	if err != nil {
 		return ErrInvalid
+	}
+	// Validate the submitted snapshot here so legacy catalogs remain readable and repairable.
+	type scopedPath struct{ scope, path string }
+	owners := make(map[scopedPath]string)
+	for resource, node := range catalog.ResourceCatalog.Resources {
+		scope, _, _ := strings.Cut(resource, ":")
+		for key, entry := range node.Entries {
+			route := scopedPath{scope, entry.Path}
+			if previous, exists := owners[route]; exists {
+				return fmt.Errorf("%w: menu path %q in scope %q is used by %s and %s", ErrInvalid, entry.Path, scope, previous, key)
+			}
+			owners[route] = key
+		}
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(value.Value, &document); err != nil {

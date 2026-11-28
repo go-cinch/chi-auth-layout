@@ -82,6 +82,52 @@ func TestInvalidLocalizationIsNotCommitted(t *testing.T) {
 	}
 }
 
+func TestMenuPathUniquenessOnSubmit(t *testing.T) {
+	m, _, mock := newTestModule(t)
+	catalog, err := localization.Parse([]byte(testLocalization))
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog.Scopes = []string{"admin", "mini"}
+	catalog.ResourceCatalog = localization.ResourceCatalog{
+		Resources: map[string]localization.Resource{}, Buttons: map[string]localization.Feature{},
+	}
+	add := func(scope, name string) {
+		parent := scope + ":system"
+		catalog.ResourceCatalog.Resources[parent] = localization.Resource{Kind: "directory"}
+		catalog.ResourceCatalog.Resources[parent+":"+name] = localization.Resource{
+			Kind: "resource", Parent: parent,
+			Entries: map[string]localization.ResourceEntry{scope + ":menu:" + name: {Path: "/system/user"}},
+		}
+	}
+	encode := func() []byte {
+		raw, err := json.Marshal(catalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	add("admin", "user")
+	add("mini", "user")
+	if err := m.prepareLocalization(&Dictionary{Value: encode()}); err != nil {
+		t.Fatalf("same path in independent scopes: %v", err)
+	}
+	add("admin", "alias")
+	raw := encode()
+	if _, err := localization.Parse(raw); err != nil {
+		t.Fatalf("legacy catalog must remain readable: %v", err)
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id, value = .* FOR UPDATE").WithArgs(LocalizationKey, testLocalization).WillReturnRows(sqlmock.NewRows([]string{"id", "matches"}).AddRow(3, true))
+	mock.ExpectRollback()
+	if _, err := m.PublishCatalog(t.Context(), PublishCatalogInput{Value: raw, ExpectedValue: json.RawMessage(testLocalization)}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("duplicate path published: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLocalizationRefreshesAfterCommittedWrite(t *testing.T) {
 	localizer := localization.New()
 	t.Cleanup(localizer.Reset)

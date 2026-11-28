@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       delete_old_sql:
-        description: DELETE_OLD_SQL (default uses the Makefile setting)
+        description: DELETE_OLD_SQL (default uses the Actions variable, or false if unset)
         type: choice
         default: default
         options:
@@ -103,6 +103,7 @@ jobs:
         working-directory: chi-auth-layout
         shell: bash
         env:
+          DELETE_OLD_SQL: ${{ vars.DELETE_OLD_SQL || 'false' }}
           INPUT_DELETE_OLD_SQL: ${{ inputs.delete_old_sql }}
           INPUT_HTTP_ROUTER: ${{ inputs.http_router }}
           INPUT_ENABLE_GRPC: ${{ inputs.enable_grpc }}
